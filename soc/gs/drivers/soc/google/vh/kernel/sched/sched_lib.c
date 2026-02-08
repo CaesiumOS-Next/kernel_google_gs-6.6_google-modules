@@ -34,6 +34,13 @@ bool is_vcpu_task(struct task_struct *p)
 	return false;
 }
 
+void rvh_set_cpus_allowed_ptr_mod(void *data, struct task_struct *task,
+				  struct affinity_context *ctx, bool *skip_user_ptr)
+{
+	/* Always allow the kernel to modify user requested affinities */
+	*skip_user_ptr = true;
+}
+
 void rvh_sched_setaffinity_mod(void *data, struct task_struct *task,
 				const struct cpumask *in_mask, int *res)
 {

@@ -18,6 +18,7 @@
 #include <linux/of_gpio.h>
 #include <linux/of_address.h>
 #include <linux/pci.h>
+#include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/resource.h>
@@ -2350,7 +2351,7 @@ static int exynos_pcie_rc_get_pin_state(struct platform_device *pdev,
 	struct device_node *np = dev->of_node;
 	int ret;
 
-	exynos_pcie->perst_gpio = of_get_gpio(np, 0);
+	exynos_pcie->perst_gpio = of_get_named_gpio(np, "gpios", 0);
 	if (exynos_pcie->perst_gpio < 0) {
 		dev_err(&pdev->dev, "cannot get perst_gpio\n");
 	} else {
@@ -5561,10 +5562,7 @@ static void exynos_pcie_wait_cfg_access_work(struct work_struct *work)
 	}
 
 	exynos_pcie_rc_dump_all_status(exynos_pcie->ch_num);
-	exynos_pcie->cpl_timeout_recovery = 1;
-	exynos_pcie->state = STATE_LINK_DOWN_TRY;
-	queue_work(exynos_pcie->pcie_wq,
-			&exynos_pcie->cpl_timeout_work.work);
+	BUG_ON(1);
 }
 
 static int exynos_pcie_rc_probe(struct platform_device *pdev)

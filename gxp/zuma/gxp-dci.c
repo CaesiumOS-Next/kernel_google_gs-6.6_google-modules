@@ -458,7 +458,6 @@ struct gxp_mailbox *gxp_dci_alloc(struct gxp_mailbox_manager *mgr,
 	struct gxp_dci *dci;
 	struct gxp_mailbox_args mbx_args = {
 		.type = GXP_MBOX_TYPE_GENERAL,
-		.mode = GXP_MBOX_FULL_DUPLEX,
 		.ops = &gxp_dci_gxp_mbx_ops,
 		.queue_wrap_bit = DCI_CIRCULAR_QUEUE_WRAP_BIT,
 		.cmd_elem_size = sizeof(struct gxp_dci_command),

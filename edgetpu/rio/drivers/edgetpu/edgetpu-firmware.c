@@ -23,7 +23,7 @@
 
 #include <gcip/gcip-alloc-helper.h>
 #include <gcip/gcip-common-image-header.h>
-#include <gcip/gcip-fault-inject.h>
+#include <gcip/gcip-fault-injection.h>
 #include <gcip/gcip-image-config.h>
 #include <gcip/gcip-iommu.h>
 #include <gcip/gcip-thermal.h>
@@ -1414,9 +1414,8 @@ static int edgetpu_firmware_fault_inject_init(struct edgetpu_firmware *et_fw)
 	const struct gcip_fault_inject_args args = { .dev = etdev->dev,
 						     .parent_dentry = etdev->d_entry,
 						     .pm = edgetpu_gcip_pm(etdev),
-						     .send_kci = edgetpu_kci_fault_inject,
-						     .kci_data = etdev->etkci,
-						     .name = EDGETPU_FAULT_INJECT_NAME };
+						     .send_kci = edgetpu_kci_fault_injection,
+						     .kci_data = etdev->etkci };
 	struct gcip_fault_inject *injection;
 
 	injection = gcip_fault_inject_create(&args);

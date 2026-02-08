@@ -844,7 +844,7 @@ static int kbasep_mem_pool_init(struct kbase_mem_pool *pool, size_t max_size, un
 	pool->kbdev = kbdev;
 	pool->dying = false;
 	pool->pool_supports_reclaim = support_reclaim;
-	pool->reclaim_allowed = support_reclaim;
+	pool->reclaim_allowed = false;
 	atomic_set(&pool->isolation_in_progress_cnt, 0);
 	atomic_set(&pool->defer_seq, 0);
 

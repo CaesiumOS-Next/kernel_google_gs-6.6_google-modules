@@ -29,10 +29,6 @@
 #include <linux/kfifo.h>
 #include <linux/poll.h>
 #include <linux/input.h>
-#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
-#include <goog_touch_interface.h>
-#include <linux/notifier.h>
-#endif
 #include "fps_touch_handler.h"
 
 #define FTH_DEV "fth"
@@ -168,26 +164,11 @@ static void fth_touch_disconnect(struct input_handle *handle)
 	kfree(handle);
 }
 
-static void fth_touch_on_palm_detected(struct input_handle *handle) {
-	struct fth_drvdata *drvdata = handle->handler->private;
-	struct finger_detect_touch *fd_touch = &drvdata->fd_touch;
-	struct touch_event *event = NULL;
-	int slot = 0;
-
-	if (!fd_touch->config.touch_fd_enable)
-		return;
-
-	pr_info("Canceling touch events for the palm event was detected\n");
-	for (slot = 0; slot < FTH_MAX_FINGERS; slot++) {
-		event = &fd_touch->current_events[slot];
-		event->id = -1;
-		event->updated = true;
-	}
-}
-
 static void fth_touch_report_event(struct input_handle *handle,
 	unsigned int type, unsigned int code, int value)
 {
+	int touch_width = 1;
+	int display_width = 1;
 	struct fth_drvdata *drvdata = handle->handler->private;
 	struct finger_detect_touch *fd_touch = &drvdata->fd_touch;
 	struct touch_event *event = NULL;
@@ -210,37 +191,40 @@ static void fth_touch_report_event(struct input_handle *handle,
 		return;
 	}
 
+	if (drvdata->input_touch_dev) {
+		touch_width = input_abs_get_max(drvdata->input_touch_dev, ABS_MT_POSITION_X) + 1;
+		display_width = fd_touch->config.left + fd_touch->config.right;
+	}
+
 	event = &fd_touch->current_events[fd_touch->current_slot];
 	switch (code) {
 	case ABS_MT_SLOT:
-		pr_debug("ABS_MT_SLOT:%d\n", value);
 		fd_touch->current_slot = value;
 		if (!report_event)
 			event->updated = true;
 		report_event = false;
 		break;
 	case ABS_MT_TRACKING_ID:
-		pr_debug("ABS_MT_TRACKING_ID:%d\n", value);
 		event->id = value;
 		report_event = false;
 		break;
 	case ABS_MT_POSITION_X:
-		pr_debug("ABS_MT_POSITION_X:%d\n", value);
+		value = value * display_width / touch_width;
 		event->X = abs(value);
 		report_event = false;
 		break;
 	case ABS_MT_POSITION_Y:
-		pr_debug("ABS_MT_POSITION_Y:%d\n", value);
+		value = value * display_width / touch_width;
 		event->Y = abs(value);
 		report_event = false;
 		break;
 	case ABS_MT_TOUCH_MAJOR:
-		pr_debug("ABS_MT_TOUCH_MAJOR:%d\n", value);
+		value = value * display_width / touch_width;
 		event->major = value;
 		report_event = false;
 		break;
 	case ABS_MT_TOUCH_MINOR:
-		pr_debug("ABS_MT_TOUCH_MINOR:%d\n", value);
+		value = value * display_width / touch_width;
 		event->minor = value;
 		report_event = false;
 		break;
@@ -251,15 +235,7 @@ static void fth_touch_report_event(struct input_handle *handle,
 	case ABS_MT_PRESSURE:
 		report_event = false;
 		break;
-	case ABS_MT_TOOL_TYPE:
-		pr_debug("ABS_MT_TOOL_TYPE:%d\n", value);
-		if (value == MT_TOOL_PALM) {
-			fth_touch_on_palm_detected(handle);
-		}
-		report_event = false;
-		break;
 	case SYN_REPORT:
-		pr_debug("SYN_REPORT\n");
 		event->updated = true;
 		report_event = true;
 		break;
@@ -399,11 +375,7 @@ static void fth_touch_work_func(struct work_struct *work)
 					*is_finger_in = true;
 			} else {
 				if (drvdata->lptw_event_report_enabled) {
-					pr_debug("lptw finger_event.state:%d\n",
-							finger_event.state);
-					if (finger_event.state == FTH_EVENT_FINGER_DOWN) {
-						finger_event.state = FTH_EVENT_FINGER_MOVE;
-					}
+					finger_event.state = FTH_EVENT_FINGER_MOVE;
 				} else {
 					// Don't report.
 					continue;
@@ -429,11 +401,9 @@ static void fth_touch_work_func(struct work_struct *work)
 		}
 		// Report touch event to HAL and update interrupts.
 		finger_event.slot = slot;
-		if (current_event.id >= 0) {
-			finger_event.major = current_event.major;
-			finger_event.minor = current_event.minor;
-			finger_event.orientation = current_event.orientation;
-		}
+		finger_event.major = current_event.major;
+		finger_event.minor = current_event.minor;
+		finger_event.orientation = current_event.orientation;
 		finger_event.time_us = ktime_to_us(current_event.ktime_mono);
 		if (finger_event.state != FTH_EVENT_FINGER_MOVE) {
 			drvdata->current_slot_state[slot] = finger_event.state;
@@ -817,7 +787,7 @@ static int fth_dev_register(struct fth_drvdata *drvdata)
 		pr_err("cdev_add failed for fd %d\n", ret);
 		goto err_cdev_add;
 	}
-	drvdata->fth_class = class_create(THIS_MODULE, drvdata->fth_node);
+	drvdata->fth_class = class_create(drvdata->fth_node);
 	if (IS_ERR(drvdata->fth_class)) {
 		ret = PTR_ERR(drvdata->fth_class);
 		pr_err("class_create failed %d\n", ret);
@@ -841,55 +811,6 @@ err_cdev_add:
 err_alloc:
 	return ret;
 }
-
-#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
-/**
- * @brief Called to report a lptw gesture as a touch.
- *
- * @param state 0 = up, 1 = down, 2 = move
- * @param x x coordinate of the lptw gesture centroid.
- * @param y y coordinate of the lptw gesture centroid.
- * @param major major of the lptw gesture centroid.
- * @param minor minor of the lptw gesture centroid.
- * @param orientation orientation of the lptw gesture centroid.
- */
-static void fth_lptw_report_event(int state, int x, int y, int major, int minor,
-	int orientation) {
-	struct fth_touch_event_v6 event;
-	struct fth_drvdata *drvdata = fth_touch_handler.private;
-
-	memset(&event, 0, sizeof(event));
-
-	event.state = state;
-	event.X[0] = abs(x);
-	event.Y[0] = abs(y);
-	event.major = major;
-	event.minor = minor;
-	event.orientation = orientation;
-	// Use a unique finger slot so LPTW touches can be recognized.
-	event.slot = FTH_LPTW_FINGER_SLOT;
-	event.touch_valid = true;
-	event.time_us = ktime_to_us(ktime_get());
-	pr_info("lptw touch: state=%d params=(%d, %d, %d, %d, %d) time_us=%lld",
-		state, event.X[0], event.Y[0], event.major, event.minor,
-		event.orientation, event.time_us);
-
-	fth_fd_report_event(drvdata, &event);
-}
-
-static int fth_lptw_notifier_callback(struct notifier_block *nb,
-		unsigned long action, void *data)
-{
-	int *lptw_param = data;
-	fth_lptw_report_event(action, lptw_param[0], lptw_param[1],
-		lptw_param[2], lptw_param[3], lptw_param[4]);
-	return NOTIFY_OK;
-}
-
-static struct notifier_block fth_notifier_block = {
-	.notifier_call = fth_lptw_notifier_callback,
-};
-#endif
 
 /**
  * fth_probe() - Function loads hardware config from device tree
@@ -930,10 +851,6 @@ static int fth_probe(struct platform_device *pdev)
 	rc = input_register_handler(&fth_touch_handler);
 	if (rc < 0)
 		pr_err("Failed to register input handler: %d\n", rc);
-
-#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
-	goog_lptw_notifier_register(&fth_notifier_block, true);
-#endif
 end:
 	pr_debug("exit : %d\n", rc);
 	return rc;
@@ -942,9 +859,6 @@ end:
 static int fth_remove(struct platform_device *pdev)
 {
 	struct fth_drvdata *drvdata = platform_get_drvdata(pdev);
-#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
-	goog_lptw_notifier_register(&fth_notifier_block, false);
-#endif
 	mutex_destroy(&drvdata->mutex);
 	mutex_destroy(&drvdata->fd_events_mutex);
 	device_destroy(drvdata->fth_class, drvdata->fth_fd_cdev.dev);

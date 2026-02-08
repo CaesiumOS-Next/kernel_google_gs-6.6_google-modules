@@ -514,8 +514,10 @@ static void gcip_iommu_mapping_unmap_dma_buf(struct gcip_iommu_mapping *mapping)
 				  mapping->gcip_map_flags, false);
 	}
 
+	dma_resv_lock(dmabuf_mapping->dma_buf->resv, NULL);
 	dma_buf_unmap_attachment(dmabuf_mapping->dma_buf_attachment, dmabuf_mapping->sgt_default,
 				 mapping->dir);
+	dma_resv_unlock(dmabuf_mapping->dma_buf->resv);
 
 	dma_buf_detach(dmabuf_mapping->dma_buf, dmabuf_mapping->dma_buf_attachment);
 	dma_buf_put(dmabuf_mapping->dma_buf);
@@ -561,7 +563,7 @@ static void gcip_iommu_mapping_unmap_buffer(struct gcip_iommu_mapping *mapping)
 	gcip_iommu_mapping_buffer_flush_sgt(mapping);
 
 	if (!mapping->user_specified_daddr)
-		gcip_iommu_free_iova(mapping->domain, mapping->alloced_iova, mapping->size);
+		gcip_iommu_free_iova(mapping->domain, mapping->device_address, mapping->size);
 
 	mmdrop(mapping->owning_mm);
 	kfree(mapping);
@@ -623,7 +625,6 @@ static int gcip_pin_user_pages(struct device *dev, struct page **pages, unsigned
 			       struct mutex *pin_user_pages_lock)
 {
 	int ret, i;
-	struct vm_area_struct **vmas = NULL;
 	int tried;
 
 	ret = gcip_pin_user_pages_fast(pages, start_addr, num_pages, gup_flags,
@@ -634,10 +635,6 @@ static int gcip_pin_user_pages(struct device *dev, struct page **pages, unsigned
 	dev_dbg(dev, "Failed to pin user pages in fast mode (ret=%d, addr=%lu, num_pages=%d)", ret,
 		start_addr, num_pages);
 
-	/* Allocate our own vmas array non-contiguous. */
-	vmas = kvmalloc((num_pages * sizeof(*vmas)), GFP_KERNEL | __GFP_NOWARN);
-	if (!vmas)
-		return -ENOMEM;
 	/*
 	 * pin_user_pages may fail due to temporary page reference counts held
 	 * in various areas. Retry under lru_cache_disable to release additional
@@ -652,7 +649,7 @@ static int gcip_pin_user_pages(struct device *dev, struct page **pages, unsigned
 			mutex_lock(pin_user_pages_lock);
 		mmap_read_lock(current->mm);
 
-		ret = pin_user_pages(start_addr, num_pages, gup_flags, pages, vmas);
+		ret = pin_user_pages(start_addr, num_pages, gup_flags, pages);
 
 		mmap_read_unlock(current->mm);
 		if (pin_user_pages_lock)
@@ -671,7 +668,6 @@ static int gcip_pin_user_pages(struct device *dev, struct page **pages, unsigned
 		}
 		ret = 0;
 	}
-	kvfree(vmas);
 
 	return ret;
 }
@@ -1146,8 +1142,6 @@ static struct gcip_iommu_mapping *gcip_iommu_domain_map_buffer_sgt(struct gcip_i
 	mmgrab(current->mm);
 	mapping->owning_mm = current->mm;
 	mapping->device_address = sg_dma_address(sgt->sgl) + offset;
-	if (!mapping->user_specified_daddr)
-		mapping->alloced_iova = sg_dma_address(sgt->sgl);
 	mapping->gcip_map_flags = gcip_map_flags;
 	mapping->dir = GCIP_MAP_FLAGS_GET_DMA_DIRECTION(gcip_map_flags);
 	mapping->size = 0;
@@ -1422,7 +1416,9 @@ struct gcip_iommu_mapping *gcip_iommu_domain_map_dma_buf_to_iova(struct gcip_iom
 	attachment->dma_map_attrs |= GCIP_MAP_FLAGS_GET_DMA_ATTR(gcip_map_flags);
 
 	/* Map the attachment into the default domain. */
+	dma_resv_lock(dmabuf->resv, NULL);
 	sgt = dma_buf_map_attachment(attachment, dir);
+	dma_resv_unlock(dmabuf->resv);
 	if (IS_ERR(sgt)) {
 		ret = PTR_ERR(sgt);
 		dev_err(dev, "Failed to get sgt from attachment (ret=%d, name=%s, size=%lu)\n", ret,
@@ -1440,7 +1436,9 @@ struct gcip_iommu_mapping *gcip_iommu_domain_map_dma_buf_to_iova(struct gcip_iom
 	return mapping;
 
 err_map_dma_buf_sgt:
+	dma_resv_lock(dmabuf->resv, NULL);
 	dma_buf_unmap_attachment(attachment, sgt, dir);
+	dma_resv_unlock(dmabuf->resv);
 err_map_attachment:
 	dma_buf_detach(dmabuf, attachment);
 	return ERR_PTR(ret);

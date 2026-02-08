@@ -192,6 +192,10 @@ static u32 _aoc_ring_write_buffer(u8 *ring,
 
 	u32 to_write = size;
 
+	/* If wp is outside the bounds of the ring, it's probably corrupted */
+	if (wp < 0 || wp > r->size)
+		return to_write;
+
 	if (to_write > sz) {
 		/* Allow the write, but only commit the beginning */
 		to_write = sz;

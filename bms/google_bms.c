@@ -23,6 +23,8 @@
 #define gbms_err(p, fmt, ...)	\
 	pr_err("%s: " fmt, gbms_owner(p), ##__VA_ARGS__)
 
+#pragma clang diagnostic ignored "-Wenum-conversion"
+
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/module.h>
@@ -988,25 +990,12 @@ EXPORT_SYMBOL_GPL(gbms_msc_get_last_voltage_idx);
 
 /* skip tiers that have same c-rate */
 int gbms_msc_voltage_idx_merge_tiers(const struct gbms_chg_profile *profile,
-			  int vbatt, int temp_idx)
+			  int vbatt_idx, int temp_idx)
 {
 	int cc_max;
-	int vbatt_idx = 0;
 
 	if (!profile)
 		return 0;
-
-	while (vbatt_idx < profile->volt_nb_limits - 1 &&
-	       vbatt > profile->volt_limits[vbatt_idx])
-		vbatt_idx++;
-
-	if (vbatt_idx != profile->volt_nb_limits - 1) {
-		const int vt = profile->volt_limits[vbatt_idx];
-		const int headr = profile->fv_uv_resolution * 3;
-
-		if ((vt - vbatt) < headr)
-			vbatt_idx += 1;
-	}
 
 	if (temp_idx < 0 || temp_idx >= profile->temp_nb_limits)
 		return vbatt_idx;
@@ -1514,7 +1503,7 @@ int gbms_decode_eeprom_sn(char *decode_sn, const size_t max_len)
 		return ret;
 
 	/* Pack barcode area data in ASCII format */
-	strncpy(decode_sn, sn, pack_barcode_len);
+	memcpy(decode_sn, sn, pack_barcode_len);
 
 	/*
 	 * decode address
@@ -1528,7 +1517,8 @@ int gbms_decode_eeprom_sn(char *decode_sn, const size_t max_len)
 	pcb_sn = (sn[27] << 8) | sn[28];
 	tmp = (sn[25] << 8) | sn[26];
 	date = ((((tmp >> 9) & 0x3f) + 1980) * 10000) + ((tmp >> 5) & 0xf) * 100 + (tmp & 0x1F);
-	count += scnprintf(decode_sn + count, max_len, "%02d%02d%d%04X%c", sn[23], sn[24], date, pcb_sn, sn[29]);
+	count += scnprintf(decode_sn + count, max_len, "%02d%02d%d%04X%c",
+			   sn[23], sn[24], date, pcb_sn, sn[29]);
 	decode_sn[count] = '\0';
 
 	return 0;

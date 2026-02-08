@@ -7,7 +7,6 @@
  */
 
 #include <linux/alarmtimer.h>
-#include <linux/i2c.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -16,6 +15,7 @@
 #include <misc/logbuffer.h>
 #include <uapi/linux/sched/types.h>
 
+#include "max77759_helper.h"
 #include "tcpci_max77759.h"
 #include "usb_psy.h"
 #include "usb_icl_voter.h"
@@ -64,7 +64,7 @@
 struct usb_psy_data {
 	struct logbuffer *log;
 
-	struct i2c_client *tcpc_client;
+	struct device *dev;
 	struct power_supply *usb_psy;
 	struct power_supply *chg_psy;
 	struct power_supply *main_chg_psy;
@@ -177,16 +177,16 @@ EXPORT_SYMBOL_GPL(init_vote);
 
 int usb_find_chg_psy(struct usb_psy_data *usb)
 {
-	struct i2c_client *client = usb->tcpc_client;
+	struct device *dev = usb->dev;
 
 	if (IS_ERR_OR_NULL(usb->chg_psy)) {
 		if (!usb->chg_psy_name) {
-			dev_err(&client->dev, "chg_psy_name not found\n");
+			dev_err(dev, "chg_psy_name not found\n");
 			return 0;
 		}
 		usb->chg_psy = power_supply_get_by_name(usb->chg_psy_name);
 		if (IS_ERR_OR_NULL(usb->chg_psy)) {
-			dev_err(&client->dev, "chg psy not up\n");
+			dev_err(dev, "chg psy not up\n");
 			return 0;
 		}
 	}
@@ -401,7 +401,7 @@ static int usb_psy_data_get_prop(struct power_supply *psy,
 {
 	struct usb_psy_data *usb = power_supply_get_drvdata(psy);
 	struct usb_psy_ops *ops = usb->psy_ops;
-	struct i2c_client *client = usb->tcpc_client;
+	struct device *dev = usb->dev;
 	int ret;
 
 	if (!usb)
@@ -429,7 +429,7 @@ static int usb_psy_data_get_prop(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		/* Report in uv */
-		val->intval = ops->tcpc_get_vbus_voltage_max_mv(client) * 1000;
+		val->intval = ops->tcpc_get_vbus_voltage_max_mv(dev) * 1000;
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		ret = usb_psy_current_now_ma(usb, &val->intval);
@@ -437,7 +437,7 @@ static int usb_psy_data_get_prop(struct power_supply *psy,
 			return ret;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
-		val->intval = ops->tcpc_get_vbus_voltage_mv(client) * 1000;
+		val->intval = ops->tcpc_get_vbus_voltage_mv(dev) * 1000;
 		break;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
 		val->intval = usb->sdp_input_current_limit;
@@ -458,7 +458,6 @@ static int usb_psy_data_set_prop(struct power_supply *psy,
 {
 	struct usb_psy_data *usb = power_supply_get_drvdata(psy);
 	struct usb_psy_ops *ops = usb->psy_ops;
-	struct i2c_client *client = usb->tcpc_client;
 	int ret;
 
 	switch (psp) {
@@ -494,7 +493,7 @@ static int usb_psy_data_set_prop(struct power_supply *psy,
 		usb->usb_first_connected = false;
 		usb->usb_configured = false;
 		mutex_unlock(&usb->lock);
-		ops->tcpc_set_port_data_capable(client, usb->usb_type);
+		ops->tcpc_set_port_data_capable(usb->dev, usb->usb_type);
 
 		/* Expedite connect for UX notification */
 		if (usb->usb_type == POWER_SUPPLY_USB_TYPE_DCP)
@@ -830,7 +829,7 @@ static ssize_t update_sdp_enum_timeout_show(struct device *dev, struct device_at
 	struct usb_psy_data *usb;
 	bool update_sdp_enum_timeout;
 
-	plat = i2c_get_clientdata(to_i2c_client(dev));
+	plat = max777x9_get_drvdata(dev);
 	if (!plat)
 		return -EAGAIN;
 
@@ -851,7 +850,7 @@ static ssize_t update_sdp_enum_timeout_store(struct device *dev, struct device_a
 	struct max77759_plat *plat;
 	struct usb_psy_data *usb;
 
-	plat = i2c_get_clientdata(to_i2c_client(dev));
+	plat = max777x9_get_drvdata(dev);
 	if (!plat)
 		return -EAGAIN;
 
@@ -886,7 +885,7 @@ static ssize_t disable_sdp_enum_timeout_show(struct device *dev,
 	struct usb_psy_data *usb;
 	bool disable_sdp_enum_timeout;
 
-	plat = i2c_get_clientdata(to_i2c_client(dev));
+	plat = max777x9_get_drvdata(dev);
 	if (!plat)
 		return -EAGAIN;
 
@@ -909,7 +908,7 @@ static ssize_t disable_sdp_enum_timeout_store(struct device *dev,
 	bool disable_sdp_enum_timeout;
 	int ret;
 
-	plat = i2c_get_clientdata(to_i2c_client(dev));
+	plat = max777x9_get_drvdata(dev);
 	if (!plat)
 		return -EAGAIN;
 
@@ -981,7 +980,7 @@ void apply_sdp_enum_failure_wa(void *usb_psy)
 {
 	struct usb_psy_data *usb = usb_psy;
 
-	pm_wakeup_event(&usb->tcpc_client->dev, DCP_UPDATE_MS);
+	pm_wakeup_event(usb->dev, DCP_UPDATE_MS);
 	kthread_queue_work(usb->usb_type_wq, &usb->sdp_timeout_work);
 }
 EXPORT_SYMBOL_GPL(apply_sdp_enum_failure_wa);
@@ -994,12 +993,11 @@ static enum alarmtimer_restart sdp_timeout_alarm_cb(struct alarm *alarm, ktime_t
 	return ALARMTIMER_NORESTART;
 }
 
-void *usb_psy_setup(struct i2c_client *client, struct logbuffer *log,
+void *usb_psy_setup(struct device *dev, struct logbuffer *log,
 		    struct usb_psy_ops *ops, void *chip, non_compliant_bc12_callback callback)
 {
 	struct usb_psy_data *usb;
 	struct power_supply_config usb_cfg = {};
-	struct device *dev = &client->dev;
 	struct device_node *dn;
 	void *ret;
 	int retval;
@@ -1017,7 +1015,7 @@ void *usb_psy_setup(struct i2c_client *client, struct logbuffer *log,
 	if (!usb)
 		return ERR_PTR(-ENOMEM);
 
-	usb->tcpc_client = client;
+	usb->dev = dev;
 	usb->log = log;
 	usb->psy_ops = ops;
 	usb->chip = chip;
@@ -1027,7 +1025,7 @@ void *usb_psy_setup(struct i2c_client *client, struct logbuffer *log,
 
 	usb->usb_type_wq = kthread_create_worker(0, "wq-tcpm-usb-psy-usb-type");
 	if (IS_ERR_OR_NULL(usb->usb_type_wq)) {
-		dev_err(&client->dev, "wq-tcpm-usb-psy-usb-type failed to create\n");
+		dev_err(dev, "wq-tcpm-usb-psy-usb-type failed to create\n");
 		return usb->usb_type_wq;
 	}
 
@@ -1037,18 +1035,18 @@ void *usb_psy_setup(struct i2c_client *client, struct logbuffer *log,
 
 	dn = dev_of_node(dev);
 	if (!dn) {
-		dev_err(&client->dev, "of node not found\n");
+		dev_err(dev, "of node not found\n");
 		ret = ERR_PTR(-EINVAL);
 		goto unreg_usb_type_wq;
 	}
 
 	usb->chg_psy_name = (char *)of_get_property(dn, "chg-psy-name", NULL);
 	if (!usb->chg_psy_name) {
-		dev_err(&client->dev, "chg-psy-name not set\n");
+		dev_err(dev, "chg-psy-name not set\n");
 	} else {
 		usb->chg_psy = power_supply_get_by_name(usb->chg_psy_name);
 		if (IS_ERR_OR_NULL(usb->chg_psy))
-			dev_err(&client->dev, "chg psy not up\n");
+			dev_err(dev, "chg psy not up\n");
 	}
 
 	usb->main_chg_psy_name = (char *)of_get_property(dn, "main-chg-psy-name", NULL);
@@ -1182,9 +1180,7 @@ void usb_psy_teardown(void *usb_data)
 	if (!usb)
 		return;
 
-	if (usb->tcpc_client)
-		device_remove_groups(&usb->tcpc_client->dev,
-				     usb_psy_sysfs_groups);
+	device_remove_groups(usb->dev, usb_psy_sysfs_groups);
 	kthread_cancel_delayed_work_sync(&usb->sdp_icl_work);
 	kthread_cancel_delayed_work_sync(&usb->bc_icl_work);
 	kthread_cancel_delayed_work_sync(&usb->icl_work);

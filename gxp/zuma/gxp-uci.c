@@ -631,7 +631,6 @@ int gxp_uci_init(struct gxp_mcu *mcu)
 	struct gxp_uci *uci = &mcu->uci;
 	struct gxp_mailbox_args mbx_args = {
 		.type = GXP_MBOX_TYPE_GENERAL,
-		.mode = GXP_MBOX_FULL_DUPLEX,
 		.ops = &gxp_uci_gxp_mbx_ops,
 		.queue_wrap_bit = UCI_CIRCULAR_QUEUE_WRAP_BIT,
 		.cmd_elem_size = sizeof(struct gxp_uci_command),

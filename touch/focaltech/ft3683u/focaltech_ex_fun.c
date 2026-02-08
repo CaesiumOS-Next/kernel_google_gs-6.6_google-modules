@@ -647,7 +647,7 @@ static ssize_t fts_hw_reset_show(
     ssize_t count = 0;
 
     mutex_lock(&input_dev->mutex);
-    fts_reset_proc(FTS_RESET_INTERVAL);
+    fts_reset_proc(0);
     count = snprintf(buf, PAGE_SIZE, "hw reset executed\n");
     mutex_unlock(&input_dev->mutex);
 
@@ -2102,7 +2102,7 @@ static ssize_t proc_heatmap_onoff_write(struct file *filp,
         return -EINVAL;
     }
 
-    if (mode < FW_HEATMAP_MODE_DISABLE || mode > FW_HEATMAP_MODE_BASELINE) {
+    if (mode < FW_HEATMAP_MODE_DISABLE || mode > FW_HEATMAP_MODE_RAWDATA) {
         FTS_ERROR("Please input the parameters in \n \
              0: Disable firmware heatmap. \n \
              1: Enable firmware Diff heatmap. \n \

@@ -18,7 +18,6 @@
 #include <linux/delay.h>
 #include <linux/regulator/consumer.h>
 #include <linux/gpio/consumer.h>
-#include <linux/of_gpio.h>
 #include <linux/backlight.h>
 #include <drm/drm_bridge.h>
 #include <drm/drm_connector.h>
@@ -27,8 +26,8 @@
 #include <drm/drm_panel.h>
 #include <drm/drm_property.h>
 #include <drm/drm_mipi_dsi.h>
+#include <exynos_drm_connector.h>
 
-#include "../exynos_drm_connector.h"
 #include "panel-common.h"
 
 #define MAX_REGULATORS		3
@@ -774,9 +773,8 @@ struct te2_data {
 };
 
 struct ready_signal_t {
-	int gpio;
+	struct gpio_desc *gpio;
 	int irq;
-	enum of_gpio_flags gpio_flags;
 	struct completion detected;
 };
 
@@ -911,9 +909,6 @@ struct exynos_panel {
 	struct mutex crtc_lock;
 	struct mutex bl_state_lock;
 	struct exynos_bl_notifier bl_notifier;
-
-	/* Record the current CABC mode if force_off enabled */
-	enum exynos_cabc_mode current_cabc_mode;
 
 	struct mutex lp_state_lock;
 	const struct exynos_binned_lp *current_binned_lp;

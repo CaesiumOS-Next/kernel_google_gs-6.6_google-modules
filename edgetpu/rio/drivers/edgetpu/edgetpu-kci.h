@@ -16,7 +16,7 @@
 #include <linux/types.h>
 #include <linux/wait.h>
 
-#include <gcip/gcip-fault-inject.h>
+#include <gcip/gcip-fault-injection.h>
 #include <gcip/gcip-kci.h>
 #include <gcip/gcip-memory.h>
 
@@ -318,12 +318,12 @@ static inline void edgetpu_kci_update_usage_async(struct edgetpu_kci *etkci)
 }
 
 /**
- * edgetpu_kci_fault_inject() - Sends the fault injection KCI command to the firmware.
+ * edgetpu_kci_fault_injection() - Sends the fault injection KCI command to the firmware.
  * @injection: The container of fault injection data.
  *
  * Return: 0 if the command is sent successfully.
  */
-int edgetpu_kci_fault_inject(struct gcip_fault_inject *injection);
+int edgetpu_kci_fault_injection(struct gcip_fault_inject *injection);
 
 /**
  * Send BCL mitigation config via KCI to firmware.

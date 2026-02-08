@@ -272,7 +272,10 @@ struct base_external_resource {
  */
 struct base_external_resource_list {
 	__u64 count;
-	struct base_external_resource ext_res[1];
+	union {
+		struct base_external_resource __padding;
+		__DECLARE_FLEX_ARRAY(struct base_external_resource, ext_res);
+	};
 };
 
 struct base_jd_debug_copy_buffer {

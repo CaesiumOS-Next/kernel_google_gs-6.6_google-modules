@@ -13,7 +13,7 @@ gcip-objs		:= gcip-alloc-helper.o \
 			   gcip-devfreq.o \
 			   gcip-dma-fence.o \
 			   gcip-domain-pool.o \
-			   gcip-fault-inject.o \
+			   gcip-fault-injection.o \
 			   gcip-fence-array.o \
 			   gcip-fence.o \
 			   gcip-firmware.o \

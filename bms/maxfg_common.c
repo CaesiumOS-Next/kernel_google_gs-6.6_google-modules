@@ -33,6 +33,7 @@ void dump_model(struct device *dev, u16 model_start, u16 *data, int count)
 		dev_info(dev, "%x: %s\n", i + model_start, buff);
 	}
 }
+EXPORT_SYMBOL_GPL(dump_model);
 
 int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate, enum gbms_property p)
 {
@@ -111,6 +112,7 @@ int maxfg_get_fade_rate(struct device *dev, int bhi_fcn_count, int *fade_rate, e
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_get_fade_rate);
 
 static const struct maxfg_reg * maxfg_find_by_index(struct maxfg_regtags *tags, int index)
 {
@@ -124,6 +126,7 @@ const struct maxfg_reg * maxfg_find_by_tag(struct maxfg_regmap *map, enum maxfg_
 {
 	return maxfg_find_by_index(&map->regtags, tag);
 }
+EXPORT_SYMBOL_GPL(maxfg_find_by_tag);
 
 int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val)
 {
@@ -143,6 +146,7 @@ int maxfg_reg_read(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 *val)
 
 	return rtn;
 }
+EXPORT_SYMBOL_GPL(maxfg_reg_read);
 
 static int maxfg_reg_read_addr(struct maxfg_regmap *map, enum maxfg_reg_tags tag,
 			       u16 *val, u16 *addr)
@@ -187,23 +191,6 @@ static int maxfg_reg_write_verify(struct maxfg_regmap *map, enum maxfg_reg_tags 
 	return 0;
 }
 
-
-static int maxfg_reg_write(struct maxfg_regmap *map, enum maxfg_reg_tags tag, u16 val)
-{
-	const struct maxfg_reg *reg;
-	unsigned int tmp = val;
-	int rtn;
-
-	reg = maxfg_find_by_tag(map, tag);
-	if (!reg)
-		return -EINVAL;
-
-	rtn = regmap_write(map->regmap, reg->reg, tmp);
-	if (rtn)
-		pr_err("Failed to write 0x%x to 0x%x\n", tmp, reg->reg);
-
-	return rtn;
-}
 
 #define REG_HALF_HIGH(reg)     ((reg >> 8) & 0x00FF)
 #define REG_HALF_LOW(reg)      (reg & 0x00FF)
@@ -302,6 +289,7 @@ int maxfg_collect_history_data(void *buff, size_t size, bool is_por, u16 designc
 	memcpy(buff, &hist, sizeof(hist));
 	return (size_t)sizeof(hist);
 }
+EXPORT_SYMBOL_GPL(maxfg_collect_history_data);
 
 /* resistance and impedance ------------------------------------------------ */
 
@@ -316,6 +304,7 @@ int maxfg_read_resistance_avg(u16 RSense)
 
 	return reg_to_resistance_micro_ohms(ravg, RSense);
 }
+EXPORT_SYMBOL_GPL(maxfg_read_resistance_avg);
 
 int maxfg_read_resistance_raw(struct maxfg_regmap *map)
 {
@@ -328,6 +317,7 @@ int maxfg_read_resistance_raw(struct maxfg_regmap *map)
 
 	return data;
 }
+EXPORT_SYMBOL_GPL(maxfg_read_resistance_raw);
 
 int maxfg_read_resistance(struct maxfg_regmap *map, u16 RSense)
 {
@@ -339,6 +329,7 @@ int maxfg_read_resistance(struct maxfg_regmap *map, u16 RSense)
 
 	return reg_to_resistance_micro_ohms(rslow, RSense);
 }
+EXPORT_SYMBOL_GPL(maxfg_read_resistance);
 
 /* ----------------------------------------------------------------------- */
 
@@ -374,6 +365,7 @@ int maxfg_health_get_ai(struct device *dev, int bhi_acim, u16 RSense)
 
 	return bhi_acim;
 }
+EXPORT_SYMBOL_GPL(maxfg_health_get_ai);
 
 /* Capacity Estimation functions*/
 static int batt_ce_regmap_read(struct maxfg_regmap *map, const struct maxfg_reg *bcea, u32 reg, u16 *data)
@@ -426,6 +418,7 @@ int batt_ce_load_data(struct maxfg_regmap *map, struct gbatt_capacity_estimation
 		cap_esti->cap_filter_count = 0;
 	return 0;
 }
+EXPORT_SYMBOL_GPL(batt_ce_load_data);
 
 void batt_ce_dump_data(const struct gbatt_capacity_estimation *cap_esti, struct logbuffer *log)
 {
@@ -444,6 +437,7 @@ void batt_ce_dump_data(const struct gbatt_capacity_estimation *cap_esti, struct 
 			    cap_esti->estimate_state,
 			    cap_esti->cable_in);
 }
+EXPORT_SYMBOL_GPL(batt_ce_dump_data);
 
 static int batt_ce_regmap_write(struct maxfg_regmap *map,
 				const struct maxfg_reg *bcea,
@@ -494,6 +488,7 @@ void batt_ce_store_data(struct maxfg_regmap *map, struct gbatt_capacity_estimati
 				  CE_DELTA_CC_SUM_REG,
 				  cap_esti->delta_cc_sum);
 }
+EXPORT_SYMBOL_GPL(batt_ce_store_data);
 
 /* call holding &cap_esti->batt_ce_lock */
 void batt_ce_stop_estimation(struct gbatt_capacity_estimation *cap_esti, int reason)
@@ -502,6 +497,7 @@ void batt_ce_stop_estimation(struct gbatt_capacity_estimation *cap_esti, int rea
 	cap_esti->start_vfsoc = 0;
 	cap_esti->start_cc = 0;
 }
+EXPORT_SYMBOL_GPL(batt_ce_stop_estimation);
 
 int maxfg_health_write_ai(u16 act_impedance, u16 act_timerh)
 {
@@ -517,6 +513,7 @@ int maxfg_health_write_ai(u16 act_impedance, u16 act_timerh)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_health_write_ai);
 
 /* for abnormal event log */
 static enum maxfg_reg_tags fg_event_regs[] = {
@@ -578,6 +575,7 @@ int maxfg_reg_log_abnormal(struct maxfg_regmap *map, struct maxfg_regmap *map_de
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_reg_log_abnormal);
 
 int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug, char *buf)
 {
@@ -687,6 +685,7 @@ int maxfg_reg_log_data(struct maxfg_regmap *map, struct maxfg_regmap *map_debug,
 
 	return len;
 }
+EXPORT_SYMBOL_GPL(maxfg_reg_log_data);
 
 /* learning parameters */
 #define MAX_FG_LEARNING_CONFIG_NORMAL_REGS 14
@@ -734,6 +733,7 @@ void maxfg_init_fg_learn_capture_config(struct maxfg_capture_config *config,
 
 	config->data_size = (config->normal.reg_cnt + config->debug.reg_cnt) * sizeof(u16);
 }
+EXPORT_SYMBOL_GPL(maxfg_init_fg_learn_capture_config);
 
 static inline int maxfg_read_registers(struct maxfg_capture_regs *regs, u16 *buffer)
 {
@@ -770,6 +770,7 @@ int maxfg_alloc_capture_buf(struct maxfg_capture_buf *buf, int slots)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_alloc_capture_buf);
 
 void maxfg_clear_capture_buf(struct maxfg_capture_buf *buf)
 {
@@ -797,6 +798,7 @@ void maxfg_clear_capture_buf(struct maxfg_capture_buf *buf)
 	mutex_unlock(&buf->cb_rd_lock);
 	mutex_unlock(&buf->cb_wr_lock);
 }
+EXPORT_SYMBOL_GPL(maxfg_clear_capture_buf);
 
 void maxfg_free_capture_buf(struct maxfg_capture_buf *buf)
 {
@@ -814,6 +816,7 @@ void maxfg_free_capture_buf(struct maxfg_capture_buf *buf)
 	buf->cb.buf = NULL;
 	buf->slots = 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_free_capture_buf);
 
 int maxfg_capture_registers(struct maxfg_capture_buf *buf)
 {
@@ -859,6 +862,7 @@ int maxfg_capture_registers(struct maxfg_capture_buf *buf)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_capture_registers);
 
 int maxfg_capture_to_cstr(struct maxfg_capture_config *config, u16* reg_val,
 				 char* str_buf, int buf_len)
@@ -891,6 +895,7 @@ int maxfg_capture_to_cstr(struct maxfg_capture_config *config, u16* reg_val,
 
 	return len;
 }
+EXPORT_SYMBOL_GPL(maxfg_capture_to_cstr);
 
 int maxfg_show_captured_buffer(struct maxfg_capture_buf *buf, char *str_buf, int buf_len)
 {
@@ -933,6 +938,7 @@ maxfg_show_captured_buffer_exit:
 
 	return rt;
 }
+EXPORT_SYMBOL_GPL(maxfg_show_captured_buffer);
 
 /*
  * data in prev_val follows the order of fg_learning_param[]
@@ -972,12 +978,14 @@ bool maxfg_ce_relaxed(struct maxfg_regmap *regmap, const u16 relax_mask, const u
 		dpacc != prev_val[1] || dqacc != prev_val[2] ||
 		fcnom != prev_val[0];
 }
+EXPORT_SYMBOL_GPL(maxfg_ce_relaxed);
 
 bool maxfg_is_relaxed(struct maxfg_regmap *regmap, u16 *fstat, u16 mask)
 {
 	return maxfg_reg_read(regmap, MAXFG_TAG_fstat, fstat) == 0 &&
 		(*fstat & mask);
 }
+EXPORT_SYMBOL_GPL(maxfg_is_relaxed);
 
 #define MAXFG_DR_VFSOC_DELTA_DEFAULT		0
 #define MAXFG_DR_LEARN_STAGE_MIN_DEFAULT	7
@@ -1034,6 +1042,7 @@ bool maxfg_dynrel_can_relax(struct maxfg_dynrel_state *dr_state,
 
 	return allowed;
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_can_relax);
 
 int maxfg_dynrel_mark_det(struct maxfg_dynrel_state *dr_state,
 			    struct maxfg_regmap *regmap)
@@ -1058,6 +1067,7 @@ int maxfg_dynrel_mark_det(struct maxfg_dynrel_state *dr_state,
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_mark_det);
 
 int maxfg_dynrel_override_dxacc(struct maxfg_dynrel_state *dr_state,
 				struct maxfg_regmap *regmap)
@@ -1076,6 +1086,7 @@ int maxfg_dynrel_override_dxacc(struct maxfg_dynrel_state *dr_state,
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_override_dxacc);
 
 /* enable=false inhibit relaxation unless ->relcfg_allow==->relcfg_inhibit */
 int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
@@ -1084,6 +1095,7 @@ int maxfg_dynrel_relaxcfg(struct maxfg_dynrel_state *dr_state,
 	return maxfg_reg_write_verify(regmap, MAXFG_TAG_relaxcfg, enable ?
 			dr_state->relcfg_allow : dr_state->relcfg_inhibit);
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_relaxcfg);
 
 void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
 		       struct device_node *node)
@@ -1137,6 +1149,7 @@ void maxfg_dynrel_init(struct maxfg_dynrel_state *dr_state,
 		value = MAXFG_DR_VFOCV_MV_INHIB_MAX_DEFAULT;
 	dr_state->vfocv_inhibit.max = micro_volt_to_reg(value * 1000);
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_init);
 
 void maxfg_dynrel_log_cfg(struct logbuffer *mon, struct device *dev,
 			  const struct maxfg_dynrel_state *dr_state)
@@ -1151,6 +1164,7 @@ void maxfg_dynrel_log_cfg(struct logbuffer *mon, struct device *dev,
 		dr_state->relcfg_allow, dr_state->relcfg_inhibit,
 		dr_state->override_mode);
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_log_cfg);
 
 static void maxfg_dynrel_log__(struct logbuffer *mon, struct device *dev,
 			       const struct maxfg_dynrel_state *dr_state,
@@ -1180,6 +1194,7 @@ void maxfg_dynrel_log_rel(struct logbuffer *mon, struct device *dev, u16 fstat,
 	maxfg_dynrel_log__(mon, dev, dr_state, fstat, dr_state->vfocv_det,
 			   dr_state->vfsoc_det, dr_state->temp_det);
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_log_rel);
 
 void maxfg_dynrel_log(struct logbuffer *mon, struct device *dev, u16 fstat,
 		      const struct maxfg_dynrel_state *dr_state)
@@ -1187,9 +1202,10 @@ void maxfg_dynrel_log(struct logbuffer *mon, struct device *dev, u16 fstat,
 	maxfg_dynrel_log__(mon, dev, dr_state, fstat, dr_state->vfocv_last,
 			   dr_state->vfsoc_last, dr_state->temp_last);
 }
+EXPORT_SYMBOL_GPL(maxfg_dynrel_log);
 
 int maxfg_aafv_scan_inputs(const char *inputs, const int input_sz,
-			   struct aafv_fg_config* cfg, const int cfg_max)
+			   struct aafv_fg_config *cfg, const int cfg_max)
 {
 	int idx = 0, pos = 0, rb;
 
@@ -1244,12 +1260,12 @@ static inline int maxfg_aafv_pick_config(const struct aafv_fg_config *cfgs, cons
 	return idx;
 }
 
-int maxfg_aafv_apply(struct logbuffer *mon, struct device *dev, struct maxfg_regmap *regmap,
-		     int aafv, const struct aafv_fg_config *cfgs, const int cfg_max,
+int maxfg_aafv_apply(struct maxfg_regmap *regmap, int aafv,
+		     const struct aafv_fg_config *cfgs, const int cfg_max,
 		     int fus_clear, int fus_shift, int *aafv_cur_index)
 {
 	const struct aafv_fg_config *cfg;
-	u16 fullsoc, fullsoc_reg, misccfg, ichgterm;
+	u16 fullsoc, fullsoc_reg, misccfg;
 	int ret, idx;
 
 	idx = maxfg_aafv_pick_config(cfgs, cfg_max, aafv);
@@ -1263,17 +1279,11 @@ int maxfg_aafv_apply(struct logbuffer *mon, struct device *dev, struct maxfg_reg
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_fullsocthr, &fullsoc_reg);
 	if (ret) {
-		pr_err("fail maxfg_aafv_apply on reading fullsocthr(%d)\n", ret);
+		pr_err("fail maxfg_aafv_apply_fus on reading misccfg(%d)\n", ret);
 		return ret;
 	}
 
-	ret = maxfg_reg_read(regmap, MAXFG_TAG_ichgterm, &ichgterm);
-	if (ret) {
-		pr_err("fail maxfg_aafv_apply on reading ichgterm(%d)\n", ret);
-		return ret;
-	}
-
-	if (fullsoc_reg == fullsoc && ichgterm == cfg->ichgterm) {
+	if ( fullsoc_reg == fullsoc) {
 		pr_info("the same aafv(%d) is already applied\n", aafv);
 		*aafv_cur_index = idx;
 		return 0;
@@ -1281,39 +1291,28 @@ int maxfg_aafv_apply(struct logbuffer *mon, struct device *dev, struct maxfg_reg
 
 	ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_fullsocthr, fullsoc);
 	if (ret) {
-		pr_err("fail maxfg_aafv_apply on writing fullsocthr(%d)\n", ret);
+		pr_err("fail update_aafv_fullsoc on wring fullsocthr(%d)\n", ret);
 		return ret;
 	}
 
 	ret = maxfg_reg_read(regmap, MAXFG_TAG_misccfg, &misccfg);
 	if (ret) {
-		pr_err("fail maxfg_aafv_apply on reading misccfg(%d)\n", ret);
+		pr_err("fail maxfg_aafv_apply_fus on reading misccfg(%d)\n", ret);
 		return ret;
 	}
 
 	misccfg = (fus_clear & misccfg) | (cfg->fus << fus_shift);
 
 	ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_misccfg, misccfg);
-	if (ret) {
-		pr_err("fail maxfg_aafv_apply on writing misccfg(%d)\n", ret);
-		return ret;
-	}
+	if (ret)
+		pr_err("fail update_aafv_fullsoc on wring misccfg(%d)\n", ret);
 
-	ichgterm = cfg->ichgterm;
-	ret = maxfg_reg_write_verify(regmap, MAXFG_TAG_ichgterm, ichgterm);
-	if (ret) {
-		pr_err("fail maxfg_aafv_apply on writing ichgterm(%d)\n", ret);
-		return ret;
-	}
-
-	gbms_logbuffer_devlog(mon, dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			      "%s fullsoc:%#x, misccfg:%#x, ichgterm:%#x",
-			      __func__, fullsoc, misccfg, ichgterm);
-
-	*aafv_cur_index = idx;
+	if (ret == 0)
+		*aafv_cur_index = idx;
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(maxfg_aafv_apply);
 
 int maxfg_aafv_restore_fus(struct maxfg_regmap *regmap, int fus_clear, int fus_shift, u16 fus)
 {
@@ -1334,13 +1333,14 @@ int maxfg_aafv_restore_fus(struct maxfg_regmap *regmap, int fus_clear, int fus_s
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(maxfg_aafv_restore_fus);
 
 /*
  * TODO: b/394147776 - question 3
  * if FUS value is only modified by host side, read MISCCFG and update
  * aafv_modified_fus flag in caller of maxfg_aafv_init
  */
-int maxfg_aafv_init(struct device_node *node, const char * prop,
+int maxfg_aafv_init(struct device_node *node, const char *prop,
 		    struct aafv_fg_config *config, int *config_limits)
 {
 	const int aafv_u32_sz = sizeof(struct aafv_fg_config) / sizeof(u32);
@@ -1365,6 +1365,7 @@ int maxfg_aafv_init(struct device_node *node, const char * prop,
 maxfg_aafv_init_no_data:
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_aafv_init);
 
 /*
  * expected input string ormat: (can be multiline)
@@ -1428,6 +1429,7 @@ maxfg_aafv_config_cleanup:
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(maxfg_aafv_config_store);
 
 ssize_t maxfg_aafv_config_show(struct aafv_fg_config *cfgs, const int config_limits,
 			       const int batt_id, char *buf)
@@ -1451,28 +1453,7 @@ ssize_t maxfg_aafv_config_show(struct aafv_fg_config *cfgs, const int config_lim
 
 	return count;
 }
-
-int maxfg_reset_max_min(struct maxfg_regmap *regmap)
-{
-	int ret = 0;
-
-	/* FG_MaxMinTemp */
-	ret = maxfg_reg_write(regmap, MAXFG_TAG_mmdt, 0x807F);
-	if (ret)
-		return ret;
-
-	/* FG_MaxMinCurr */
-	ret = maxfg_reg_write(regmap, MAXFG_TAG_mmdc, 0x807F);
-	if (ret)
-		return ret;
-
-	/* FG_MaxMinVolt */
-	ret = maxfg_reg_write(regmap, MAXFG_TAG_mmdv, 0x00FF);
-	if (ret)
-		return ret;
-
-	return 0;
-}
+EXPORT_SYMBOL_GPL(maxfg_aafv_config_show);
 
 static int maxfg_update_fcn_fcr_delta(struct maxfg_regmap *regmap,
 				      struct maxfg_bypss_charglimt *limit)
@@ -1492,7 +1473,7 @@ static int maxfg_update_fcn_fcr_delta(struct maxfg_regmap *regmap,
 	}
 
 	/* Return the 10x scaled percentage */
-	limit->fcn_fcr_delta  = (abs(fullcapnom - fullcaprep) * 1000 ) / fullcapnom;
+	limit->fcn_fcr_delta  = (abs(fullcapnom - fullcaprep) * 1000) / fullcapnom;
 
 	return 0;
 }
@@ -1531,6 +1512,7 @@ int maxfg_init_bypass_charge_limit(struct maxfg_regmap *regmap, struct device_no
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(maxfg_init_bypass_charge_limit);
 
 int maxfg_update_bypass_charge_limit(struct logbuffer *lb, struct device *dev,
 				     struct maxfg_regmap *regmap,
@@ -1556,6 +1538,7 @@ int maxfg_update_bypass_charge_limit(struct logbuffer *lb, struct device *dev,
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(maxfg_update_bypass_charge_limit);
 
 bool maxfg_need_force_fullcharge(struct logbuffer *lb, struct device *dev,
 				 struct maxfg_regmap *regmap, struct maxfg_bypss_charglimt *limit,
@@ -1588,3 +1571,4 @@ bool maxfg_need_force_fullcharge(struct logbuffer *lb, struct device *dev,
 		return true;
 	}
 }
+EXPORT_SYMBOL_GPL(maxfg_need_force_fullcharge);

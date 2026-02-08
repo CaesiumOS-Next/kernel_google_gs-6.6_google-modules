@@ -44,29 +44,30 @@ static void register_irq(struct gxp_mailbox *mailbox)
 	int err;
 	unsigned int virq;
 
-	virq = irq_of_parse_and_map(mailbox->gxp->dev->of_node, mailbox->core_id);
+	virq = irq_of_parse_and_map(mailbox->gxp->dev->of_node,
+				    mailbox->core_id);
 	if (!virq) {
-		dev_err(mailbox->gxp->dev, "Unable to parse interrupt for core %d from the DT\n",
-			mailbox->core_id);
+		pr_err("Unable to parse interrupt for core %d from the DT\n",
+		       mailbox->core_id);
 		return;
 	}
 
-	err = request_irq(virq, mailbox_irq_handler, /*flags=*/0, "gxp_aurora_mbx_irq",
-			  (void *)mailbox);
+	err = request_irq(virq, mailbox_irq_handler, /*flags=*/0,
+			  "aurora_mbx_irq", (void *)mailbox);
 	if (err) {
-		dev_err(mailbox->gxp->dev, "Unable to register IRQ num=%d; error=%d\n", virq, err);
+		pr_err("Unable to register IRQ num=%d; error=%d\n", virq, err);
 		return;
 	}
 
 	mailbox->interrupt_virq = virq;
-	dev_dbg(mailbox->gxp->dev, "Core %d's mailbox interrupt registered as IRQ %u.\n",
-		mailbox->core_id, virq);
+	pr_debug("Core %d's mailbox interrupt registered as IRQ %u.\n",
+		 mailbox->core_id, virq);
 }
 
 static void unregister_irq(struct gxp_mailbox *mailbox)
 {
 	if (mailbox->interrupt_virq) {
-		dev_dbg(mailbox->gxp->dev, "Freeing IRQ %d\n", mailbox->interrupt_virq);
+		pr_debug("Freeing IRQ %d\n", mailbox->interrupt_virq);
 		free_irq(mailbox->interrupt_virq, mailbox);
 		mailbox->interrupt_virq = 0;
 	}

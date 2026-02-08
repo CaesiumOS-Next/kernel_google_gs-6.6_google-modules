@@ -180,10 +180,11 @@ void fts_tp_state_recovery(struct fts_ts_data *ts_data)
 int fts_reset_proc(int hdelayms)
 {
     FTS_DEBUG("tp reset");
-    
+
+    /* Notify FW to discharge before reset to prevent power from VDD6 to flow into AVDD */
     fts_write_reg(0xB6, 1);
     msleep(20);
-    
+
     gpio_direction_output(fts_data->pdata->reset_gpio, 0);
     /* The minimum reset duration is 1 ms. */
     msleep(1);
@@ -866,20 +867,38 @@ static void fts_update_setting_status(struct fts_ts_data *data,
 {
     bool changed = false;
     struct fw_status_ts *current_status = &data->current_host_status;
+#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
+    struct gti_fw_status_data gti_status_data = { 0 };
+#endif // IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
 
     if (current_status->B0_b3_water_state != new_status->B0_b3_water_state) {
       current_status->B0_b3_water_state = new_status->B0_b3_water_state;
       changed = true;
+#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
+      goog_notify_fw_status_changed(data->gti,
+          current_status->B0_b3_water_state ? GTI_FW_STATUS_WATER_ENTER : GTI_FW_STATUS_WATER_EXIT,
+          &gti_status_data);
+#endif // IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
     }
 
     if (current_status->B0_b4_grip_status != new_status->B0_b4_grip_status) {
       current_status->B0_b4_grip_status = new_status->B0_b4_grip_status;
       changed = true;
+#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
+      goog_notify_fw_status_changed(data->gti,
+          current_status->B0_b4_grip_status ? GTI_FW_STATUS_GRIP_ENTER : GTI_FW_STATUS_GRIP_EXIT,
+          &gti_status_data);
+#endif // IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
     }
 
     if (current_status->B0_b5_palm_status != new_status->B0_b5_palm_status) {
       current_status->B0_b5_palm_status = new_status->B0_b5_palm_status;
       changed = true;
+#if IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
+      goog_notify_fw_status_changed(data->gti,
+          current_status->B0_b5_palm_status ? GTI_FW_STATUS_PALM_ENTER : GTI_FW_STATUS_PALM_EXIT,
+          &gti_status_data);
+#endif // IS_ENABLED(CONFIG_GOOG_TOUCH_INTERFACE)
     }
 
     if (current_status->B2_b3_v_sync_status != new_status->B2_b3_v_sync_status) {

@@ -20,7 +20,7 @@
  */
 
 #include <tl/mali_kbase_tracepoints.h>
-
+#include <mali_kbase.h>
 #include "mali_kbase_mem_flags.h"
 #include "mali_kbase_reg_track.h"
 #include "mali_kbase_csf_tiler_heap.h"
@@ -408,7 +408,13 @@ static int create_chunk(struct kbase_csf_tiler_heap *const heap)
 	if (unlikely(err))
 		goto initialization_failure;
 
-	dev_dbg(heap->kctx->kbdev->dev, "Created tiler heap chunk 0x%llX\n", chunk->gpu_va);
+	dev_info(heap->kctx->kbdev->dev, "%s: Created tiler heap chunk 0x%llX\n", __func__,
+		 chunk->gpu_va);
+
+	/*  TRACE: tiler‐chunk ALLOCATION */
+	/* Print the chunk’s GPU VA and size in Ktrce*/
+	KBASE_KTRACE_ADD(heap->kctx->kbdev, TILER_CHUNK_ALLOC, NULL, chunk->gpu_va);
+	KBASE_KTRACE_ADD(heap->kctx->kbdev, TILER_CHUNK_ALLOC_SIZE, NULL, heap->chunk_size);
 
 	KBASE_TLSTREAM_TILER_HEAP_CHUNK_ALLOC(heap->kctx->kbdev, heap->kctx->id, heap,
 					      chunk->gpu_va);
@@ -823,9 +829,9 @@ int kbase_csf_tiler_heap_init(struct kbase_context *const kctx, u32 const chunk_
 	if (kctx->running_total_tiler_heap_memory > kctx->peak_total_tiler_heap_memory)
 		kctx->peak_total_tiler_heap_memory = kctx->running_total_tiler_heap_memory;
 
-	dev_dbg(kctx->kbdev->dev,
-		"Created tiler heap 0x%llX, buffer descriptor 0x%llX, ctx_%d_%d\n", heap->gpu_va,
-		buf_desc_va, kctx->tgid, kctx->id);
+	dev_info(kctx->kbdev->dev,
+		 "Created tiler heap 0x%llX, buffer descriptor 0x%llX, ctx_%d_%d\n", heap->gpu_va,
+		 buf_desc_va, kctx->tgid, kctx->id);
 	mutex_unlock(&kctx->csf.tiler_heaps.lock);
 
 	return 0;
@@ -1064,6 +1070,13 @@ int kbase_csf_tiler_heap_alloc_new_chunk(struct kbase_context *kctx, u64 gpu_hea
 
 	mutex_unlock(&kctx->csf.tiler_heaps.lock);
 
+	dev_info(kctx->kbdev->dev, "%s: Created tiler heap chunk 0x%llX\n", __func__,
+		 chunk->gpu_va);
+	/*  TRACE: tiler‐chunk ALLOCATION  */
+	/* Print the chunk’s GPU VA and size in Ktrce*/
+	KBASE_KTRACE_ADD(heap->kctx->kbdev, TILER_CHUNK_ALLOC, NULL, chunk->gpu_va);
+	KBASE_KTRACE_ADD(heap->kctx->kbdev, TILER_CHUNK_ALLOC_SIZE, NULL, heap->chunk_size);
+
 	return err;
 unroll_chunk:
 	remove_unlinked_chunk(kctx, chunk);
@@ -1132,9 +1145,15 @@ static bool delete_chunk_physical_pages(struct kbase_csf_tiler_heap *heap, u64 c
 		 */
 	}
 
-	dev_dbg(kctx->kbdev->dev,
+	KBASE_TLSTREAM_TILER_HEAP_CHUNK_FREE(heap->kctx->kbdev, heap->kctx->id, heap, chunk_gpu_va);
+	dev_info(kctx->kbdev->dev,
 		 "Reclaim: delete chunk(0x%llx) in heap(0x%llx), header value(0x%llX)\n",
 		 chunk_gpu_va, heap->gpu_va, *hdr_val);
+
+	/*  TRACE: tiler‐chunk FREE (reclaim)  */
+	/* Print the chunk’s GPU VA and size */
+	KBASE_KTRACE_ADD(kctx->kbdev, TILER_CHUNK_FREE, NULL, chunk_gpu_va);
+	KBASE_KTRACE_ADD(kctx->kbdev, TILER_CHUNK_FREE_SIZE, NULL, heap->chunk_size);
 
 	mutex_lock(&heap->kctx->jit_evict_lock);
 	list_move(&chunk->region->jit_node, &kctx->jit_destroy_head);

@@ -16,6 +16,10 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": %s " fmt, __func__
 
+#pragma clang diagnostic ignored "-Wenum-conversion"
+#pragma clang diagnostic ignored "-Wswitch"
+#pragma clang diagnostic ignored "-Wunused-function"
+
 #include <linux/debugfs.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
@@ -102,12 +106,6 @@ static inline int reg_to_cycles(u32 val)
 {
 	/* LSB: 25% of one cycle */
 	return DIV_ROUND_CLOSEST(val * 25, 100);
-}
-
-static inline int reg_to_seconds(s16 val)
-{
-	/* LSB: 5.625 seconds */
-	return DIV_ROUND_CLOSEST((int) val * 5625, 1000);
 }
 
 static inline int reg_to_vempty(u16 val)
@@ -255,12 +253,12 @@ unlock_exit:
 	return ret;
 }
 
-static int max77779_fg_resume_check(struct max77779_fg_chip *chip)
+static int max77779_fg_init_check(struct max77779_fg_chip *chip)
 {
 	int ret = 0;
 
 	pm_runtime_get_sync(chip->dev);
-	if (!chip->init_complete || !chip->resume_complete)
+	if (!chip->init_complete)
 		ret = -EAGAIN;
 	pm_runtime_put_sync(chip->dev);
 
@@ -342,7 +340,7 @@ int max77779_external_fg_reg_read(struct device *dev, uint16_t reg, uint16_t *va
 	if (!chip || !chip->regmap.regmap)
 		return -ENODEV;
 
-	if (max77779_fg_resume_check(chip))
+	if (max77779_fg_init_check(chip))
 		return -EAGAIN;
 
 	tmp = *val;
@@ -365,7 +363,7 @@ int max77779_external_fg_reg_write(struct device *dev, uint16_t reg, uint16_t va
 	if (!chip || !chip->regmap.regmap)
 		return -ENODEV;
 
-	if (max77779_fg_resume_check(chip))
+	if (max77779_fg_init_check(chip))
 		return -EAGAIN;
 
 	mutex_lock(&chip->model_lock);
@@ -390,7 +388,7 @@ int max77779_external_fg_reg_write_nolock(struct device *dev, uint16_t reg, uint
 	if (!chip || !chip->regmap.regmap)
 		return -ENODEV;
 
-	if (max77779_fg_resume_check(chip))
+	if (max77779_fg_init_check(chip))
 		return -EAGAIN;
 
 	return regmap_write(chip->regmap.regmap, reg, val);
@@ -1268,14 +1266,51 @@ done:
 	chip->current_offset_check_done = true;
 }
 
-static int max77779_fg_monitor_log_learning(struct max77779_fg_chip *chip, enum fg_log_event event)
+static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool force_log)
+{
+	int ret, charge_counter = -1;
+	u16 repsoc, data;
+	char buf[256] = { 0 };
+
+	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_RepSOC, &data);
+	if (ret < 0)
+		return ret;
+
+	repsoc = (data >> 8) & 0x00FF;
+	if (repsoc == chip->pre_repsoc && !force_log)
+		return ret;
+
+	ret = maxfg_reg_log_data(&chip->regmap, &chip->regmap_debug, buf);
+	if (ret < 0)
+		return ret;
+
+	ret = max77779_fg_update_battery_qh_based_capacity(chip);
+	if (ret == 0)
+		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
+
+	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
+			      "0x%04X %02X:%04X %s CC:%d", MONITOR_TAG_RM, MAX77779_FG_RepSOC, data,
+			      buf, charge_counter);
+
+	chip->pre_repsoc = repsoc;
+
+	return ret;
+}
+
+static int max77779_is_relaxed(struct max77779_fg_chip *chip)
+{
+	return maxfg_ce_relaxed(&chip->regmap, MAX77779_FG_FStat_RelDt_MASK,
+			(u16*)chip->cb_lh.latest_entry);
+}
+
+static int max77779_fg_monitor_log_learning(struct max77779_fg_chip *chip, bool force)
 {
 	bool log_it, seed = !chip->cb_lh.latest_entry;
 	char* buf;
 	int ret;
 
 	/* do noting if no changes on dpacc/dqacc or relaxation */
-	log_it = event != FG_LOG_RELAX || seed ||
+	log_it = force || seed ||
 		 maxfg_ce_relaxed(&chip->regmap, MAX77779_FG_FStat_RelDt_MASK |
 				  MAX77779_FG_FStat_RelDt2_MASK, (u16*)chip->cb_lh.latest_entry);
 	if (!log_it)
@@ -1308,54 +1343,11 @@ static int max77779_fg_monitor_log_learning(struct max77779_fg_chip *chip, enum 
 	if (ret > 0)
 		gbms_logbuffer_devlog(chip->monitor_log, chip->dev,
 				      LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "0x%04X %s EVT:%d", MONITOR_TAG_LH, buf, event);
+				      "0x%04X %s", MONITOR_TAG_LH, buf);
 
 	kfree(buf);
 
 	return 0;
-}
-
-static int max77779_fg_monitor_log_data(struct max77779_fg_chip *chip, bool force_log)
-{
-	int ret, charge_counter = -1;
-	u16 repsoc, data;
-	char buf[256] = { 0 };
-
-	ret = REGMAP_READ(&chip->regmap, MAX77779_FG_RepSOC, &data);
-	if (ret < 0)
-		return ret;
-
-	repsoc = (data >> 8) & 0x00FF;
-	if (repsoc == chip->pre_repsoc && !force_log)
-		return ret;
-
-	ret = maxfg_reg_log_data(&chip->regmap, &chip->regmap_debug, buf);
-	if (ret < 0)
-		return ret;
-
-	ret = max77779_fg_update_battery_qh_based_capacity(chip);
-	if (ret == 0)
-		charge_counter = reg_to_capacity_uah(chip->current_capacity, chip);
-
-	gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-			      "0x%04X %02X:%04X %s CC:%d", MONITOR_TAG_RM, MAX77779_FG_RepSOC, data,
-			      buf, charge_counter);
-
-	/* Log learning entry when reaching 100% and each % drop for SoC < 10% */
-	if (chip->pre_repsoc > 0 && chip->pre_repsoc < 100 && repsoc == 100)
-		max77779_fg_monitor_log_learning(chip, FG_LOG_REACHING_100);
-	else if (chip->pre_repsoc <= 10 && repsoc < chip->pre_repsoc)
-		max77779_fg_monitor_log_learning(chip, FG_LOG_FALL_BELOW_10);
-
-	chip->pre_repsoc = repsoc;
-
-	return ret;
-}
-
-static int max77779_is_relaxed(struct max77779_fg_chip *chip)
-{
-	return maxfg_ce_relaxed(&chip->regmap, MAX77779_FG_FStat_RelDt_MASK,
-			(u16*)chip->cb_lh.latest_entry);
 }
 
 /* same as max77779_fg_nregister_write() */
@@ -1530,7 +1522,7 @@ static void max77779_fg_dynrelax(struct max77779_fg_chip *chip)
 static void max77779_fg_check_learning(struct max77779_fg_chip *chip)
 {
 	/* check for relaxation event and log it */
-	max77779_fg_monitor_log_learning(chip, FG_LOG_RELAX);
+	max77779_fg_monitor_log_learning(chip, false);
 	/* run dynamic relax if enabled  */
 	max77779_fg_dynrelax(chip);
 }
@@ -1547,7 +1539,7 @@ static int max77779_fg_get_property(struct power_supply *psy,
 
 	mutex_lock(&chip->model_lock);
 
-	if (max77779_fg_resume_check(chip) || !chip->model_ok) {
+	if (max77779_fg_init_check(chip) || !chip->model_ok) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}
@@ -1655,35 +1647,10 @@ static int max77779_fg_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = max77779_fg_get_temp(chip);
 		break;
-	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
-		err = REGMAP_READ(map, MAX77779_FG_TTE, &data);
-		if (err == 0)
-			val->intval = reg_to_seconds(data);
-		break;
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
-		err = REGMAP_READ(map, MAX77779_FG_TTF, &data);
-		if (err == 0)
-			val->intval = reg_to_seconds(data);
-		break;
-	case POWER_SUPPLY_PROP_TIME_TO_FULL_NOW:
-		val->intval = -1;
-		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_AVG:
 		rc = REGMAP_READ(map, MAX77779_FG_AvgVCell, &data);
 		if (rc == 0)
 			val->intval = reg_to_micro_volt(data);
-		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
-		/* LSB: 20mV */
-		err = REGMAP_READ(map, MAX77779_FG_MaxMinVolt, &data);
-		if (err == 0)
-			val->intval = ((data >> 8) & 0xFF) * 20000;
-		break;
-	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
-		/* LSB: 20mV */
-		err = REGMAP_READ(map, MAX77779_FG_MaxMinVolt, &data);
-		if (err == 0)
-			val->intval = (data & 0xFF) * 20000;
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		rc = REGMAP_READ(map, MAX77779_FG_VCell, &data);
@@ -1761,7 +1728,6 @@ static int max77779_fg_property_is_writeable(struct power_supply *psy,
 static int max77779_fg_aafv_update(struct max77779_fg_chip *chip)
 {
 	const struct aafv_fg_config *cfg;
-	struct logbuffer *mon = chip->ce_log;
 	int ret, idx;
 
 	ret = max77779_fg_usr_lock_section(&chip->regmap, MAX77779_FG_ALL_SECTION, false);
@@ -1770,7 +1736,7 @@ static int max77779_fg_aafv_update(struct max77779_fg_chip *chip)
 		return ret;
 	}
 
-	ret = maxfg_aafv_apply(mon, chip->dev, &chip->regmap, chip->aafv,
+	ret = maxfg_aafv_apply(&chip->regmap, chip->aafv,
 			       chip->aafv_cfgs, chip->aafv_config_limits,
 			       MAX77779_FG_MiscCfg_FUS_CLEAR, MAX77779_FG_MiscCfg_FUS_SHIFT,
 			       &idx);
@@ -1784,10 +1750,11 @@ static int max77779_fg_aafv_update(struct max77779_fg_chip *chip)
 		chip->aafv_cur_idx = idx;
 		chip->aafv_modified_fus = true;
 
-		gbms_logbuffer_devlog(mon, chip->dev, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
-				      "%s with cycle_count:%d fullsoc:%d%% voffset:%dmV fus:%#x ichgterm:%duA",
-				      __func__, chip->cycle_count, cfg->fullsoc, cfg->voffset,
-				      cfg->fus, reg_to_micro_amp(cfg->ichgterm, chip->RSense));
+		gbms_logbuffer_devlog(chip->monitor_log, chip->dev, LOGLEVEL_INFO, 0,
+				      LOGLEVEL_INFO,
+				      "aafv_fullsoc_update with %d %d %d %d",
+				      chip->cycle_count, cfg->fullsoc, cfg->voffset,
+				      cfg->fus);
 	}
 
 done:
@@ -1810,7 +1777,7 @@ static int max77779_gbms_fg_get_property(struct power_supply *psy,
 
 	mutex_lock(&chip->model_lock);
 
-	if (max77779_fg_resume_check(chip) || !chip->model_ok ||
+	if (max77779_fg_init_check(chip) || !chip->model_ok ||
 	    chip->model_reload != MAX77779_FG_LOAD_MODEL_IDLE) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
@@ -1887,7 +1854,7 @@ static int max77779_gbms_fg_set_property(struct power_supply *psy,
 	int rc = 0;
 
 	mutex_lock(&chip->model_lock);
-	if (max77779_fg_resume_check(chip) || chip->fw_update_mode) {
+	if (max77779_fg_init_check(chip) || chip->fw_update_mode) {
 		mutex_unlock(&chip->model_lock);
 		return -EAGAIN;
 	}
@@ -1947,9 +1914,6 @@ static int max77779_gbms_fg_set_property(struct power_supply *psy,
 		if (rc < 0)
 			dev_err(chip->dev, "failed to update bypass charge limit %d\n", rc);
 		break;
-	case GBMS_PROP_FG_EVENT_LOGGING:
-		max77779_fg_monitor_log_learning(chip, val->prop.intval);
-		break;
 	default:
 		pr_debug("%s: route to max77779_fg_set_property, psp:%d\n", __func__, psp);
 		return -ENODATA;
@@ -1967,11 +1931,8 @@ static int max77779_gbms_fg_property_is_writeable(struct power_supply *psy,
 	switch (psp) {
 	case GBMS_PROP_BATT_CE_CTRL:
 	case GBMS_PROP_HEALTH_ACT_IMPEDANCE:
-	case GBMS_PROP_FG_REG_LOGGING:
-	case GBMS_PROP_RECAL_FG:
 	case GBMS_PROP_AAFV_OFFSET:
 	case GBMS_PROP_NEED_CHARGE_TO_FULL:
-	case GBMS_PROP_FG_EVENT_LOGGING:
 		return 1;
 	default:
 		break;
@@ -2207,7 +2168,7 @@ static irqreturn_t max77779_fg_irq_thread_fn(int irq, void *obj)
 		return IRQ_NONE;
 	}
 
-	if (irq != -1 && max77779_fg_resume_check(chip)) {
+	if (irq != -1 && max77779_fg_init_check(chip)) {
 		dev_warn_ratelimited(chip->dev, "%s: irq skipped, irq%d\n", __func__, irq);
 		return IRQ_NONE;
 	}
@@ -2455,7 +2416,7 @@ int max77779_fg_enable_firmware_update(struct device *dev, bool enable) {
 
 	mutex_lock(&chip->model_lock);
 
-	if (max77779_fg_resume_check(chip))
+	if (max77779_fg_init_check(chip))
 		goto max77779_fg_enable_firmware_update_exit;
 
 	/* enable/disable irq for firmware update */
@@ -2495,7 +2456,7 @@ static int max77779_log_learn_set(void *data, u64 val)
 {
 	struct max77779_fg_chip *chip = (struct max77779_fg_chip *)data;
 
-	max77779_fg_monitor_log_learning(chip, FG_LOG_DEBUG);
+	max77779_fg_monitor_log_learning(chip, true);
 	return 0;
 }
 
@@ -3739,15 +3700,6 @@ static int max77779_fg_prop_read(gbms_tag_t tag, void *buff, size_t size,
 	case GBMS_TAG_CLHI:
 		ret = maxfg_collect_history_data(buff, size, chip->por, chip->designcap,
 						 chip->RSense, &chip->regmap, &chip->regmap_debug);
-		/* size is the idx from google_battery */
-		if (!chip->history_idx)
-			chip->history_idx = size;
-
-		if (chip->history_idx != size) {
-			ret = maxfg_reset_max_min(&chip->regmap);
-			if (ret == 0)
-				chip->history_idx = size;
-		}
 		break;
 
 	default:
@@ -3808,7 +3760,6 @@ static void max77779_fg_init_work(struct work_struct *work)
 	mutex_init(&chip->cap_estimate.batt_ce_lock);
 	chip->prev_charge_status = POWER_SUPPLY_STATUS_UNKNOWN;
 	chip->fake_capacity = -EINVAL;
-	chip->resume_complete = true;
 	chip->init_complete = true;
 	chip->bhi_acim = 0;
 
@@ -3872,10 +3823,10 @@ static struct attribute *max77779_fg_attrs[] = {
 	&dev_attr_fg_learning_events.attr,
 	&dev_attr_registers_dump.attr,
 	&dev_attr_aafv_config.attr,
+	&dev_attr_full_cap_rep.attr,
 	&dev_attr_bypass_chargelimit_fcn_delta.attr,
 	&dev_attr_bypass_chargelimit_cycle_delta.attr,
 	&dev_attr_bypass_chargelimit_mode.attr,
-	&dev_attr_full_cap_rep.attr,
 	NULL,
 };
 
@@ -4154,8 +4105,6 @@ int max77779_fg_pm_suspend(struct device *dev)
 
 	pm_runtime_get_sync(chip->dev);
 	dev_dbg(chip->dev, "%s\n", __func__);
-	chip->resume_complete = false;
-
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;
@@ -4168,8 +4117,6 @@ int max77779_fg_pm_resume(struct device *dev)
 
 	pm_runtime_get_sync(chip->dev);
 	dev_dbg(chip->dev, "%s\n", __func__);
-	chip->resume_complete = true;
-
 	pm_runtime_put_sync(chip->dev);
 
 	return 0;

@@ -13,7 +13,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
-#include <linux/of_gpio.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/sysfs.h>
@@ -276,8 +275,11 @@ static int exynos_panel_parse_gpios(struct exynos_panel *ctx)
 	if (IS_ERR(ctx->vddd_gpio))
 		ctx->vddd_gpio = NULL;
 
-	ctx->ready_signal.gpio = of_get_named_gpio_flags(dev->of_node, "rdy-gpios", 0,
-							 &ctx->ready_signal.gpio_flags);
+	ctx->ready_signal.gpio = devm_gpiod_get_optional(dev, "rdy", GPIOD_IN);
+	if (IS_ERR(ctx->ready_signal.gpio)) {
+		dev_err(dev, "failed to acquire rdy-gpios %ld\n", PTR_ERR(ctx->ready_signal.gpio));
+		return PTR_ERR(ctx->ready_signal.gpio);
+	}
 
 	dev_dbg(ctx->dev, "%s -\n", __func__);
 	return 0;
@@ -551,7 +553,6 @@ EXPORT_SYMBOL_GPL(exynos_panel_init);
 static int exynos_panel_wait_ready(struct exynos_panel *ctx)
 {
 	ktime_t start_time, end_time;
-	int rdy_active_val;
 	unsigned int timeout_ms;
 	bool panel_ready_detected = false;
 
@@ -565,13 +566,11 @@ static int exynos_panel_wait_ready(struct exynos_panel *ctx)
 	reinit_completion(&ctx->ready_signal.detected);
 	enable_irq(ctx->ready_signal.irq);
 
-	/* expected ready pin active value */
-	rdy_active_val = (ctx->ready_signal.gpio_flags & OF_GPIO_ACTIVE_LOW) == 0;
 	timeout_ms = (ctx->desc && ctx->desc->rdy_timeout_ms) ? ctx->desc->rdy_timeout_ms :
 								PANEL_READY_TIMEOUT_MS;
 
 	/* Check if the ready pin is already ready. If not just wait for the interrupt. */
-	if (gpio_get_value(ctx->ready_signal.gpio) == rdy_active_val ||
+	if (gpiod_get_value(ctx->ready_signal.gpio) ||
 	    wait_for_completion_timeout(&ctx->ready_signal.detected, msecs_to_jiffies(timeout_ms)) >
 		    0)
 		panel_ready_detected = true;
@@ -898,8 +897,8 @@ static int exynos_panel_register_irqs(struct exynos_panel *ctx)
 
 	/* 1: Panel ready */
 	init_completion(&ctx->ready_signal.detected);
-	if (gpio_is_valid(ctx->ready_signal.gpio)) {
-		ret = gpio_to_irq(ctx->ready_signal.gpio);
+	if (ctx->ready_signal.gpio) {
+		ret = gpiod_to_irq(ctx->ready_signal.gpio);
 		if (ret < 0) {
 			dev_err(ctx->dev, "Failed to get irq number for rdy_gpio: %d\n", ret);
 			return ret;
@@ -908,7 +907,7 @@ static int exynos_panel_register_irqs(struct exynos_panel *ctx)
 		irq = ret;
 		irq_set_status_flags(irq, IRQ_DISABLE_UNLAZY);
 		ret = devm_request_irq(ctx->dev, irq, panel_rdy_irq_handler,
-				       (ctx->ready_signal.gpio_flags & OF_GPIO_ACTIVE_LOW ?
+				       (gpiod_is_active_low(ctx->ready_signal.gpio) ?
 						IRQF_TRIGGER_FALLING :
 						IRQF_TRIGGER_RISING),
 				       pdev->name, ctx);
@@ -920,7 +919,7 @@ static int exynos_panel_register_irqs(struct exynos_panel *ctx)
 
 		ctx->ready_signal.irq = irq;
 		dev_info(ctx->dev, "Request rdy irq number(%d) okay (%sING_TRIGGER)\n", irq,
-			 (ctx->ready_signal.gpio_flags & OF_GPIO_ACTIVE_LOW ? "FALL" : "RIS"));
+			 (gpiod_is_active_low(ctx->ready_signal.gpio) ? "FALL" : "RIS"));
 	} else {
 		/* Panel doesn't have the ready pin */
 		ctx->ready_signal.irq = -ENOENT;
@@ -1041,7 +1040,6 @@ int exynos_panel_disable(struct drm_panel *panel)
 	ctx->current_binned_lp = NULL;
 	ctx->cabc_mode = CABC_OFF;
 	ctx->ssc_en = false;
-	ctx->current_cabc_mode = CABC_OFF;
 
 	mutex_lock(&ctx->mode_lock);
 	_exynos_panel_disable_normal_feat_locked(ctx);
@@ -1296,26 +1294,6 @@ static const char *exynos_panel_get_state_str(enum exynos_panel_state state)
 	return state_str[state];
 }
 
-static void exynos_panel_set_cabc(struct exynos_panel *ctx, enum exynos_cabc_mode cabc_mode)
-{
-	const struct exynos_panel_funcs *funcs = ctx->desc->exynos_panel_func;
-	struct backlight_device *bl = ctx->bl;
-	u8 mode;
-	bool force_off = (bl->props.brightness <= ctx->desc->min_brightness);
-
-	if (!funcs || !funcs->set_cabc_mode)
-		return;
-
-	/* force off will not change the cabc_mode node */
-	mode = !force_off ? cabc_mode : CABC_OFF;
-	if (ctx->current_cabc_mode != mode) {
-		funcs->set_cabc_mode(ctx, mode);
-		ctx->current_cabc_mode = mode;
-	}
-	ctx->cabc_mode = cabc_mode;
-	dev_dbg(ctx->dev, "set cabc mode: %d, force_off: %d\n", cabc_mode, force_off);
-}
-
 static int exynos_update_status(struct backlight_device *bl)
 {
 	struct exynos_panel *ctx = bl_get_data(bl);
@@ -1366,10 +1344,6 @@ static int exynos_update_status(struct backlight_device *bl)
 		schedule_work(&ctx->notify_brightness_changed_work);
 		dev_dbg(ctx->dev, "bl range is changed to %d\n", bl_range);
 	}
-
-	if (ctx->cabc_mode && brightness)
-		exynos_panel_set_cabc(ctx, ctx->cabc_mode);
-
 	mutex_unlock(&ctx->mode_lock);
 	return 0;
 }
@@ -2579,6 +2553,20 @@ static void exynos_panel_set_dimming(struct exynos_panel *ctx, bool dimming_on)
 		funcs->set_dimming_on(ctx, dimming_on);
 		panel_update_idle_mode_locked(ctx, false);
 	}
+	mutex_unlock(&ctx->mode_lock);
+}
+
+static void exynos_panel_set_cabc(struct exynos_panel *ctx, enum exynos_cabc_mode cabc_mode)
+{
+	const struct exynos_panel_funcs *funcs = ctx->desc->exynos_panel_func;
+
+	if (!funcs || !funcs->set_cabc_mode)
+		return;
+
+	mutex_lock(&ctx->mode_lock);
+	if (cabc_mode != ctx->cabc_mode)
+		funcs->set_cabc_mode(ctx, cabc_mode);
+
 	mutex_unlock(&ctx->mode_lock);
 }
 

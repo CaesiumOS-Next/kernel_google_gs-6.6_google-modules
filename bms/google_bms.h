@@ -134,35 +134,35 @@ struct gbms_chg_profile {
 	bool enable_switch_chg_profile;
 };
 
-typedef struct {
-    char *temp_limits[GBMS_AACT_NB_LIMITS_MAX];
-    char *cv_limits[GBMS_AACT_NB_LIMITS_MAX];
-    char *cc_limits[GBMS_AACT_NB_LIMITS_MAX];
-} aact_limits_profiles_t;
+struct aact_limits_profiles {
+	char *temp_limits[GBMS_AACT_NB_LIMITS_MAX];
+	char *cv_limits[GBMS_AACT_NB_LIMITS_MAX];
+	char *cc_limits[GBMS_AACT_NB_LIMITS_MAX];
+};
 
 /* the number should be the same as GBMS_AACT_NB_LIMITS_MAX */
-static aact_limits_profiles_t aact_all_limits = {
-    .temp_limits = {
-        "google,aact-temp-limits",
-        "google,aact-temp-limits-1",
-        "google,aact-temp-limits-2",
-        "google,aact-temp-limits-3",
-        "google,aact-temp-limits-4"
-    },
-    .cv_limits = {
-        "google,aact-cv-limits",
-        "google,aact-cv-limits-1",
-        "google,aact-cv-limits-2",
-        "google,aact-cv-limits-3",
-        "google,aact-cv-limits-4"
-    },
-    .cc_limits = {
-        "google,aact-cc-limits",
-        "google,aact-cc-limits-1",
-        "google,aact-cc-limits-2",
-        "google,aact-cc-limits-3",
-        "google,aact-cc-limits-4"
-    }
+static struct aact_limits_profiles aact_all_limits = {
+	.temp_limits = {
+		"google,aact-temp-limits",
+		"google,aact-temp-limits-1",
+		"google,aact-temp-limits-2",
+		"google,aact-temp-limits-3",
+		"google,aact-temp-limits-4"
+	},
+	.cv_limits = {
+		"google,aact-cv-limits",
+		"google,aact-cv-limits-1",
+		"google,aact-cv-limits-2",
+		"google,aact-cv-limits-3",
+		"google,aact-cv-limits-4"
+	},
+	.cc_limits = {
+		"google,aact-cc-limits",
+		"google,aact-cc-limits-1",
+		"google,aact-cc-limits-2",
+		"google,aact-cc-limits-3",
+		"google,aact-cc-limits-4"
+	}
 };
 
 #define WLC_BPP_THRESHOLD_UV	7000000
@@ -201,6 +201,8 @@ static aact_limits_profiles_t aact_all_limits = {
 	S(EXT_UNKNOWN), \
 	S(USB_UNKNOWN), \
 	S(WLC_UNKNOWN), \
+	S(WPC_MPP), \
+	S(WPC_MPP25), \
 
 #define CHG_EV_ADAPTER_STRING(s)	#s
 #define _CHG_EV_ADAPTER_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
@@ -639,10 +641,9 @@ const char *gbms_chg_ev_adapter_s(int adapter);
 #define REASON_DC_DRV		"DC_DRV"
 #define REASON_MDIS		"MDIS"
 #define REASON_THERM		"THERMAL_DAEMON_VOTER"
-#define MSC_PWR_VOTER		"msc_pwr_disable"
-#define DEFENDER_ENABLED_VOTER "DEFENDER_ENABLED_VOTER"
-#define WLC_DEFENDER_VOTABLE "WLC_DEFENDER"
+
 #define VOTABLE_FORCE_5V	"FORCE_5V"
+#define WLC_VOTER		"WLC_VOTER"
 
 #define HDA_TZ_NONE		(0)
 #define HDA_TZ_WLC_ADAPTER	(1)
@@ -767,17 +768,24 @@ int gbms_decode_eeprom_sn(char *decode_sn, const size_t max_len);
  */
 
 enum gbms_charger_modes {
-	GBMS_CHGR_MODE_CHGR_DC	= 0x20,
+	GBMS_CHGR_MODE_CHGR_DC_USB	= 0x20,
+	GBMS_CHGR_MODE_CHGR_DC_WLC	= 0x21,
 
-	GBMS_USB_BUCK_ON	= 0x30,
-	GBMS_USB_OTG_ON 	= 0x31,
-	GBMS_USB_OTG_FRS_ON	= 0x32,
+	GBMS_USB_BUCK_ON		= 0x30,
+	GBMS_USB_OTG_ON			= 0x31,
+	GBMS_USB_OTG_FRS_ON		= 0x32,
 
-	GBMS_CHGR_MODE_WLC_RX	= 0x39,
-	GBMS_CHGR_MODE_WLC_TX	= 0x40,
+	GBMS_CHGR_MODE_WLC_RX		= 0x39,
+	GBMS_CHGR_MODE_WLC_TX		= 0x40,
 
-	GBMS_POGO_VIN		= 0x50,
-	GBMS_POGO_VOUT		= 0x51,
+	GBMS_POGO_VIN			= 0x50,
+	GBMS_POGO_VOUT			= 0x51,
+};
+
+enum gbms_chg_select {
+	GBMS_CHGR_SEL_NONE,
+	GBMS_CHGR_SEL_USB,
+	GBMS_CHGR_SEL_WIRELESS,
 };
 
 #define GBMS_MODE_VOTABLE "CHARGER_MODE"
@@ -874,6 +882,9 @@ enum csi_status {
 	CSI_STATUS_NotCharging = 100,	// There will be a more specific reason
 	CSI_STATUS_Charging = 200,	// All good
 };
+
+#define CSI_POWER_UNKNOWN	-1
+#define CSI_POWER_ZERO		0
 
 #define CSI_TYPE_MASK_UNKNOWN		(1 << 0)
 #define CSI_TYPE_MASK_NONE		(1 << 1)
@@ -976,6 +987,7 @@ enum monitor_log_tags {
 	MONITOR_TAG_HV = 0x4856, /* result of EEPROM history validation */
 	MONITOR_TAG_LH = 0x4C48, /* registers snapshot by learning event */
 	MONITOR_TAG_RM = 0x524D, /* registers snapshot by regular monitor */
+	MONITOR_TAG_WL = 0x574C, /* result of wlc firmware update */
 };
 
 /* BMS firmware update */
@@ -1021,13 +1033,5 @@ enum bd_trickle_ver {
 #define CDD_CHARGE_WLC_CHARGING			BIT(4)
 #define CDD_CHARGE_EXT_CHARGING			BIT(5)
 #define CDD_CHARGE_INIT_DONE			BIT(7)
-
-enum fg_log_event {
-	FG_LOG_RELAX = 0,
-	FG_LOG_DEBUG,
-	FG_LOG_CHG_DONE,
-	FG_LOG_REACHING_100,
-	FG_LOG_FALL_BELOW_10,
-};
 
 #endif  /* __GOOGLE_BMS_H_ */

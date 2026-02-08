@@ -357,7 +357,7 @@ static struct aocc_device_entry *aocc_device_entry_for_inode(struct inode *inode
 	return NULL;
 }
 
-static char *aocc_devnode(struct device *dev, umode_t *mode)
+static char *aocc_devnode(const struct device *dev, umode_t *mode)
 {
 	if (!mode || !dev)
 		return NULL;
@@ -914,7 +914,7 @@ static int __init aocc_init(void)
 
 	aocc_major_dev = MKDEV(aocc_major, 0);
 
-	aocc_class = class_create(THIS_MODULE, AOCC_CHARDEV_NAME);
+	aocc_class = class_create(AOCC_CHARDEV_NAME);
 	if (!aocc_class) {
 		pr_err("Failed to create class\n");
 		goto fail;
@@ -942,4 +942,5 @@ static void __exit aocc_exit(void)
 module_init(aocc_init);
 module_exit(aocc_exit);
 
+MODULE_DESCRIPTION("Google AOC channel driver");
 MODULE_LICENSE("GPL v2");

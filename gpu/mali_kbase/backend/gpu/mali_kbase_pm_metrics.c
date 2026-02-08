@@ -44,8 +44,6 @@
 
 /* To get the GPU_UTIL_counter value in nano seconds unit */
 #define GPU_UTIL_SCALING_FACTOR ((u64)1E9)
-/* To get the GPU_ACTIVE value in nano seconds unit */
-#define GPU_ACTIVE_SCALING_FACTOR ((u64)1E9)
 
 #if IS_ENABLED(CONFIG_SOC_ZUMA)
 // To mitigate GPU_ACTIVE vs GPU_ITER_ACTIVE differences

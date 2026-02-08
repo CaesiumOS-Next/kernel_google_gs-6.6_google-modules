@@ -104,6 +104,7 @@ bool clear_job_from_prioq(struct bigo_core *core, struct bigo_inst *inst)
 			}
 		}
 	}
+
 	spin_unlock(&core->prioq.lock);
 	return found;
 }

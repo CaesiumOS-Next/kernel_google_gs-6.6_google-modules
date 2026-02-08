@@ -336,7 +336,7 @@ static int s2mpg11_pmic_dt_parse_pdata(struct s2mpg11_dev *iodev,
 	}
 
 	/* parse OCP_WARN information */
-	pdata->b2_ocp_warn_pin = of_get_gpio(pmic_np, 0);
+	pdata->b2_ocp_warn_pin = of_get_named_gpio(pmic_np, "gpios", 0);
 	if (pdata->b2_ocp_warn_pin < 0)
 		dev_err(iodev->dev, "b2_ocp_warn_pin < 0: %d\n",
 			pdata->b2_ocp_warn_pin);
@@ -376,7 +376,7 @@ static int s2mpg11_pmic_dt_parse_pdata(struct s2mpg11_dev *iodev,
 	pdata->b2_ocp_warn_lvl = ret ? 0 : val;
 
 	/* parse SOFT_OCP_WARN information */
-	pdata->b2_soft_ocp_warn_pin = of_get_gpio(pmic_np, 1);
+	pdata->b2_soft_ocp_warn_pin = of_get_named_gpio(pmic_np, "gpios", 1);
 	if (pdata->b2_soft_ocp_warn_pin < 0)
 		dev_err(iodev->dev, "b2_soft_ocp_warn_pin < 0: %d\n",
 			pdata->b2_soft_ocp_warn_pin);
@@ -565,7 +565,7 @@ static irqreturn_t s2mpg11_buck_ocp_irq(int irq, void *data)
 
 	mutex_lock(&s2mpg11->lock);
 
-	for (i = 0; i < S2MPG11_BUCK_MAX; i++) {
+	for (i = 0; i < 12; i++) {
 		if (s2mpg11->buck_ocp_irq[i] == irq) {
 			pr_info_ratelimited("%s : BUCK[%d] OCP IRQ, %d\n",
 					    __func__, i + 1, irq);

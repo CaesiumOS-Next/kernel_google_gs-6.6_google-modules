@@ -133,7 +133,6 @@ struct gcip_iommu_mapping_ops {
  * @type: Type of the mapping.
  * @domain: IOMMU domain where the @sgt is mapped.
  * @device_address: Assigned device address.
- * @alloced_iova: Allocated IOVA.
  * @size: Size of mapped buffer.
  * @sgt: This pointer will be set to a new allocated Scatter-gather table which contains the mapping
  *       information to the given domain received from the custom IOVA allocator.
@@ -160,7 +159,6 @@ struct gcip_iommu_mapping {
 	enum gcip_iommu_mapping_type type;
 	struct gcip_iommu_domain *domain;
 	dma_addr_t device_address;
-	dma_addr_t alloced_iova;
 	size_t size;
 	struct sg_table *sgt;
 	enum dma_data_direction dir;

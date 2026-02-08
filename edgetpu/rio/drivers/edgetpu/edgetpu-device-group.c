@@ -69,65 +69,6 @@ struct sglist_to_sync {
 	unsigned int orig_length;
 };
 
-/* Param id_type passed to get_group_by_id/get_group_by_id_locked */
-enum id_type {
-	EDGETPU_ID_TYPE_CLIENT_ID,
-	EDGETPU_ID_TYPE_VCID,
-};
-
-/*
- * Return the group with @id of the given @type for device @etdev, with a reference held on the
- * group (must call edgetpu_device_group_put when done), or NULL if no group with that @id is found.
- *
- * Caller holds etdev->groups_lock.
- */
-static struct edgetpu_device_group *get_group_by_id_locked(struct edgetpu_dev *etdev, u32 id,
-							   enum id_type type)
-{
-	struct edgetpu_device_group *group = NULL;
-	struct edgetpu_device_group *tgroup;
-	struct edgetpu_list_group *g;
-	u32 tgroup_id;
-	struct edgetpu_iommu_domain *etdomain __maybe_unused;
-
-	etdev_for_each_group(etdev, g, tgroup) {
-		switch (type) {
-		case EDGETPU_ID_TYPE_CLIENT_ID:
-			down_write(&tgroup->lock);
-			etdomain = edgetpu_group_domain_locked(tgroup);
-			if (!etdomain)
-				tgroup_id = IOMMU_PASID_INVALID;
-			else
-				tgroup_id = etdomain->pasid;
-			up_write(&tgroup->lock);
-			break;
-		case EDGETPU_ID_TYPE_VCID:
-			tgroup_id = tgroup->vcid;
-			break;
-		}
-		if (tgroup_id == id) {
-			group = edgetpu_device_group_get(tgroup);
-			break;
-		}
-	}
-	return group;
-}
-
-/*
- * Return the group with @id of the given @type for device @etdev, with a reference held on the
- * group (must call edgetpu_device_group_put when done), or NULL if no group with that @id is found.
- */
-static struct edgetpu_device_group *get_group_by_id(struct edgetpu_dev *etdev, u32 id,
-						    enum id_type type)
-{
-	struct edgetpu_device_group *group;
-
-	mutex_lock(&etdev->groups_lock);
-	group = get_group_by_id_locked(etdev, id, type);
-	mutex_unlock(&etdev->groups_lock);
-	return group;
-}
-
 static int edgetpu_group_activate_external_mailbox(struct edgetpu_device_group *group)
 {
 	if (!group->ext_mailbox)
@@ -458,8 +399,14 @@ static int edgetpu_dev_add_group(struct edgetpu_dev *etdev,
 		else
 			vcid_pool &= ~(BIT(EDGETPU_VCID_EXTRA_PARTITION) |
 				       BIT(EDGETPU_VCID_EXTRA_PARTITION_HIGH));
-		if (!vcid_pool)
-			goto error_unavailable;
+		if (!vcid_pool) {
+			etdev_err(etdev, "%s client slot unavailable (%u active groups)\n",
+				  group->mbox_attr.partition_type_high == EDGETPU_PARTITION_EXTRA ||
+				  group->mbox_attr.partition_type == EDGETPU_PARTITION_EXTRA ?
+				  "extra" : "normal", etdev->n_groups);
+			ret = -EBUSY;
+			goto error_unlock;
+		}
 		group->vcid = ffs(vcid_pool) - 1;
 		etdev->vcid_pool &= ~BIT(group->vcid);
 	}
@@ -469,28 +416,6 @@ static int edgetpu_dev_add_group(struct edgetpu_dev *etdev,
 
 	mutex_unlock(&etdev->groups_lock);
 	return 0;
-
-error_unavailable:
-	if (group->mbox_attr.partition_type_high == EDGETPU_PARTITION_EXTRA) {
-		struct edgetpu_device_group *claim_group =
-			get_group_by_id_locked(etdev, EDGETPU_VCID_EXTRA_PARTITION_HIGH,
-					       EDGETPU_ID_TYPE_VCID);
-
-		etdev_err(etdev, "error creating new client: extra high partition already claimed");
-		if (claim_group) {
-			struct edgetpu_client *claim_client = claim_group->client;
-
-			etdev_err(etdev, "by client/group %u pid %d tgid %d limited_pid %d",
-				  claim_group->group_id, claim_client->pid, claim_client->tgid,
-				  claim_client->limited_pid);
-			edgetpu_device_group_put(claim_group);
-		}
-	} else {
-		etdev_err(etdev, "%s client slot unavailable (%u active groups)\n",
-			  group->mbox_attr.partition_type == EDGETPU_PARTITION_EXTRA ?
-			  "extra" : "normal", etdev->n_groups);
-	}
-	ret = -EBUSY;
 
 error_unlock:
 	mutex_unlock(&etdev->groups_lock);
@@ -1403,6 +1328,49 @@ error_detach:
 out_unlock:
 	up_write(&group->lock);
 	return ret;
+}
+
+/* TODO(b/312575591) Simplify this function when the JOB_LOCKUP rKCI switches to client_id. */
+/*
+ * Return the group with @id of the given @type for device @etdev, with a reference held on the
+ * group (must call edgetpu_device_group_put when done), or NULL if no group with that @id is found.
+ */
+enum id_type {
+	EDGETPU_ID_TYPE_CLIENT_ID,
+	EDGETPU_ID_TYPE_VCID,
+};
+static struct edgetpu_device_group *get_group_by_id(struct edgetpu_dev *etdev, u32 id,
+						    enum id_type type)
+{
+	struct edgetpu_device_group *group = NULL;
+	struct edgetpu_device_group *tgroup;
+	struct edgetpu_list_group *g;
+	u32 tgroup_id;
+	struct edgetpu_iommu_domain *etdomain __maybe_unused;
+
+	mutex_lock(&etdev->groups_lock);
+	etdev_for_each_group(etdev, g, tgroup) {
+		switch (type) {
+		case EDGETPU_ID_TYPE_CLIENT_ID:
+			down_write(&tgroup->lock);
+			etdomain = edgetpu_group_domain_locked(tgroup);
+			if (!etdomain)
+				tgroup_id = IOMMU_PASID_INVALID;
+			else
+				tgroup_id = etdomain->pasid;
+			up_write(&tgroup->lock);
+			break;
+		case EDGETPU_ID_TYPE_VCID:
+			tgroup_id = tgroup->vcid;
+			break;
+		}
+		if (tgroup_id == id) {
+			group = edgetpu_device_group_get(tgroup);
+			break;
+		}
+	}
+	mutex_unlock(&etdev->groups_lock);
+	return group;
 }
 
 void edgetpu_handle_client_fatal_error_notify(struct edgetpu_dev *etdev, u32 client_id)

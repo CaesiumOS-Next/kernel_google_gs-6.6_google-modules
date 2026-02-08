@@ -10,6 +10,7 @@
 #include <core/ufshcd-priv.h>
 #include <linux/workqueue.h>
 #include <misc/sbbm.h>
+#include <ufs/ufs.h>
 #include "ufs-pixel.h"
 #include "ufs-pixel-crypto.h"
 #if IS_ENABLED(CONFIG_SCSI_UFS_PIXEL_FIPS140)
@@ -696,7 +697,6 @@ static void pixel_ufs_check_int_errors(void *data, struct ufs_hba *hba,
 				bool queue_eh_work)
 {
 	enum pixel_event_type event = EVENT_UNDEF;
-	u32 status = 0;
 
 	if (!queue_eh_work)
 		return;
@@ -705,7 +705,6 @@ static void pixel_ufs_check_int_errors(void *data, struct ufs_hba *hba,
 		event = EVENT_INTR_FATAL_ERR;
 	else if (hba->errors & UIC_ERROR) {
 		event = EVENT_INTR_UIC_ERR;
-		status = hba->uic_error;
 	} else if (hba->errors & UFSHCD_UIC_HIBERN8_MASK) {
 		event = EVENT_INTR_H8_ERR;
 	}
@@ -719,21 +718,6 @@ static void pixel_ufs_send_command(void *data, struct ufs_hba *hba,
 {
 	pixel_ufs_update_io_stats(hba, lrbp, true);
 	pixel_ufs_trace_upiu_cmd(hba, lrbp, true);
-}
-
-static inline int ufshcd_get_tr_ocs(struct ufshcd_lrb *lrbp)
-{
-	return le32_to_cpu(lrbp->utr_descriptor_ptr->header.dword_2) & MASK_OCS;
-}
-
-static inline int ufshcd_get_req_rsp(struct utp_upiu_rsp *ucd_rsp_ptr)
-{
-	return be32_to_cpu(ucd_rsp_ptr->header.dword_0) >> 24;
-}
-
-static inline int ufshcd_get_rsp_upiu_result(struct utp_upiu_rsp *ucd_rsp_ptr)
-{
-	return be32_to_cpu(ucd_rsp_ptr->header.dword_1) & MASK_RSP_UPIU_RESULT;
 }
 
 static void pixel_ufs_compl_command(void *data, struct ufs_hba *hba,
@@ -1782,7 +1766,7 @@ static ssize_t _name##_show(struct device *dev,			\
 	struct ufs_hba *hba = dev_get_drvdata(dev);			\
 	u32 value;						\
 	pm_runtime_get_sync(hba->dev);			\
-	ufshcd_hold(hba, false);			\
+	ufshcd_hold(hba);			\
 	value = ufshcd_readl(hba, REG##_uname);			\
 	ufshcd_release(hba);			\
 	pm_runtime_put(hba->dev);			\
@@ -1944,12 +1928,6 @@ static void pixel_ufs_update_sysfs(void *data, struct ufs_hba *hba)
 	queue_work(system_highpri_wq, &ufs->update_sysfs_work);
 }
 
-static void pixel_ufs_update_sdev(void *data, struct scsi_device *sdev)
-{
-	/* do not use slow FUA */
-	sdev->broken_fua = 1;
-}
-
 void pixel_print_cmd_log(struct ufs_hba *hba)
 {
 	struct pixel_ufs *ufs = to_pixel_ufs(hba);
@@ -2032,11 +2010,6 @@ int pixel_init(struct ufs_hba *hba, struct device *pdev,
 
 	ret = register_trace_android_vh_ufs_check_int_errors(
 				pixel_ufs_check_int_errors, NULL);
-	if (ret)
-		return ret;
-
-	ret = register_trace_android_vh_ufs_update_sdev(
-				pixel_ufs_update_sdev, NULL);
 	if (ret)
 		return ret;
 

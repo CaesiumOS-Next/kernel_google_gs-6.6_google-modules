@@ -161,12 +161,6 @@ static void vendor_bc12_alert(struct work_struct *work)
 
 	mutex_unlock(&bc12->lock);
 
-	if (run_cb) {
-		logbuffer_log(plat->log, "Invoking bc12_cb, is_bc12_running: %c",
-			      is_bc12_running ? 'y' : 'n');
-		bc12->bc12_callback(bc12->chip, is_bc12_running);
-	}
-
 	if (update->vendor_alert1_status & CHGTYPINT) {
 		if (power_supply_set_property(bc12->usb_psy,
 					      POWER_SUPPLY_PROP_USB_TYPE,
@@ -175,6 +169,12 @@ static void vendor_bc12_alert(struct work_struct *work)
 		/* Always start SDP timeout */
 		if ((update->vendor_bc_status1 & CHGTYP) == CHGTYP_SDP)
 			usb_psy_start_sdp_timeout(usb_psy_data);
+	}
+
+	if (run_cb) {
+		logbuffer_log(plat->log, "Invoking bc12_cb, is_bc12_running: %c",
+			      is_bc12_running ? 'y' : 'n');
+		bc12->bc12_callback(bc12->chip, is_bc12_running);
 	}
 
 exit:

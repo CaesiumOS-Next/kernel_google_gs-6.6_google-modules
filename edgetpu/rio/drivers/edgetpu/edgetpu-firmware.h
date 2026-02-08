@@ -62,9 +62,6 @@
 /* Firmware client_id realm IDs. */
 #define CLIENT_REALM_NS		0	/* kHostVmId  */
 
-/* The name of the fault injection debugfs node. */
-#define EDGETPU_FAULT_INJECT_NAME "fault_inject"
-
 /*
  * Load and run firmware.
  * @name: the name passed into underlying request_firmware API

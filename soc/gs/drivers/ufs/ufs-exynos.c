@@ -1113,6 +1113,12 @@ static int __device_reset(struct ufs_hba *hba)
 	return 0;
 }
 
+static void exynos_ufs_config_scsi_dev(struct scsi_device *sdev)
+{
+	/* do not use slow FUA */
+	sdev->broken_fua = 1;
+}
+
 static struct ufs_hba_variant_ops exynos_ufs_ops = {
 	.init = exynos_ufs_init,
 	.setup_clocks = exynos_ufs_setup_clocks,
@@ -1128,6 +1134,7 @@ static struct ufs_hba_variant_ops exynos_ufs_ops = {
 	.apply_dev_quirks = __apply_dev_quirks,
 	.fixup_dev_quirks = __fixup_dev_quirks,
 	.device_reset = __device_reset,
+	.config_scsi_dev = exynos_ufs_config_scsi_dev,
 };
 
 static void __check_int_errors(void *data, struct ufs_hba *hba,
@@ -1770,11 +1777,6 @@ static int exynos_ufs_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static void exynos_ufs_shutdown(struct platform_device *pdev)
-{
-	ufshcd_shutdown((struct ufs_hba *)platform_get_drvdata(pdev));
-}
-
 static const struct dev_pm_ops exynos_ufs_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(ufshcd_system_suspend, ufshcd_system_resume)
 };
@@ -1795,7 +1797,6 @@ static struct platform_driver exynos_ufs_driver = {
 	},
 	.probe = exynos_ufs_probe,
 	.remove = exynos_ufs_remove,
-	.shutdown = exynos_ufs_shutdown,
 };
 
 module_platform_driver(exynos_ufs_driver);

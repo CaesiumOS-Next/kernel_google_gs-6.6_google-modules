@@ -1764,7 +1764,7 @@ int __init edgetpu_fs_init(void)
 {
 	int ret;
 
-	edgetpu_class = class_create(THIS_MODULE, "edgetpu");
+	edgetpu_class = class_create("edgetpu");
 	if (IS_ERR(edgetpu_class)) {
 		pr_err(DRIVER_NAME " error creating edgetpu class: %ld\n",
 		       PTR_ERR(edgetpu_class));

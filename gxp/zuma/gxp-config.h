@@ -50,10 +50,6 @@
 #define GXP_MMU_REQUIRE_ATTACH 0
 #endif
 
-#ifndef GXP_MMU_GRANULARITY_IS_PAGE
-#define GXP_MMU_GRANULARITY_IS_PAGE 0
-#endif
-
 #ifndef GXP_HAS_GSA
 #define GXP_HAS_GSA 1
 #endif

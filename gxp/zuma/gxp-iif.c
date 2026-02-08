@@ -421,7 +421,6 @@ static int gxp_iif_mailbox_init(struct gxp_iif *giif)
 {
 	struct gxp_mailbox_args mbx_args = {
 		.type = GXP_MBOX_TYPE_GENERAL,
-		.mode = GXP_MBOX_TX_SIMPLEX,
 		.ops = &gxp_iif_mbx_ops,
 		.queue_wrap_bit = IIF_CIRCULAR_QUEUE_WRAP_BIT,
 		.cmd_elem_size = sizeof(struct gxp_uci_command),

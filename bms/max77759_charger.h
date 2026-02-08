@@ -7,8 +7,15 @@
 #ifndef MAX77759_CHARGER_H_
 #define MAX77759_CHARGER_H_
 
+#if IS_ENABLED(CONFIG_GPIOLIB)
+#include <linux/gpio/driver.h>
+#endif
+
 #include "max77759_usecase.h"
 #include "max777x9_bcl.h"
+#if IS_ENABLED(CONFIG_GPIOLIB)
+#include <linux/gpio/driver.h>
+#endif
 
 struct max77759_chgr_data {
 	struct device *dev;
@@ -48,7 +55,7 @@ struct max77759_chgr_data {
 	bool wlc_spoof;
 	bool thm2_sts;
 
-	int irq_gpio;
+	struct gpio_desc *irq_gpio;
 	int irq_int;
 
 	uint32_t cc_max;
@@ -89,8 +96,6 @@ struct max77759_chgr_data {
 	struct gvotable_election *msc_last_votable;
 	int chg_term_voltage;
 	int chg_term_volt_debounce;
-
-	bool msc_pwr_voter_active;
 };
 
 #endif

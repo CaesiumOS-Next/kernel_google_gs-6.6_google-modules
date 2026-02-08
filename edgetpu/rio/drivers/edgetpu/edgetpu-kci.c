@@ -783,11 +783,11 @@ bool edgetpu_kci_flush_rkci(struct edgetpu_dev *etdev)
 	return flush_work(&etdev->etkci->kci->rkci.work);
 }
 
-int edgetpu_kci_fault_inject(struct gcip_fault_inject *injection)
+int edgetpu_kci_fault_injection(struct gcip_fault_inject *injection)
 {
 	struct edgetpu_kci *etkci = injection->kci_data;
 	struct gcip_kci_command_element cmd = {
-		.code = GCIP_KCI_CODE_FAULT_INJECT,
+		.code = GCIP_KCI_CODE_FAULT_INJECTION,
 	};
 
 	return edgetpu_kci_send_cmd_with_data(etkci, &cmd, injection->opaque,

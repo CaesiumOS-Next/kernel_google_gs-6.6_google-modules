@@ -110,7 +110,7 @@ static void gxp_common_platform_reg_sscd(void)
 	/* Registers SSCD platform device */
 	if (gxp_debug_dump_is_enabled()) {
 		if (platform_device_register(&gxp_sscd_dev))
-			pr_err(GXP_NAME " Unable to register SSCD platform device\n");
+			pr_err("Unable to register SSCD platform device\n");
 	}
 }
 
@@ -1882,7 +1882,7 @@ static __init int gxp_fs_init(void)
 {
 	int ret;
 
-	gxp_class = class_create(THIS_MODULE, GXP_NAME);
+	gxp_class = class_create(GXP_NAME);
 	if (IS_ERR(gxp_class)) {
 		pr_err(GXP_NAME " error creating gxp class: %ld\n",
 		       PTR_ERR(gxp_class));

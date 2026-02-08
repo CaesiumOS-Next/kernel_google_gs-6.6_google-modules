@@ -200,8 +200,8 @@ TRACE_EVENT(sched_util_est_se,
 		strlcpy(__entry->path, path, PATH_SIZE);
 		strlcpy(__entry->comm, comm, TASK_COMM_LEN);
 		__entry->pid		= pid;
-		__entry->enqueued	= avg->util_est.enqueued & ~UTIL_AVG_UNCHANGED;
-		__entry->ewma		= avg->util_est.ewma;
+		__entry->enqueued	= avg->util_est & ~UTIL_AVG_UNCHANGED;
+		__entry->ewma		= avg->util_est & ~UTIL_AVG_UNCHANGED;
 		__entry->util		= avg->util_avg;
 	),
 
@@ -227,8 +227,8 @@ TRACE_EVENT(sched_util_est_cfs,
 	TP_fast_assign(
 		__entry->cpu		= cpu;
 		strlcpy(__entry->path, path, PATH_SIZE);
-		__entry->enqueued	= avg->util_est.enqueued & ~UTIL_AVG_UNCHANGED;
-		__entry->ewma		= avg->util_est.ewma;
+		__entry->enqueued	= avg->util_est & ~UTIL_AVG_UNCHANGED;
+		__entry->ewma		= avg->util_est & ~UTIL_AVG_UNCHANGED;
 		__entry->util		= avg->util_avg;
 	),
 
@@ -679,6 +679,57 @@ TRACE_EVENT(sched_select_task_rq_rt,
 	TP_printk("pid=%d comm=%s task_util=%lu prev_cpu=%d target=%d new_cpu=%d sync_wakeup=%d",
 		__entry->pid, __entry->comm, __entry->task_util, __entry->prev_cpu, __entry->target,
 		__entry->new_cpu, __entry->sync_wakeup)
+);
+
+TRACE_EVENT(per_task_memory_pressure,
+
+	TP_PROTO(struct task_struct *tsk, unsigned long mem_pressure),
+
+	TP_ARGS(tsk, mem_pressure),
+
+	TP_STRUCT__entry(
+		__array(char,		comm, TASK_COMM_LEN)
+		__field(pid_t,		pid)
+		__field(unsigned long,  mem_pressure)
+		),
+
+	TP_fast_assign(
+		memcpy(__entry->comm, tsk->comm, TASK_COMM_LEN);
+		__entry->pid              = tsk->pid;
+		__entry->mem_pressure     = mem_pressure;
+		),
+
+	TP_printk("pid=%d comm=%s mem_pressure_avg=%lu",
+		  __entry->pid,  __entry->comm, __entry->mem_pressure)
+);
+
+TRACE_EVENT(per_task_pmu_stats,
+
+	TP_PROTO(struct task_struct *p, int cpu, s64 cycle_delta, s64 stall_delta, s64 inst_delta),
+
+	TP_ARGS(p, cpu, cycle_delta, stall_delta, inst_delta),
+
+	TP_STRUCT__entry(
+		__array(char,		comm, TASK_COMM_LEN)
+		__field(pid_t,		pid)
+		__field(int,		cpu)
+		__field(s64,		cycle_delta)
+		__field(s64,		stall_delta)
+		__field(s64,		inst_delta)
+		),
+
+	TP_fast_assign(
+		memcpy(__entry->comm, p->comm, TASK_COMM_LEN);
+		__entry->pid              = p->pid;
+		__entry->cpu              = cpu;
+		__entry->cycle_delta      = cycle_delta;
+		__entry->stall_delta      = stall_delta;
+		__entry->inst_delta       = inst_delta;
+		),
+
+	TP_printk("pid=%d comm=%s cpu=%d cycle_delta=%lld stall_delta=%lld inst_delta=%lld",
+		  __entry->pid,  __entry->comm, __entry->cpu, __entry->cycle_delta,
+		  __entry->stall_delta, __entry->inst_delta)
 );
 
 #endif /* _SCHED_EVENTS_H */

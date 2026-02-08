@@ -63,17 +63,21 @@ int edgetpu_telemetry_init(struct edgetpu_dev *etdev)
 		if (ret)
 			break;
 
+#if IS_ENABLED(CONFIG_EDGETPU_TELEMETRY_TRACE)
 		ret = gcip_telemetry_init(&etdev->telemetry_trace[i], GCIP_TELEMETRY_TYPE_TRACE,
 					  etdev->dev);
 		if (ret) {
 			gcip_telemetry_exit(&etdev->telemetry_log[i]);
 			break;
 		}
+#endif
 	}
 
 	if (ret)
 		while (i--) {
+#if IS_ENABLED(CONFIG_EDGETPU_TELEMETRY_TRACE)
 			gcip_telemetry_exit(&etdev->telemetry_trace[i]);
+#endif
 			gcip_telemetry_exit(&etdev->telemetry_log[i]);
 		}
 
@@ -85,7 +89,9 @@ void edgetpu_telemetry_exit(struct edgetpu_dev *etdev)
 	int i;
 
 	for (i = 0; i < etdev->num_telemetry_buffers; i++) {
+#if IS_ENABLED(CONFIG_EDGETPU_TELEMETRY_TRACE)
 		gcip_telemetry_exit(&etdev->telemetry_trace[i]);
+#endif
 		gcip_telemetry_exit(&etdev->telemetry_log[i]);
 	}
 }
@@ -100,10 +106,12 @@ int edgetpu_telemetry_kci(struct edgetpu_dev *etdev)
 	if (ret)
 		return ret;
 
+#if IS_ENABLED(CONFIG_EDGETPU_TELEMETRY_TRACE)
 	ret = gcip_telemetry_kci(&etdev->telemetry_trace[0], edgetpu_kci_map_trace_buffer,
 				 etdev->etkci->kci);
 	if (ret)
 		return ret;
+#endif
 
 	return 0;
 }
@@ -138,7 +146,9 @@ void edgetpu_telemetry_irq_handler(struct edgetpu_dev *etdev)
 
 	for (i = 0; i < etdev->num_telemetry_buffers; i++) {
 		gcip_telemetry_irq_handler(&etdev->telemetry_log[i]);
+#if IS_ENABLED(CONFIG_EDGETPU_TELEMETRY_TRACE)
 		gcip_telemetry_irq_handler(&etdev->telemetry_trace[i]);
+#endif
 	}
 }
 
@@ -156,8 +166,10 @@ void edgetpu_telemetry_mappings_show(struct edgetpu_dev *etdev, struct seq_file 
 	for (i = 0; i < etdev->num_telemetry_buffers; i++) {
 		telemetry_mappings_show(&etdev->telemetry_log[i], &etdev->telemetry_log[i].memory,
 					s);
+#if IS_ENABLED(CONFIG_EDGETPU_TELEMETRY_TRACE)
 		telemetry_mappings_show(&etdev->telemetry_trace[i],
 					&etdev->telemetry_trace[i].memory, s);
+#endif
 	}
 }
 

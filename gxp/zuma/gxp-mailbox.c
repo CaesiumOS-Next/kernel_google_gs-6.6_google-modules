@@ -148,7 +148,6 @@ static struct gxp_mailbox *create_mailbox(struct gxp_mailbox_manager *mgr,
 	mailbox->csr_reg_base = mgr->get_mailbox_csr_base(mgr->gxp, core_id);
 	mailbox->data_reg_base = mgr->get_mailbox_data_base(mgr->gxp, core_id);
 	mailbox->type = args->type;
-	mailbox->mode = args->mode;
 	mailbox->queue_wrap_bit = args->queue_wrap_bit;
 	mailbox->cmd_elem_size = args->cmd_elem_size;
 	mailbox->resp_elem_size = args->resp_elem_size;
@@ -334,10 +333,7 @@ static int enable_mailbox(struct gxp_mailbox *mailbox)
 	kthread_init_work(&mailbox->response_work,
 			  gxp_mailbox_consume_responses_work);
 
-	/* Skip registering the client->AP interrupt for Tx simplex communication. */
-	if (mailbox->mode != GXP_MBOX_TX_SIMPLEX)
-		gxp_mailbox_driver_register_interrupts(mailbox);
-
+	gxp_mailbox_driver_register_interrupts(mailbox);
 	return 0;
 }
 

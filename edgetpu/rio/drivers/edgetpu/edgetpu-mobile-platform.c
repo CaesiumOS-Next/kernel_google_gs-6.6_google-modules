@@ -116,7 +116,9 @@ static int edgetpu_mobile_platform_probe(struct platform_device *pdev)
 	etdev->num_cores = EDGETPU_NUM_CORES;
 	etdev->num_telemetry_buffers = EDGETPU_NUM_CORES;
 	etdev->log_buffer_size = EDGETPU_TELEMETRY_LOG_BUFFER_SIZE;
+#if IS_ENABLED(CONFIG_EDGETPU_TELEMETRY_TRACE)
 	etdev->trace_buffer_size = EDGETPU_TELEMETRY_TRACE_BUFFER_SIZE;
+#endif
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (IS_ERR_OR_NULL(r)) {
 		dev_err(dev, "failed to get memory resource");

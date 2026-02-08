@@ -395,7 +395,6 @@ int gxp_kci_init(struct gxp_mcu *mcu)
 	struct gxp_kci *gkci = &mcu->kci;
 	struct gxp_mailbox_args mbx_args = {
 		.type = GXP_MBOX_TYPE_KCI,
-		.mode = GXP_MBOX_FULL_DUPLEX,
 		.ops = &mbx_ops,
 		.queue_wrap_bit = KCI_CIRCULAR_QUEUE_WRAP_BIT,
 		.cmd_elem_size = sizeof(struct gcip_kci_command_element),
