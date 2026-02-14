@@ -28,9 +28,6 @@ ifeq ($(KERNEL_SRC),)
  else
   BCMDHD_ROOT=$(srctree)/$(src)
  endif
- $(warning : ** Regular in-tree build BCMDHD_ROOT=$(BCMDHD_ROOT)**)
-else
- $(warning : ** out-of-tree Kbuild BCMDHD_ROOT=$(BCMDHD_ROOT)**)
 endif
 
 # For pixel build, unset SOC related configs which are defined in DHD
@@ -1081,7 +1078,6 @@ ccflags-y += $(DHDCFLAGS)
 # For in-tree model, define make rules here (KERNEL_SRC will be NULL)
 ifeq ($(KERNEL_SRC),)
 all:
-	@echo "$(MAKE) --no-print-directory -C $(KDIR) SUBDIRS=$(CURDIR) modules $(KBUILD_OPTIONS)"
 	@$(MAKE) --no-print-directory -C $(KDIR) SUBDIRS=$(CURDIR) modules $(KBUILD_OPTIONS)
 
 modules_install:
