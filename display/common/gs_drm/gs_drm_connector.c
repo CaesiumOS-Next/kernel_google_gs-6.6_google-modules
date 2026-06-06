@@ -375,6 +375,7 @@ static int gs_drm_connector_create_panel_errors_property(struct gs_drm_connector
 		{ GS_PANEL_ERR_DSI_XMIT_LEN, "DSI Invalid Transmission Len" },
 		{ GS_PANEL_ERR_DSI_RESERVED, "DSI Reserved" },
 		{ GS_PANEL_ERR_DSI_PROTOCOL_VIOLATION, "DSI Protocol Violation" },
+		{ GS_PANEL_ERR_DSI_READ_FAILURE, "DSI Read Failure" },
 		{ GS_PANEL_ERR_VLIN1, "VLIN1" },
 		{ GS_PANEL_ERR_TE, "TE" },
 		{ GS_PANEL_ERR_PPS, "PPS Setting" },

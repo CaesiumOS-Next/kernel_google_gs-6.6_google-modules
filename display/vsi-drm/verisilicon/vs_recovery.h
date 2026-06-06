@@ -12,11 +12,13 @@ struct vs_crtc;
  * @work: reference to handler for recovery operation
  * @count: how many times recovery has triggered
  * @recovering: whether recovery operation currently active
+ * @pending_recovery_srcs: atomic bitmask of pending trigger sources
  */
 struct vs_recovery {
 	struct work_struct work;
 	int count;
 	atomic_t recovering;
+	atomic_t pending_recovery_srcs;
 };
 
 /**
@@ -28,7 +30,8 @@ void vs_recovery_register(struct vs_crtc *vs_crtc);
 /**
  * vs_crtc_trigger_recovery() - Triggers crtc recovery
  * @vs_crtc: crtc object to trigger recovery for
+ * @srcs: bitmap of trigger sources causing this recovery
  */
-void vs_crtc_trigger_recovery(struct vs_crtc *vs_crtc);
+void vs_crtc_trigger_recovery(struct vs_crtc *vs_crtc, u32 srcs);
 
 #endif // _VS_RECOVERY_H_

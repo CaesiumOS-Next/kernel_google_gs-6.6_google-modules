@@ -38,6 +38,7 @@ struct dw_mipi_cdphy {
 	bool pll_ssc;
 	bool pll_enabled;
 	bool phy_in_ulps;
+	u32 lane_ovr_en;
 
 	const struct phy_ops *cdphy_ops;
 

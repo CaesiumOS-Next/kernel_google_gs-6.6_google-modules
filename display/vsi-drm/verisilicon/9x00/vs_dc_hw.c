@@ -24,6 +24,7 @@
 #include "vs_dc_reg_fe0.h"
 #include "vs_dc_reg_fe1.h"
 #include "vs_dc_sram.h"
+#include "vs_module_params.h"
 #include "display_compress/vs_dc_dsc.h"
 #include "postprocess/vs_dc_display_blender.h"
 #include "postprocess/vs_dc_postprocess.h"
@@ -4577,8 +4578,6 @@ static void dc_hw_configure_vid_urgent(struct dc_hw *hw, u8 hw_id, u8 output_id,
 static void display_set_mode(struct dc_hw *hw, u8 hw_id, u8 output_id,
 			     struct dc_hw_display_mode *mode)
 {
-	struct device *dev = hw->dev;
-	struct vs_dc *dc = dev_get_drvdata(dev);
 	u32 config = 0;
 	u32 vfp_height = 0;
 	u32 ipi_format;
@@ -4760,12 +4759,14 @@ static void display_set_mode(struct dc_hw *hw, u8 hw_id, u8 output_id,
 
 			/* Adding underrun configuration for command mode only */
 			dc_hw_configure_cmd_underrun(hw, hw_id, output_id, mode);
-			dc_hw_configure_cmd_urgent(hw, hw_id, output_id, mode, dc->disable_urgent);
+			dc_hw_configure_cmd_urgent(hw, hw_id, output_id, mode,
+						   !is_urgent_enabled());
 		} else {
 			config = dc_read(hw, VS_SET_OUTPUT_FIELD(DCREG_OUTPUT, output_id, Address));
 			dc_write(hw, VS_SET_OUTPUT_FIELD(DCREG_OUTPUT, output_id, Address),
 				 VS_SET_FIELD_VALUE(config, DCREG_OUTPUT0, WORK_MODE, VIDEO));
-			dc_hw_configure_vid_urgent(hw, hw_id, output_id, mode, dc->disable_urgent);
+			dc_hw_configure_vid_urgent(hw, hw_id, output_id, mode,
+						   !is_urgent_enabled());
 		}
 
 		if (hw->rev == DC_REV_1) {

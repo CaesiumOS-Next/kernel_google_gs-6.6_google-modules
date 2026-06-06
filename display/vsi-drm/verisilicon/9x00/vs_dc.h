@@ -27,26 +27,6 @@
 
 #define VS_DC_MAX_NUM_IRQS 48
 
-/**
- * enum coredump_source - enum of possible trigger types for subsystem coredump
- *
- * @SSCD_SRC_MANUAL: Manual coredump trigger (via debugfs) for testing
- * @SSCD_SRC_FRAME_UPDATE_TIMEOUT: Timeout waiting for frame start or frame done signal.
- *				   Only triggers timeouts during normal frame timeline.
- * @SSCD_SRC_DISABLE_TIMEOUT: Triggers on frame done timeouts during pipeline disable.
- * @SSCD_SRC_GRAM_COLLISION: Trigger when GRAM collision is detected by panel.
- *
- * User can change which errors lead to coredumps by way of module parameter.
- */
-enum coredump_source {
-	SSCD_SRC_MANUAL = 0,
-	SSCD_SRC_FRAME_UPDATE_TIMEOUT,
-	SSCD_SRC_DISABLE_TIMEOUT,
-	SSCD_SRC_GRAM_COLLISION,
-	/** @SSCD_SRC_MAX: bounding enumerator; add new entries before this */
-	SSCD_SRC_MAX,
-};
-
 static inline u8 to_vs_rotation(u32 rotation)
 {
 	u8 rot;
@@ -155,18 +135,11 @@ struct vs_dc {
 
 	u32 crtc_mask;
 
-	bool disable_hw_reset;
 	enum dc_hw_reg_dump_options hw_reg_dump_options;
-	/** @disable_crtc_recovery: whether to disable crtc recovery on flip_done timeout */
-	bool disable_crtc_recovery;
-	/** @disable_urgent: whether to disable QoS urgent level feature */
-	bool disable_urgent;
 	/** @boost_fabrt_freq: define the value to boost FABRT frequency */
 	u32 boost_fabrt_freq;
 	/** @disp_sscd: handle for display subsystem coredump */
 	struct display_sscd_info *disp_sscd;
-	/** @coredump_en: whether to enable subsystem coredump */
-	bool coredump_en;
 };
 
 void vs_dc_update_irq_statuses(struct vs_dc *dc);

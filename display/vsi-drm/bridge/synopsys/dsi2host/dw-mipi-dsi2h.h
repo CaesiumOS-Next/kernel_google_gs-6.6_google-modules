@@ -307,6 +307,7 @@ struct dw_mipi_dsi2h_config {
 struct dsi2h_bridge_state {
 	struct drm_bridge_state base;
 	bool is_seamless_modeset;
+	bool is_active_modeset;
 	struct dw_mipi_dsi2h_config cfg;
 };
 
@@ -350,6 +351,7 @@ struct dw_mipi_dsi2h {
 	struct kthread_worker dsi2h_worker;
 	struct task_struct *thread;
 	struct kthread_delayed_work ulps_dwork;
+	u32 pm_ver;
 
 	u32 max_data_lanes;
 	u32 is_cphy;

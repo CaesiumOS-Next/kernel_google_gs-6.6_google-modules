@@ -332,11 +332,12 @@ struct chg_drv {
 
 	int disable_charging;		/* retail or bd */
 	int disable_pwrsrc;		/* retail or bd  */
-	bool lowerdb_reached;		/* track recharge */
+	bool lowerbd_reached;		/* track recharge */
+	bool first_ramp_done;		/* Track if initial charge to limit is completed */
 
 	int charge_stop_level;		/* retail, userspace bd config */
 	int charge_start_level;		/* retail, userspace bd config */
-	int lowerdb_reached_fcc;	/* recharge fcc */
+	int lowerbd_reached_fcc;	/* recharge fcc */
 
 	/* pps charging */
 	bool pps_enable;
@@ -632,7 +633,8 @@ static inline void chg_init_state(struct chg_drv *chg_drv)
 	/* reset retail state */
 	chg_drv->disable_charging = -1;
 	chg_drv->disable_pwrsrc = -1;
-	chg_drv->lowerdb_reached = true;
+	chg_drv->lowerbd_reached = true;
+	chg_drv->first_ramp_done = false;
 
 	/* reset charging parameters */
 	chg_drv->fv_uv = -1;
@@ -702,7 +704,7 @@ static inline int chg_reset_state(struct chg_drv *chg_drv)
 
 	/* clear vote when disconnect */
 	gvotable_cast_int_vote(chg_drv->msc_fcc_votable, MSC_CHG_BOUND_VOTER,
-			       chg_drv->lowerdb_reached_fcc, false);
+			       chg_drv->lowerbd_reached_fcc, false);
 	/* when/if enabled */
 	GPSY_SET_PROP(chg_drv->chg_psy, GBMS_PROP_TAPER_CONTROL,
 		      GBMS_TAPER_CONTROL_OFF);
@@ -1123,19 +1125,22 @@ static int chg_work_is_charging_disabled(struct chg_drv *chg_drv, int capacity)
 	if (!chg_is_custom_enabled(upperbd, lowerbd))
 		goto done;
 
-	if (chg_drv->lowerdb_reached && upperbd <= capacity) {
-		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, lowerdb_reached=1->0, charging off\n",
+	if (chg_drv->lowerbd_reached && upperbd <= capacity) {
+		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, lowerbd_reached=1->0, charging off\n",
 			lowerbd, upperbd, capacity);
 		disable_charging = 1;
-		chg_drv->lowerdb_reached = false;
-	} else if (!chg_drv->lowerdb_reached && lowerbd < capacity) {
+		chg_drv->lowerbd_reached = false;
+		/* ramp-up completion only matters if we are connected to power */
+		if (chg_drv->online || chg_drv->present)
+			chg_drv->first_ramp_done = true;
+	} else if (!chg_drv->lowerbd_reached && lowerbd < capacity) {
 		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, charging off\n",
 			lowerbd, upperbd, capacity);
 		disable_charging = 1;
-	} else if (!chg_drv->lowerdb_reached && capacity <= lowerbd) {
-		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, lowerdb_reached=0->1, charging on\n",
+	} else if (!chg_drv->lowerbd_reached && capacity <= lowerbd) {
+		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, lowerbd_reached=0->1, charging on\n",
 			lowerbd, upperbd, capacity);
-		chg_drv->lowerdb_reached = true;
+		chg_drv->lowerbd_reached = true;
 	} else {
 		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, charging on\n",
 			lowerbd, upperbd, capacity);
@@ -1143,12 +1148,13 @@ static int chg_work_is_charging_disabled(struct chg_drv *chg_drv, int capacity)
 
 	/* slow down the charging speed when repeated charging in a certain range */
 	if (disable_charging == 0 && capacity >= lowerbd && capacity < upperbd &&
-	    (chg_drv->charging_policy == CHARGING_POLICY_VOTE_LONGLIFE))
+	    (chg_drv->charging_policy == CHARGING_POLICY_VOTE_LONGLIFE) &&
+	     chg_drv->first_ramp_done)
 		is_limit_fcc = true;
 
 done:
 	gvotable_cast_int_vote(chg_drv->msc_fcc_votable, MSC_CHG_BOUND_VOTER,
-			       chg_drv->lowerdb_reached_fcc, is_limit_fcc);
+			       chg_drv->lowerbd_reached_fcc, is_limit_fcc);
 
 	return disable_charging;
 }
@@ -2028,6 +2034,9 @@ recharge_logic:
 			lowerbd, upperbd, val);
 		bd_state->lowerbd_reached = false;
 		disable_charging = 1;
+		/* ramp-up completion only matters if we are connected to power */
+		if (chg_drv->online || chg_drv->present)
+			chg_drv->first_ramp_done = true;
 	} else if (!bd_state->lowerbd_reached && val > lowerbd) {
 		pr_info("MSC_BD lowerbd=%d, upperbd=%d, val=%d, charging off\n",
 			lowerbd, upperbd, val);
@@ -2042,12 +2051,12 @@ recharge_logic:
 	}
 
 	/* slow down the charging speed when repeated charging in a certain range */
-	if (disable_charging == 0 && val >= lowerbd && val < upperbd)
+	if (disable_charging == 0 && val >= lowerbd && val < upperbd && chg_drv->first_ramp_done)
 		is_limit_fcc = true;
 
 done:
 	gvotable_cast_int_vote(chg_drv->msc_fcc_votable, MSC_CHG_BOUND_VOTER,
-			       chg_drv->lowerdb_reached_fcc, is_limit_fcc);
+			       chg_drv->lowerbd_reached_fcc, is_limit_fcc);
 	return disable_charging;
 }
 
@@ -6201,10 +6210,10 @@ static int google_charger_probe(struct platform_device *pdev)
 		pr_info("User can override FCC and FV\n");
 
 	ret = of_property_read_u32(pdev->dev.of_node,
-				   "google,lowerdb-reached-fcc",
-				   &chg_drv->lowerdb_reached_fcc);
+				   "google,lowerbd-reached-fcc",
+				   &chg_drv->lowerbd_reached_fcc);
 	if (ret < 0)
-		chg_drv->lowerdb_reached_fcc = CHG_DEFAULT_BOUND_FCC;
+		chg_drv->lowerbd_reached_fcc = CHG_DEFAULT_BOUND_FCC;
 
 	/* NOTE: newgen charging is configured in google_battery */
 	ret = chg_init_chg_profile(chg_drv);

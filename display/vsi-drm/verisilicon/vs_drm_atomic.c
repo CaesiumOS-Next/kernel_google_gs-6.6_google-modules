@@ -36,6 +36,22 @@
 
 #define VS_DRM_WAIT_FENCE_TIMEOUT_MS 250
 
+/**
+ * bitmap_to_u64() - for putting a bitmap into u64 with size checking
+ *
+ * This is a wrapper of `bitmap_to_arr64` for when the destination is a single
+ * 64-bit integer, which conducts compiletime checking of the number of bits.
+ *
+ * @buf: address of u64 destination
+ * @bitmap: bitmap being moved to u64
+ * @nbits: number of bits being moved in the bitmap
+ */
+#define bitmap_to_u64(buf, bitmap, nbits)                  \
+	do {                                               \
+		BUILD_BUG_ON((nbits) > 64);                \
+		bitmap_to_arr64((buf), (bitmap), (nbits)); \
+	} while (0)
+
 /*
   * These functions are similar to the upstream 6.6.1 version, with the following changes:
   * - Removed support asynchronous commit, as it's not used.
@@ -575,38 +591,93 @@ static int vs_drm_atomic_check_updated_planes(struct drm_device *dev,
 	return 0;
 }
 
-static void vs_drm_atomic_check_gram_collision(struct drm_device *dev,
-					       struct drm_atomic_state *state)
+static void _execute_recovery_or_coredump_if_needed(bool *coredump_executed,
+						    struct vs_crtc_state *vs_crtc_state,
+						    struct gs_drm_connector_state *gs_conn_state,
+						    enum coredump_source source)
 {
-	struct drm_connector *connector;
-	struct drm_connector_state *new_conn_state;
-	int i;
+	struct drm_crtc *crtc = vs_crtc_state->base.crtc;
 
-	for_each_new_connector_in_state(state, connector, new_conn_state, i) {
-		if (is_gs_drm_connector_state(new_conn_state)) {
-			struct gs_drm_connector_state *gs_conn_state =
-				to_gs_connector_state(new_conn_state);
+	/*
+	 * Marks the recovery as needing to happen; does not execute until the
+	 * commit proper occurs.
+	 */
+	if (vs_crtc_state_is_recovery_source_enabled(vs_crtc_state, source)) {
+		vs_crtc_state->recovery_info.needs_recovery = true;
+		vs_crtc_state->recovery_info.recovery_srcs |= BIT(source);
 
-			/* won't trigger coredump again until the next reboot */
-			if (gs_conn_state->coredump_for_gram_collision_triggered)
-				continue;
-
-			if (test_bit(GS_PANEL_ERR_GRAM_COLLISION, gs_conn_state->panel_errors)) {
-				struct vs_crtc *vs_crtc = to_vs_crtc(new_conn_state->crtc);
-
-				dev_err(dev->dev, "GRAM collision detected from panel\n");
-
-				gs_conn_state->coredump_for_gram_collision_triggered = true;
-
-				if (!dc_is_coredump_source_enabled(dev_get_drvdata(vs_crtc->dev),
-								   SSCD_SRC_GRAM_COLLISION))
-					continue;
-
-				vs_crtc_trigger_gram_collision_coredump(vs_crtc,
-								new_conn_state->crtc->state);
-			}
-		}
+		bitmap_to_u64(&vs_crtc_state->recovery_info.panel_errors,
+			      gs_conn_state->panel_errors, GS_PANEL_ERR_MAX);
+		bitmap_to_u64(&vs_crtc_state->recovery_info.dsi_errors, gs_conn_state->dsi_errors,
+			      GS_DSI_ERR_MAX);
 	}
+
+	/*
+	 * Executes the coredump immediately. If multiple sources in the check would
+	 * coredump, we instead only do the first one, using the
+	 * coredump_executed pointer to keep track of whether we dumped this commit.
+	 */
+	if (!(*coredump_executed) && coredump_source_enabled(source)) {
+		struct vs_crtc_state *old_vs_crtc_state = to_vs_crtc_state(crtc->state);
+		u64 panel_errors, dsi_errors;
+
+		bitmap_to_u64(&dsi_errors, gs_conn_state->dsi_errors, GS_DSI_ERR_MAX);
+		bitmap_to_u64(&panel_errors, gs_conn_state->panel_errors, GS_PANEL_ERR_MAX);
+
+		*coredump_executed = true;
+		vs_crtc_trigger_panel_dsi_coredump(to_vs_crtc(crtc), old_vs_crtc_state,
+						   panel_errors, dsi_errors, source);
+	}
+}
+
+static void _check_dsi_errors(bool *coredump_executed, struct vs_crtc_state *vs_crtc_state,
+			      struct gs_drm_connector_state *gs_conn_state)
+{
+	struct drm_crtc *crtc = vs_crtc_state->base.crtc;
+	bool err_triggered = test_bit(GS_DSI_ERR_HARD_RSTN, gs_conn_state->dsi_errors);
+
+	if (err_triggered) {
+		dev_err(crtc->dev->dev, "DSI errors detected on %s: 0x%*pb\n", crtc->name,
+			GS_DSI_ERR_MAX, gs_conn_state->dsi_errors);
+		_execute_recovery_or_coredump_if_needed(coredump_executed, vs_crtc_state,
+							gs_conn_state, SSCD_SRC_DSI_ERR);
+	}
+}
+
+static void _check_panel_ddic_errors(bool *coredump_executed, struct vs_crtc_state *vs_crtc_state,
+				     struct gs_drm_connector_state *gs_conn_state)
+{
+	struct drm_crtc *crtc = vs_crtc_state->base.crtc;
+	bool err_triggered = (!bitmap_empty(gs_conn_state->panel_errors, GS_PANEL_ERR_MAX) &&
+			      !gs_panel_only_specific_error_detected_in_bitmap(
+				      gs_conn_state->panel_errors, GS_PANEL_ERR_GRAM_COLLISION));
+	if (err_triggered) {
+		dev_err(crtc->dev->dev, "DDIC errors detected on %s: 0x%*pb\n", crtc->name,
+			GS_PANEL_ERR_MAX, gs_conn_state->panel_errors);
+		_execute_recovery_or_coredump_if_needed(coredump_executed, vs_crtc_state,
+							gs_conn_state, SSCD_SRC_DDIC_ERR);
+	}
+}
+
+static void _check_panel_gram_errors(bool *coredump_executed, struct vs_crtc_state *vs_crtc_state,
+				     struct gs_drm_connector_state *gs_conn_state)
+{
+	struct drm_crtc *crtc = vs_crtc_state->base.crtc;
+	bool err_triggered = (!gs_conn_state->coredump_for_gram_collision_triggered &&
+			      test_bit(GS_PANEL_ERR_GRAM_COLLISION, gs_conn_state->panel_errors));
+
+	if (err_triggered) {
+		dev_err(crtc->dev->dev, "GRAM collision detected on %s\n", crtc->name);
+		_execute_recovery_or_coredump_if_needed(coredump_executed, vs_crtc_state,
+							gs_conn_state, SSCD_SRC_GRAM_COLLISION);
+	}
+}
+
+static void _check_panel_errors(bool *coredump_executed, struct vs_crtc_state *vs_crtc_state,
+				struct gs_drm_connector_state *gs_conn_state)
+{
+	_check_panel_gram_errors(coredump_executed, vs_crtc_state, gs_conn_state);
+	_check_panel_ddic_errors(coredump_executed, vs_crtc_state, gs_conn_state);
 }
 
 static void vs_drm_atomic_check_display_errors(struct drm_device *dev,
@@ -615,6 +686,7 @@ static void vs_drm_atomic_check_display_errors(struct drm_device *dev,
 	struct drm_connector *connector;
 	struct drm_connector_state *new_conn_state;
 	int i;
+	bool coredump_executed = false;
 
 	for_each_new_connector_in_state(state, connector, new_conn_state, i) {
 		struct drm_crtc_state *new_crtc_state;
@@ -637,30 +709,9 @@ static void vs_drm_atomic_check_display_errors(struct drm_device *dev,
 		gs_conn_state = to_gs_connector_state(new_conn_state);
 		vs_crtc_state = to_vs_crtc_state(new_crtc_state);
 
-		if (vs_crtc_state->recovery_disabled)
-			continue;
+		_check_panel_errors(&coredump_executed, vs_crtc_state, gs_conn_state);
+		_check_dsi_errors(&coredump_executed, vs_crtc_state, gs_conn_state);
 
-
-		if (test_bit(GS_DSI_ERR_HARD_RSTN, gs_conn_state->dsi_errors)) {
-			vs_crtc_state->needs_recovery = true;
-			dev_err(dev->dev, "marking crtc needs_recovery dsi:%*pb\n",
-				GS_DSI_ERR_MAX, gs_conn_state->dsi_errors);
-		}
-/* b/467541586 re-enable panel recovery */
-/*
-		if (test_bit(GS_DSI_ERR_HARD_RSTN, gs_conn_state->dsi_errors) ||
-		    !bitmap_empty(gs_conn_state->panel_errors, GS_PANEL_ERR_MAX)) {
-			// skip recovery if only GRAM collision is detected
-			if (gs_panel_only_specific_error_detected_in_bitmap(
-					gs_conn_state->panel_errors, GS_PANEL_ERR_GRAM_COLLISION))
-				continue;
-
-			vs_crtc_state->needs_recovery = true;
-			dev_err(dev->dev, "marking crtc needs_recovery dsi:%*pb panel:%*pb\n",
-				GS_DSI_ERR_MAX, gs_conn_state->dsi_errors, GS_PANEL_ERR_MAX,
-				gs_conn_state->panel_errors);
-		}
-*/
 		clear_bit(GS_DSI_ERR_HARD_RSTN, gs_conn_state->dsi_errors);
 		bitmap_clear(gs_conn_state->panel_errors, 0, GS_PANEL_ERR_MAX);
 	}
@@ -708,7 +759,6 @@ int vs_drm_atomic_check(struct drm_device *dev, struct drm_atomic_state *state)
 		}
 	}
 
-	vs_drm_atomic_check_gram_collision(dev, state);
 	vs_drm_atomic_check_display_errors(dev, state);
 
 	DPU_ATRACE_BEGIN("check_planes");

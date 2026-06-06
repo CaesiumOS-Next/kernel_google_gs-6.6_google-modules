@@ -1371,6 +1371,12 @@ enum gs_content_gray_level {
 };
 
 /**
+ * The threshold to set the error bit of DDIC read failure.
+ * The error bit will trigger recovery to reset the panel.
+ */
+#define MAX_DDIC_READ_FAIL_CNT 3
+
+/**
  * struct gs_panel - data associated with panel driver operation
  * TODO: better documentation
  */
@@ -1406,6 +1412,14 @@ struct gs_panel {
 	 * Specifically, this is a bitmap of enum gs_panel_err
 	 */
 	DECLARE_BITMAP(panel_errors, GS_PANEL_ERR_MAX);
+	/*
+	 * @ddic_read_fail_cnt: Count of the fails to read from DDIC
+	 */
+	u32 ddic_read_fail_cnt;
+	/*
+	 * @panel_errors_cnt: Count of all panel errors for telemetry
+	 */
+	u32 panel_errors_cnt[GS_PANEL_ERR_MAX];
 	/* If true, panel won't be powered off */
 	bool force_power_on;
 	struct gs_panel_idle_data idle_data;

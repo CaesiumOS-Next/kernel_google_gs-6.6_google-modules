@@ -245,8 +245,24 @@ static const struct dw_mipi_phy_g301_variant dw_mipi_phy_g301_lca01_variant = {
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_3, 5, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_hstx_sel_clklb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_3, 8, 8),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_lptx_din_dn_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_3, 9, 9),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_lptx_din_dp_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_3, 10, 10),
 	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_hstx_eqb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_4, 2, 4),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_lptx_din_dn_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_4, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_lptx_din_dp_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_4, 7, 7),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_7_oa_lane0_lptx_en_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_7, 0, 1),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_7_oa_lane0_lptx_pon_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_7, 2, 3),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_8_oa_lane0_lptx_en_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_8, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane0_ctrl_2_8_oa_lane0_lptx_pon_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE0_CTRL_2_8, 7, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_2_oa_lane1_sel_lane_cfg =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_2, 0, 0),
 	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_hstx_sel_phase0 =
@@ -255,8 +271,24 @@ static const struct dw_mipi_phy_g301_variant dw_mipi_phy_g301_lca01_variant = {
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_3, 5, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_hstx_sel_clklb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_3, 8, 8),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_lptx_din_dn_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_3, 9, 9),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_lptx_din_dp_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_3, 10, 10),
 	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_hstx_eqb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_4, 2, 4),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_lptx_din_dn_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_4, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_lptx_din_dp_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_4, 7, 7),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_7_oa_lane1_lptx_en_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_7, 0, 1),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_7_oa_lane1_lptx_pon_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_7, 2, 3),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_8_oa_lane1_lptx_en_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_8, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane1_ctrl_2_8_oa_lane1_lptx_pon_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE1_CTRL_2_8, 7, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_2_oa_lane2_sel_lane_cfg =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_2, 0, 0),
 	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_hstx_sel_phase0 =
@@ -265,8 +297,20 @@ static const struct dw_mipi_phy_g301_variant dw_mipi_phy_g301_lca01_variant = {
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_3, 5, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_hstx_sel_clklb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_3, 8, 8),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_lptx_din_dn_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_3, 9, 9),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_lptx_din_dp_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_3, 10, 10),
 	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_hstx_eqb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_4, 2, 4),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_lptx_din_dn_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_4, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_lptx_din_dp_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_4, 7, 7),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lptx_en_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_7, 0, 1),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lptx_pon_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_7, 2, 3),
 	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lprx_lp_pon_ovr_en =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_7, 6, 6),
 	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lprx_cd_pon_ovr_en =
@@ -275,6 +319,10 @@ static const struct dw_mipi_phy_g301_variant dw_mipi_phy_g301_lca01_variant = {
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_8, 0, 1),
 	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lprx_cd_pon_ovr_val =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_8, 2, 3),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lptx_en_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_8, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lptx_pon_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE2_CTRL_2_8, 7, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_2_oa_lane3_sel_lane_cfg =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_2, 0, 0),
 	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_hstx_sel_phase0 =
@@ -283,8 +331,24 @@ static const struct dw_mipi_phy_g301_variant dw_mipi_phy_g301_lca01_variant = {
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_3, 5, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_hstx_sel_clklb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_3, 8, 8),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_lptx_din_dn_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_3, 9, 9),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_lptx_din_dp_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_3, 10, 10),
 	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_hstx_eqb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_4, 2, 4),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_lptx_din_dn_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_4, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_lptx_din_dp_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_4, 7, 7),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_7_oa_lane3_lptx_en_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_7, 0, 1),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_7_oa_lane3_lptx_pon_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_7, 2, 3),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_8_oa_lane3_lptx_en_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_8, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane3_ctrl_2_8_oa_lane3_lptx_pon_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE3_CTRL_2_8, 7, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_2_oa_lane4_sel_lane_cfg =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_2, 0, 0),
 	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_hstx_sel_phase0 =
@@ -293,8 +357,24 @@ static const struct dw_mipi_phy_g301_variant dw_mipi_phy_g301_lca01_variant = {
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_3, 5, 7),
 	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_hstx_sel_clklb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_3, 8, 8),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_lptx_din_dn_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_3, 9, 9),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_lptx_din_dp_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_3, 10, 10),
 	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_hstx_eqb =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_4, 2, 4),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_lptx_din_dn_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_4, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_lptx_din_dp_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_4, 7, 7),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_7_oa_lane4_lptx_en_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_7, 0, 1),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_7_oa_lane4_lptx_pon_ovr_val =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_7, 2, 3),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_8_oa_lane4_lptx_en_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_8, 6, 6),
+	.cfg_core_dig_ioctrl_rw_afe_lane4_ctrl_2_8_oa_lane4_lptx_pon_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_LANE4_CTRL_2_8, 7, 7),
 	.cfg_core_dig_ioctrl_rw_afe_cb_ctrl_2_0_oa_cb_hstxlb_dco_clk90_en_ovr_val =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_AFE_CB_CTRL_2_0, 15, 15),
 	.cfg_core_dig_ioctrl_rw_afe_cb_ctrl_2_1_oa_cb_hstxlb_dco_clk0_en_ovr_val =
@@ -639,6 +719,23 @@ static const struct dw_mipi_phy_g301_variant dw_mipi_phy_g301_lca01_variant = {
 	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_4_i_txrequestesc_d3_ovr_en =
 		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE3_OVR_0_4, 0, 0),
 
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane0_ovr_0_8_i_turnrequest_d0_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE0_OVR_0_8, 3, 3),
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane0_ovr_0_8_i_turndisable_d0_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE0_OVR_0_8, 4, 4),
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane1_ovr_0_8_i_turnrequest_d1_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE1_OVR_0_8, 3, 3),
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane1_ovr_0_8_i_turndisable_d1_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE1_OVR_0_8, 4, 4),
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane2_ovr_0_8_i_turnrequest_d2_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE2_OVR_0_8, 3, 3),
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane2_ovr_0_8_i_turndisable_d2_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE2_OVR_0_8, 4, 4),
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_8_i_turnrequest_d3_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE3_OVR_0_8, 3, 3),
+	.cfg_core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_8_i_turndisable_d3_ovr_en =
+		REG_FIELD(CORE_DIG_IOCTRL_RW_DPHY_PPI_LANE3_OVR_0_8, 4, 4),
+
 	/* ds_ss_dsi2host_abp_regbank */
 	.cfg_pll_cfg0_rw_pll_atb_sense_sel = REG_FIELD(PLL_CFG0, 0, 0),
 	.cfg_pll_cfg0_rw_pll_clksel = REG_FIELD(PLL_CFG0, 1, 2),
@@ -757,31 +854,71 @@ static int dw_cdphy_regmap_fields_init(struct dw_mipi_cdphy_g301 *cdphy_g301)
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_hstx_sel_phase0, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_hstx_eqa, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_hstx_sel_clklb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_lptx_din_dn_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_lptx_din_dp_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_hstx_eqb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_lptx_din_dn_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_lptx_din_dp_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_7_oa_lane0_lptx_en_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_7_oa_lane0_lptx_pon_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_8_oa_lane0_lptx_en_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane0_ctrl_2_8_oa_lane0_lptx_pon_ovr_en, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_2_oa_lane1_sel_lane_cfg, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_hstx_sel_phase0, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_hstx_eqa, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_hstx_sel_clklb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_lptx_din_dn_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_lptx_din_dp_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_hstx_eqb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_lptx_din_dn_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_lptx_din_dp_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_7_oa_lane1_lptx_en_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_7_oa_lane1_lptx_pon_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_8_oa_lane1_lptx_en_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane1_ctrl_2_8_oa_lane1_lptx_pon_ovr_en, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_2_oa_lane2_sel_lane_cfg, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_hstx_sel_phase0, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_hstx_eqa, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_hstx_sel_clklb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_lptx_din_dn_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_lptx_din_dp_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_hstx_eqb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_lptx_din_dn_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_lptx_din_dp_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lptx_en_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lptx_pon_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lprx_lp_pon_ovr_en, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lprx_cd_pon_ovr_en, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lprx_lp_pon_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lprx_cd_pon_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lptx_en_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lptx_pon_ovr_en, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_2_oa_lane3_sel_lane_cfg, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_hstx_sel_phase0, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_hstx_eqa, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_hstx_sel_clklb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_lptx_din_dn_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_lptx_din_dp_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_hstx_eqb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_lptx_din_dn_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_lptx_din_dp_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_7_oa_lane3_lptx_en_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_7_oa_lane3_lptx_pon_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_8_oa_lane3_lptx_en_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane3_ctrl_2_8_oa_lane3_lptx_pon_ovr_en, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_2_oa_lane4_sel_lane_cfg, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_hstx_sel_phase0, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_hstx_eqa, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_hstx_sel_clklb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_lptx_din_dn_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_lptx_din_dp_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_hstx_eqb, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_lptx_din_dn_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_lptx_din_dp_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_7_oa_lane4_lptx_en_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_7_oa_lane4_lptx_pon_ovr_val, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_8_oa_lane4_lptx_en_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_afe_lane4_ctrl_2_8_oa_lane4_lptx_pon_ovr_en, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_cb_ctrl_2_0_oa_cb_hstxlb_dco_clk90_en_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_cb_ctrl_2_1_oa_cb_hstxlb_dco_clk0_en_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_afe_cb_ctrl_2_2_oa_cb_pll_bustiez, base_regs);
@@ -962,6 +1099,15 @@ static int dw_cdphy_regmap_fields_init(struct dw_mipi_cdphy_g301 *cdphy_g301)
 	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_3_i_txrequestesc_d3_ovr_val, base_regs);
 	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_4_i_txrequestesc_d3_ovr_en, base_regs);
 
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane0_ovr_0_8_i_turnrequest_d0_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane0_ovr_0_8_i_turndisable_d0_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane1_ovr_0_8_i_turnrequest_d1_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane1_ovr_0_8_i_turndisable_d1_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane2_ovr_0_8_i_turnrequest_d2_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane2_ovr_0_8_i_turndisable_d2_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_8_i_turnrequest_d3_ovr_en, base_regs);
+	INIT_FIELD(core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_8_i_turndisable_d3_ovr_en, base_regs);
+
 	INIT_FIELD(pll_cfg0_rw_pll_atb_sense_sel, u0_apb_regbank_regs);
 	INIT_FIELD(pll_cfg0_rw_pll_clksel, u0_apb_regbank_regs);
 	INIT_FIELD(pll_cfg0_rw_pll_gp_clk_en, u0_apb_regbank_regs);
@@ -1136,6 +1282,141 @@ static int dw_cdphy_preset_config_load(struct dw_mipi_cdphy_g301 *cdphy_g301,
 	return 0;
 }
 
+static __maybe_unused void dw_cdphy_lptx_en_pon_override_val(struct dw_mipi_cdphy_g301 *cdphy_g301,
+							     u32 lane_mask, u32 val)
+{
+	if (lane_mask & BIT(0)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_7_oa_lane0_lptx_en_ovr_val, val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_7_oa_lane0_lptx_pon_ovr_val, val);
+	}
+	if (lane_mask & BIT(1)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_7_oa_lane1_lptx_en_ovr_val, val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_7_oa_lane1_lptx_pon_ovr_val, val);
+	}
+	if (lane_mask & BIT(2)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lptx_en_ovr_val, val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_7_oa_lane2_lptx_pon_ovr_val, val);
+	}
+	if (lane_mask & BIT(3)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_7_oa_lane3_lptx_en_ovr_val, val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_7_oa_lane3_lptx_pon_ovr_val, val);
+	}
+	if (lane_mask & BIT(4)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_7_oa_lane4_lptx_en_ovr_val, val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_7_oa_lane4_lptx_pon_ovr_val, val);
+	}
+}
+
+static __maybe_unused void dw_cdphy_lptx_en_pon_override_en(struct dw_mipi_cdphy_g301 *cdphy_g301,
+							    u32 lane_mask, u32 en)
+{
+	if (lane_mask & BIT(0)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_8_oa_lane0_lptx_en_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_8_oa_lane0_lptx_pon_ovr_en, en);
+	}
+	if (lane_mask & BIT(1)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_8_oa_lane1_lptx_en_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_8_oa_lane1_lptx_pon_ovr_en, en);
+	}
+	if (lane_mask & BIT(2)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lptx_en_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_8_oa_lane2_lptx_pon_ovr_en, en);
+	}
+	if (lane_mask & BIT(3)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_8_oa_lane3_lptx_en_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_8_oa_lane3_lptx_pon_ovr_en, en);
+	}
+	if (lane_mask & BIT(4)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_8_oa_lane4_lptx_en_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_8_oa_lane4_lptx_pon_ovr_en, en);
+	}
+}
+
+static __maybe_unused void dw_cdphy_lptx_din_override_val(struct dw_mipi_cdphy_g301 *cdphy_g301,
+							  u32 lane_mask, u32 dp_val, u32 dn_val)
+{
+	if (lane_mask & BIT(0)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_lptx_din_dp_ovr_val, dp_val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_3_oa_lane0_lptx_din_dn_ovr_val, dn_val);
+	}
+	if (lane_mask & BIT(1)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_lptx_din_dp_ovr_val, dp_val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_3_oa_lane1_lptx_din_dn_ovr_val, dn_val);
+	}
+	if (lane_mask & BIT(2)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_lptx_din_dp_ovr_val, dp_val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_3_oa_lane2_lptx_din_dn_ovr_val, dn_val);
+	}
+	if (lane_mask & BIT(3)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_lptx_din_dp_ovr_val, dp_val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_3_oa_lane3_lptx_din_dn_ovr_val, dn_val);
+	}
+	if (lane_mask & BIT(4)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_lptx_din_dp_ovr_val, dp_val);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_3_oa_lane4_lptx_din_dn_ovr_val, dn_val);
+	}
+}
+
+static __maybe_unused void dw_cdphy_lptx_din_override_en(struct dw_mipi_cdphy_g301 *cdphy_g301,
+							 u32 lane_mask, u32 en)
+{
+	if (lane_mask & BIT(0)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_lptx_din_dp_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane0_ctrl_2_4_oa_lane0_lptx_din_dn_ovr_en, en);
+	}
+	if (lane_mask & BIT(1)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_lptx_din_dp_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane1_ctrl_2_4_oa_lane1_lptx_din_dn_ovr_en, en);
+	}
+	if (lane_mask & BIT(2)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_lptx_din_dp_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane2_ctrl_2_4_oa_lane2_lptx_din_dn_ovr_en, en);
+	}
+	if (lane_mask & BIT(3)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_lptx_din_dp_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane3_ctrl_2_4_oa_lane3_lptx_din_dn_ovr_en, en);
+	}
+	if (lane_mask & BIT(4)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_lptx_din_dp_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_afe_lane4_ctrl_2_4_oa_lane4_lptx_din_dn_ovr_en, en);
+	}
+}
+
+static __maybe_unused void dw_cdphy_forcetxstopmode(struct dw_mipi_cdphy_g301 *cdphy_g301,
+						    u32 lane_mask, u32 en)
+{
+	if (lane_mask & BIT(0))
+		dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_0, en);
+	if (lane_mask & BIT(1))
+		dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_1, en);
+	if (lane_mask & BIT(2))
+		dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_2, en);
+	if (lane_mask & BIT(3))
+		dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_3, en);
+	if (lane_mask & BIT(4))
+		dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_dck, en);
+}
+
+static __maybe_unused void dw_cdphy_turndisable_ovr(struct dw_mipi_cdphy_g301 *cdphy_g301,
+						    u32 lane_mask, u32 en)
+{
+	if (lane_mask & BIT(0)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane0_ovr_0_8_i_turnrequest_d0_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane0_ovr_0_8_i_turndisable_d0_ovr_en, en);
+	}
+	if (lane_mask & BIT(1)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane1_ovr_0_8_i_turnrequest_d1_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane1_ovr_0_8_i_turndisable_d1_ovr_en, en);
+	}
+	if (lane_mask & BIT(2)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane2_ovr_0_8_i_turnrequest_d2_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane2_ovr_0_8_i_turndisable_d2_ovr_en, en);
+	}
+	if (lane_mask & BIT(3)) {
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_8_i_turnrequest_d3_ovr_en, en);
+		dw_cdphy_write_field(cdphy_g301->field_core_dig_ioctrl_rw_dphy_ppi_lane3_ovr_0_8_i_turndisable_d3_ovr_en, en);
+	}
+}
 #endif
 
 /* Use doing
@@ -1710,7 +1991,8 @@ static void dw_cdphy_pll_config(struct dw_mipi_cdphy_g301 *cdphy_g301)
 	dw_cdphy_write_field(cdphy_g301->field_pll_cfg0_rw_pll_atb_sense_sel, 0);
 
 	/* TC_DIG_TC_REGISTERS_RW_PLL_ANA_CTRL_0  -> CLKSEL_R */
-	dw_cdphy_write_field(cdphy_g301->field_pll_cfg0_rw_pll_clksel, 1);
+	/* set pll_clksel to 1 after PLL locked */
+	dw_cdphy_write_field(cdphy_g301->field_pll_cfg0_rw_pll_clksel, 0);
 
 	/* PLL_CFG0 -> PLL_CLKOUTEN_LEFT */
 	dw_cdphy_write_field(cdphy_g301->field_pll_cfg0_rw_pll_clkouten_left, 1);
@@ -1809,7 +2091,14 @@ static int dw_dphy_power_on_g301(struct phy *phy)
 {
 	struct dw_mipi_cdphy *cdphy = phy_get_drvdata(phy);
 	struct dw_mipi_cdphy_g301 *cdphy_g301 = cdphy->cdphy_priv_data;
+	u32 ovr_en = cdphy->lane_ovr_en;
 
+	/* disable lane override setting */
+	if (ovr_en && cdphy->phy_in_ulps == true) {
+		dw_cdphy_lptx_din_override_en(cdphy_g301, 0x1F, 0);
+		dw_cdphy_lptx_en_pon_override_en(cdphy_g301, 0x1F, 0);
+		dw_cdphy_turndisable_ovr(cdphy_g301, 0x1F, 0);
+	}
 	/* Step 11.b */
 	dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_0, 0);
 	dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_1, 0);
@@ -1821,6 +2110,8 @@ static int dw_dphy_power_on_g301(struct phy *phy)
 				     0x0);
 	}
 
+	/* PHY exit LP00 state */
+	cdphy->phy_in_ulps = false;
 	dev_info(&cdphy->phy->dev, "CD-PHY G301 Power-on\n");
 	return 0;
 }
@@ -1828,11 +2119,14 @@ static int dw_dphy_power_on_g301(struct phy *phy)
 static int dw_dphy_power_off_g301(struct phy *phy)
 {
 	struct dw_mipi_cdphy *cdphy = phy_get_drvdata(phy);
+	struct dw_mipi_cdphy_g301 *cdphy_g301 = cdphy->cdphy_priv_data;
 
 	dev_info(&cdphy->phy->dev, "CD-PHY G301 Power OFF\n");
 
-	cdphy->phy_in_ulps = true;
-	/* clear ULPS state for next PHY configure sequence */
+	/* shutdown and reset PHY before power off */
+	dw_cdphy_write_field(cdphy_g301->field_phy_ctrl0_rw_shutdown_n, 0);
+	dw_cdphy_write_field(cdphy_g301->field_phy_ctrl0_rw_phy_rst_n, 0);
+
 	return 0;
 }
 
@@ -1950,6 +2244,7 @@ static int dw_dphy_configure_g301(struct phy *phy, union phy_configure_opts *opt
 	struct dw_mipi_cdphy_g301 *cdphy_g301 = cdphy->cdphy_priv_data;
 	struct phy_configure_opts_mipi_dphy *cdphy_opts = &opts->mipi_dphy;
 	u32 val = 0 ;
+	u32 ovr_en = cdphy->lane_ovr_en;
 	int ret;
 
 	dev_info(&cdphy->phy->dev, "Configuring CD-PHY G301\n");
@@ -2037,7 +2332,11 @@ static int dw_dphy_configure_g301(struct phy *phy, union phy_configure_opts *opt
 	if (!cdphy->is_cphy)
 		dw_cdphy_write_field(cdphy_g301->field_phy_extended_ctr1_rw_forcetxstopmode_dck, 1);
 
+	/* workaround for force set_ulps exit */
+	val = cdphy->phy_in_ulps;
+	cdphy->phy_in_ulps = true;
 	dw_cdphy_set_ulps(phy, false);
+	cdphy->phy_in_ulps = val;
 
 	/* Step 8.a */
 	dw_cdphy_common_config(cdphy_g301);
@@ -2065,10 +2364,32 @@ static int dw_dphy_configure_g301(struct phy *phy, union phy_configure_opts *opt
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	dw_cdphy_preset_config_load(cdphy_g301, DPHY_PRESET_APPLY_BEFORE_RST);
 #endif
+
+	/* lane override setting, start from LP00 */
+	if (ovr_en && cdphy->phy_in_ulps == true) {
+		dw_cdphy_forcetxstopmode(cdphy_g301, 0x1F, 0);
+		dw_cdphy_lptx_en_pon_override_val(cdphy_g301, 0x1F, 0x3);
+		dw_cdphy_lptx_en_pon_override_en(cdphy_g301, 0x1F, 1);
+		dw_cdphy_lptx_din_override_val(cdphy_g301, 0x1F, 0, 0);
+		dw_cdphy_lptx_din_override_en(cdphy_g301, 0x1F, 1);
+		dw_cdphy_turndisable_ovr(cdphy_g301, 0x1F, 1);
+		udelay(100);
+	}
 	/* Step 9.b */
 	dw_cdphy_write_field(cdphy_g301->field_phy_ctrl0_rw_phy_mode, cdphy->is_cphy);
 	dw_cdphy_write_field(cdphy_g301->field_phy_ctrl0_rw_shutdown_n, 1);
 	dw_cdphy_write_field(cdphy_g301->field_phy_ctrl0_rw_phy_rst_n, 1);
+
+	/* lane override to LP10 and LP11 */
+	if (ovr_en && cdphy->phy_in_ulps == true) {
+		dw_cdphy_lptx_din_override_val(cdphy_g301, 0x1F, 1, 0);
+		udelay(100);
+		dw_cdphy_lptx_din_override_val(cdphy_g301, 0x1F, 1, 1);
+		udelay(50);
+
+		dw_cdphy_forcetxstopmode(cdphy_g301, 0x1F, 1);
+		udelay(100);
+	}
 
 	/* Step 10 */
 	ret = readl_poll_timeout(cdphy_g301->u0_apb_regbank + PHY_STS, val,
@@ -2078,6 +2399,18 @@ static int dw_dphy_configure_g301(struct phy *phy, union phy_configure_opts *opt
 		return ret;
 	}
 
+	ret = readl_poll_timeout(cdphy_g301->u0_apb_regbank + PHY_STS, val, val & PLL_LOCK, 50,
+				 PHY_STATUS_TIMEOUT_US);
+	if (ret) {
+		/* TODO: dump corresponding CSR */
+		dev_err(&cdphy->phy->dev, "%s: Failed to wait PHY Lock\n", __func__);
+		DPU_ATRACE_INSTANT("fail to wait PHY Lock");
+		DPU_ATRACE_END("%s, %d", __func__, enable);
+		return ret;
+	}
+
+	/* set pll_clksel to 1 after PLL locked */
+	dw_cdphy_write_field(cdphy_g301->field_pll_cfg0_rw_pll_clksel, 1);
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	dw_cdphy_preset_config_load(cdphy_g301, DPHY_PRESET_APPLY_AFTER_READY);
 #endif
@@ -2108,9 +2441,6 @@ static int dw_dphy_init_g301(struct phy *phy)
 
 	dev_info(&cdphy->phy->dev, "Init CD-PHY G301\n");
 
-	/* workaround for incoming set_ulps exit in dw_dphy_configure_g301() */
-	cdphy->phy_in_ulps = true;
-
 	/* check pll state (LP-DCO), pll might be enabled at bootloader */
 	val = dw_cdphy_read_reg(cdphy_g301->base_regs, CORE_DIG_RW_COMMON_9);
 	if (val & BIT(8))
@@ -2124,6 +2454,7 @@ static int dw_dphy_init_g301(struct phy *phy)
 static int dw_dphy_set_mode_g301(struct phy *phy, enum phy_mode mode, int submode)
 {
 	struct dw_mipi_cdphy *cdphy = phy_get_drvdata(phy);
+	struct dw_mipi_cdphy_g301 *cdphy_g301 = cdphy->cdphy_priv_data;
 	int ret;
 
 	dev_dbg(&cdphy->phy->dev, "CD-PHY G301 Setting phy type to %d submode %d\n",
@@ -2147,6 +2478,24 @@ static int dw_dphy_set_mode_g301(struct phy *phy, enum phy_mode mode, int submod
 		break;
 	case DW_MIPI_CDPHY_OP_OVR_ULPS_ENTER:
 		ret = dw_cdphy_set_ulps(phy, 1);
+		break;
+	case DW_MIPI_CDPHY_OP_OVR_LANE_LP00:
+		dev_info(&cdphy->phy->dev, "CD-PHY G301 OVR LP00, LP1 Contention is expected\n");
+		dw_cdphy_lptx_din_override_val(cdphy_g301, 0x1F, 0, 0);
+		dw_cdphy_lptx_din_override_en(cdphy_g301, 0x1F, 1);
+		ret = 0;
+		break;
+	case DW_MIPI_CDPHY_OP_OVR_PHY_ULPS_STATE:
+		cdphy->phy_in_ulps = true;
+		ret = 0;
+		break;
+	case DW_MIPI_CDPHY_OP_OVR_LANE_ENABLE:
+		cdphy->lane_ovr_en = 1;
+		ret = 0;
+		break;
+	case DW_MIPI_CDPHY_OP_OVR_LANE_DISABLE:
+		cdphy->lane_ovr_en = 0;
+		ret = 0;
 		break;
 	default:
 		dev_err(&cdphy->phy->dev, "%s invalid submode %d\n", __func__, submode);

@@ -14,6 +14,44 @@
 
 #define VS_RECOVERY_TRY_MAX 3
 
+enum vs_recovery_stat_type {
+	VS_RECOVERY_STAT_SUCCESS = 0,
+	VS_RECOVERY_STAT_FAILURE,
+	VS_RECOVERY_STAT_MAX_RETRY,
+};
+
+/**
+ * vs_update_recovery_stats() - update stats for all active resources
+ * @vs_crtc: crtc instance
+ * @srcs: recovery source bitmap captured before suspend
+ * @type: stat type to increment
+ */
+static void vs_update_recovery_stats(struct vs_crtc *vs_crtc, u32 srcs,
+				     enum vs_recovery_stat_type type)
+{
+	int i;
+
+	for (i = 0; i < SSCD_SRC_MAX; i++) {
+		if (srcs & BIT(i)) {
+			struct vs_recovery_stat *stat = &vs_crtc->recovery_stats[i];
+
+			switch (type) {
+			case VS_RECOVERY_STAT_SUCCESS:
+				stat->success++;
+				break;
+			case VS_RECOVERY_STAT_FAILURE:
+				stat->failure++;
+				break;
+			case VS_RECOVERY_STAT_MAX_RETRY:
+				stat->max_retry++;
+				break;
+			default:
+				dev_err(vs_crtc->dev, "Invalid recovery stat type: %d\n", type);
+			}
+		}
+	}
+}
+
 static void vs_recovery_handler(struct work_struct *work)
 {
 	struct vs_recovery *recovery = container_of(work, struct vs_recovery, work);
@@ -21,6 +59,7 @@ static void vs_recovery_handler(struct work_struct *work)
 	struct device *dev = vs_crtc->dev;
 	struct drm_modeset_acquire_ctx ctx;
 	struct drm_atomic_state *suspend_state;
+	u32 recovery_srcs = atomic_xchg(&recovery->pending_recovery_srcs, 0);
 	int ret = 0;
 
 	DPU_ATRACE_BEGIN("crtc[%s] vs recovery handler", vs_crtc->base.name);
@@ -38,11 +77,14 @@ static void vs_recovery_handler(struct work_struct *work)
 		ret = -EINVAL;
 	}
 
-	if (ret == 0)
+	if (ret == 0) {
 		dev_info(dev, "crtc[%s] recovery is successfully finished(%d)\n",
 			 vs_crtc->base.name, recovery->count);
-	else
+		vs_update_recovery_stats(vs_crtc, recovery_srcs, VS_RECOVERY_STAT_SUCCESS);
+	} else {
 		dev_err(dev, "crtc[%s] Failed to recover display (%d)\n", vs_crtc->base.name, ret);
+		vs_update_recovery_stats(vs_crtc, recovery_srcs, VS_RECOVERY_STAT_FAILURE);
+	}
 
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
@@ -57,16 +99,19 @@ void vs_recovery_register(struct vs_crtc *vs_crtc)
 	INIT_WORK(&recovery->work, vs_recovery_handler);
 	recovery->count = 0;
 	atomic_set(&recovery->recovering, 0);
+	atomic_set(&recovery->pending_recovery_srcs, 0);
 
 	dev_dbg(vs_crtc->dev, "crtc[%s] recovery is supported\n", vs_crtc->base.name);
 }
 
-void vs_crtc_trigger_recovery(struct vs_crtc *vs_crtc)
+void vs_crtc_trigger_recovery(struct vs_crtc *vs_crtc, u32 srcs)
 {
 	struct vs_recovery *recovery = &vs_crtc->recovery;
 	struct device *dev = vs_crtc->dev;
 	struct vs_dc *dc = dev_get_drvdata(dev);
 	u8 display_id = to_vs_display_id(dc, &vs_crtc->base);
+
+	atomic_or(srcs, &recovery->pending_recovery_srcs);
 
 	/* only recover if we don't have another active recovery attempt going */
 	if (!atomic_add_unless(&recovery->recovering, 1, 1)) {
@@ -78,8 +123,11 @@ void vs_crtc_trigger_recovery(struct vs_crtc *vs_crtc)
 	recovery->count++;
 	trace_disp_trigger_recovery(display_id, vs_crtc);
 	if (recovery->count >= VS_RECOVERY_TRY_MAX) {
+		u32 recovery_srcs = atomic_xchg(&recovery->pending_recovery_srcs, 0);
+
 		dev_err(vs_crtc->dev, "crtc[%s] maximum consecutive recovery try reached (%d)\n",
 			vs_crtc->base.name, VS_RECOVERY_TRY_MAX);
+		vs_update_recovery_stats(vs_crtc, recovery_srcs, VS_RECOVERY_STAT_MAX_RETRY);
 		atomic_dec(&recovery->recovering);
 		return;
 	}

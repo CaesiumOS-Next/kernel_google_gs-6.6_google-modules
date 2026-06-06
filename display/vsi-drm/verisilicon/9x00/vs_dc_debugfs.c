@@ -157,7 +157,10 @@ static ssize_t dc_coredump_write(struct file *file, const char __user *user_buf,
 		return ret;
 
 	if (coredump) {
-		if (!dc_is_coredump_source_enabled(dc, SSCD_SRC_MANUAL))
+		if (!is_coredump_enabled())
+			dev_err(hw->dev,
+				"Manual coredump requested, but coredumping not enabled\n");
+		else if (!coredump_source_enabled(SSCD_SRC_MANUAL))
 			dev_err(hw->dev,
 				"Manual coredump requested, but not a permitted coredump source\n");
 		else
@@ -229,11 +232,10 @@ int dc_init_debugfs(struct vs_dc *dc)
 		debugfs_create_u32("reg_dump_size", 0664, dentry_dpu_dump, &dc->hw.reg_dump_size);
 	}
 
-	if (dc->coredump_en)
+	if (is_coredump_enabled())
 		debugfs_create_file("coredump_trigger", 0444, dc->debugfs, &dc->hw,
 				    &dc_coredump_fops);
 
-	debugfs_create_bool("disable_hw_reset", 0644, dc->debugfs, &dc->disable_hw_reset);
 	debugfs_create_u32("hw_reg_dump_options", 0644, dc->debugfs, &dc->hw_reg_dump_options);
 
 	debugfs_create_file("state", 0444, dc->debugfs, &dc->hw, &hw_dump_fops);

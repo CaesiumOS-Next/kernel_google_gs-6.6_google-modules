@@ -20,6 +20,7 @@
 #include "vs_dc_property.h"
 #include "vs_gem.h"
 #include "vs_gem_pool.h"
+#include "vs_module_params.h"
 #include "vs_qos.h"
 #include "vs_recovery.h"
 
@@ -104,6 +105,24 @@ struct vs_drm_blob_state {
 	bool changed;
 };
 
+/**
+ * struct vs_recovery_request_data: data associated with a recovery request
+ *                                  stored on the vs_crtc_state
+ */
+struct vs_recovery_request_data {
+	/** @needs_recovery: true if recovery trigger requested for this commit */
+	bool needs_recovery;
+	/**
+	 * @recovery_srcs: bitmap of enum coredump_source values indicating the
+	 *                 cause of this recovery request
+	 */
+	u32 recovery_srcs;
+	/** @panel_errors: error bitmap from panel to report; see enum gs_panel_err */
+	u64 panel_errors;
+	/** @dsi_errors: error bitmap from dsi host to report; see enum gs_dsi_err */
+	u64 dsi_errors;
+};
+
 struct vs_crtc_state {
 	struct drm_crtc_state base;
 #if IS_ENABLED(CONFIG_DEBUG_FS)
@@ -157,7 +176,8 @@ struct vs_crtc_state {
 	bool need_boost_fabrt;
 
 	bool recovery_disabled;
-	bool needs_recovery;
+	/** @recovery_info: information about any request for recovery trigger */
+	struct vs_recovery_request_data recovery_info;
 	bool needs_hard_reset;
 
 	struct vs_drm_property_state drm_states[VS_DC_MAX_PROPERTY_NUM];
@@ -205,10 +225,17 @@ struct frame_irq_err_counters {
 	u32 full_frame_length_irq_gap;
 };
 
+struct vs_recovery_stat {
+	u32 success;
+	u32 failure;
+	u32 max_retry;
+};
+
 struct vs_crtc {
 	struct drm_crtc base;
 	u8 id;
 	struct device *dev;
+	struct device *sysfs_dev;
 
 	/* track dc device for centralized power on/off */
 	struct device *dc_dev;
@@ -273,6 +300,7 @@ struct vs_crtc {
 
 	/** @recovery: struct containing info for handling ESD recovery */
 	struct vs_recovery recovery;
+	struct vs_recovery_stat recovery_stats[SSCD_SRC_MAX];
 
 	atomic_t te_count;
 	atomic_t unexpected_te_count;
@@ -321,8 +349,11 @@ int vs_crtc_resume(struct drm_atomic_state *suspend_state, struct drm_modeset_ac
 void vs_crtc_record_frame_timeout(struct vs_crtc *vs_crtc, int old_te_count,
 				  struct drm_crtc_state *old_crtc_state,
 				  unsigned long wait_time_jiffies, bool during_disable);
-void vs_crtc_trigger_gram_collision_coredump(struct vs_crtc *vs_crtc,
-					     struct drm_crtc_state *crtc_state);
+void vs_crtc_trigger_panel_dsi_coredump(struct vs_crtc *vs_crtc,
+					struct vs_crtc_state *old_vs_crtc_state, u64 panel_errors,
+					u64 dsi_errors, enum coredump_source source);
+bool vs_crtc_state_is_recovery_source_enabled(const struct vs_crtc_state *vs_crtc_state,
+					      enum coredump_source source);
 
 #define to_vs_crtc(crtc) container_of(crtc, struct vs_crtc, base)
 

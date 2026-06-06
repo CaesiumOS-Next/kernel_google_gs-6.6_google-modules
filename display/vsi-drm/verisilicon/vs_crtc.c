@@ -31,12 +31,24 @@
 #include "vs_dc_drm_property.h"
 #include "vs_dc_hw.h"
 #include "vs_dc_post.h"
+#include "vs_module_params.h"
+#include "vs_sysfs.h"
 #include "vs_trace.h"
 
 #define FRAME_TIMEOUT msecs_to_jiffies(100)
 #define FRAME_DEFAULT_FPS 60
 
 #define VBLANK_KTHREAD_SCHED_PRIORITY 19
+
+bool vs_crtc_state_is_recovery_source_enabled(const struct vs_crtc_state *vs_crtc_state,
+					      enum coredump_source source)
+{
+	if (!is_crtc_recovery_enabled())
+		return false;
+	if (vs_crtc_state->recovery_disabled)
+		return false;
+	return recovery_source_enabled(source);
+}
 
 static const struct drm_prop_enum_list vs_power_off_mode_enum_list[VS_POWER_OFF_MODE_COUNT] = {
 	{ VS_POWER_OFF_MODE_FULL, "FULL" },
@@ -168,6 +180,7 @@ void vs_crtc_destroy(struct drm_crtc *crtc)
 
 	wakeup_source_unregister(vs_crtc->ws);
 
+	vs_sysfs_remove_crtc_files(crtc);
 	kfree(vs_crtc);
 }
 
@@ -194,7 +207,7 @@ static void vs_crtc_reset(struct drm_crtc *crtc)
 	state->output_fmt = MEDIA_BUS_FMT_RGB888_1X24;
 	state->encoder_type = DRM_MODE_ENCODER_NONE;
 	state->seamless_mode_change = false;
-	state->needs_recovery = false;
+	memset(&state->recovery_info, 0, sizeof(state->recovery_info));
 
 	for (i = 0; i < vs_crtc->properties.num; i++) {
 		state->drm_states[i].proto = vs_crtc->properties.items[i].proto;
@@ -335,7 +348,7 @@ static struct drm_crtc_state *vs_crtc_atomic_duplicate_state(struct drm_crtc *cr
 
 	state->need_boost_fabrt = false;
 
-	state->needs_recovery = false;
+	memset(&state->recovery_info, 0, sizeof(state->recovery_info));
 
 	state->commit_begin_ts = 0;
 	state->commit_done_ts = 0;
@@ -682,11 +695,6 @@ static int vs_crtc_debugfs_show(struct seq_file *s, void *data)
 	seq_printf(s, "\tsize = %dx%d\n", mode->hdisplay, mode->vdisplay);
 	seq_printf(s, "\tbpp = %u\n", vs_crtc_state->bpp);
 	seq_printf(s, "\tseamless_mode_change = %d\n", vs_crtc_state->seamless_mode_change);
-	seq_printf(s, "\tframe start timeout = %d\n", atomic_read(&vs_crtc->frame_start_timeout));
-	seq_printf(s, "\tframe done timeout = %d\n", atomic_read(&vs_crtc->frame_done_timeout));
-	seq_printf(s, "\tframe start missing = %d\n", atomic_read(&vs_crtc->frame_start_missing));
-	seq_printf(s, "\tframe done missing = %d\n", atomic_read(&vs_crtc->frame_done_missing));
-	seq_printf(s, "\tunderrun = %d\n", atomic_read(&vs_crtc->underrun_count));
 	seq_puts(s, "\tframe_irq_err_counters:\n");
 	seq_printf(s, "\t\tillegal_irq_state = %d\n",
 		   vs_crtc->frame_irq_err_counters.illegal_irq_state);
@@ -815,8 +823,12 @@ static ssize_t vs_recovery_write(struct file *file, const char __user *ubuf, siz
 	struct seq_file *s = file->private_data;
 	struct drm_crtc *crtc = s->private;
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
+	struct vs_crtc_state *vs_crtc_state = to_vs_crtc_state(crtc->state);
 
-	vs_crtc_trigger_recovery(vs_crtc);
+	if (vs_crtc_state_is_recovery_source_enabled(vs_crtc_state, SSCD_SRC_MANUAL)) {
+		vs_crtc_state->recovery_info.recovery_srcs |= BIT(SSCD_SRC_MANUAL);
+		vs_crtc_trigger_recovery(vs_crtc, vs_crtc_state->recovery_info.recovery_srcs);
+	}
 
 	return len;
 }
@@ -867,6 +879,15 @@ static int vs_crtc_debugfs_init(struct drm_crtc *crtc)
 
 static int vs_crtc_late_register(struct drm_crtc *crtc)
 {
+	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
+	int ret;
+
+	ret = vs_sysfs_create_crtc_files(crtc);
+	if (ret) {
+		dev_err(vs_crtc->dev, "Failed to create crtc-%u sysfs\n", crtc->index);
+		return ret;
+	}
+
 	return vs_crtc_debugfs_init(crtc);
 }
 
@@ -1057,7 +1078,14 @@ static void vs_crtc_atomic_print_state(struct drm_printer *p,
 		   vs_power_off_mode_enum_list[vs_crtc_state->power_off_mode].name);
 	drm_printf(p, "\tpower_off_mode_changed = %d\n", vs_crtc_state->power_off_mode_changed);
 	drm_printf(p, "\tpower_state = %s\n", power_state_names[vs_crtc_state->power_state]);
-	drm_printf(p, "\tneeds_recovery = %d\n", vs_crtc_state->needs_recovery);
+	drm_printf(p, "\tneeds_recovery = %d\n", vs_crtc_state->recovery_info.needs_recovery);
+	if (vs_crtc_state->recovery_info.needs_recovery) {
+		drm_printf(p, "\t\trecovery_srcs = %#x\n",
+			   vs_crtc_state->recovery_info.recovery_srcs);
+		drm_printf(p, "\t\tpanel_errors = %#llx\n",
+			   vs_crtc_state->recovery_info.panel_errors);
+		drm_printf(p, "\t\tdsi_errors = %#llx\n", vs_crtc_state->recovery_info.dsi_errors);
+	}
 	drm_printf(p, "\tneeds_hard_reset = %d\n", vs_crtc_state->needs_hard_reset);
 	drm_printf(p, "\thist_rgb_enable = %d\n", vs_crtc_state->hist_rgb_enable);
 
@@ -1179,14 +1207,15 @@ static void vs_crtc_handle_flip_error(struct drm_crtc *crtc, int error)
 	unsigned long flags;
 
 	/* enable HW reset before power off */
-	if (!dc->disable_hw_reset) {
-		vs_crtc->needs_hw_reset = true;
-		atomic_inc(&vs_crtc->hw_reset_count);
-	}
+	vs_crtc->needs_hw_reset = true;
+	atomic_inc(&vs_crtc->hw_reset_count);
 
 	/* trigger recovery sequence */
-	if (!vs_crtc_state->recovery_disabled && !dc->disable_crtc_recovery)
-		vs_crtc_trigger_recovery(vs_crtc);
+	if (vs_crtc_state_is_recovery_source_enabled(vs_crtc_state,
+						     SSCD_SRC_FRAME_UPDATE_TIMEOUT)) {
+		vs_crtc_state->recovery_info.recovery_srcs |= BIT(SSCD_SRC_FRAME_UPDATE_TIMEOUT);
+		vs_crtc_trigger_recovery(vs_crtc, vs_crtc_state->recovery_info.recovery_srcs);
+	}
 
 	/* clear pending flags in case there is no frame done */
 	atomic_set(&vs_crtc->frames_pending, 0);
@@ -1224,13 +1253,13 @@ static void vs_crtc_trigger_frame_coredump(struct vs_crtc *vs_crtc, int frames_p
 	vs_dc_coredump(dc, reason);
 }
 
-static bool _is_frame_coredump_enabled(const struct vs_dc *dc, bool during_disable)
+static bool _is_frame_coredump_enabled(bool during_disable)
 {
-	if (!dc->coredump_en)
+	if (!is_coredump_enabled())
 		return false;
-	if (!during_disable && !dc_is_coredump_source_enabled(dc, SSCD_SRC_FRAME_UPDATE_TIMEOUT))
+	if (!during_disable && !coredump_source_enabled(SSCD_SRC_FRAME_UPDATE_TIMEOUT))
 		return false;
-	if (during_disable && !dc_is_coredump_source_enabled(dc, SSCD_SRC_DISABLE_TIMEOUT))
+	if (during_disable && !coredump_source_enabled(SSCD_SRC_DISABLE_TIMEOUT))
 		return false;
 	return true;
 }
@@ -1280,7 +1309,7 @@ void vs_crtc_record_frame_timeout(struct vs_crtc *vs_crtc, int old_te_count,
 		te_changed ? "changed" : "unchanged", frames_pending,
 		vs_crtc->frame_transfer_pending);
 
-	if (!vs_crtc->recovery.count && _is_frame_coredump_enabled(dc, during_disable)) {
+	if (!vs_crtc->recovery.count && _is_frame_coredump_enabled(during_disable)) {
 		enum drm_vs_power_state old_pwr = to_vs_crtc_state(old_crtc_state)->power_state;
 		enum drm_vs_power_state new_pwr = to_vs_crtc_state(new_crtc_state)->power_state;
 
@@ -1376,6 +1405,25 @@ static bool vs_crtc_was_powered_off(struct drm_crtc *crtc, struct drm_crtc_state
 	return false;
 }
 
+static bool vs_crtc_is_active_modeset(struct drm_crtc *crtc)
+{
+	struct drm_crtc_state *crtc_state = crtc->state;
+	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
+	struct device *dev = vs_crtc->dev;
+	bool is_active_modeset = false;
+
+	if (!crtc_state)
+		return false;
+
+	is_active_modeset = (crtc_state->mode_changed && crtc_state->active &&
+			     !crtc_state->active_changed);
+
+	dev_dbg(dev, "active modeset:%d (mc:%d a:%d ac:%d)\n", is_active_modeset,
+		crtc_state->mode_changed, crtc_state->active, crtc_state->active_changed);
+
+	return is_active_modeset;
+}
+
 static void vs_crtc_enter_power_on(struct drm_crtc *crtc, struct drm_atomic_state *state)
 {
 	int ret;
@@ -1383,13 +1431,19 @@ static void vs_crtc_enter_power_on(struct drm_crtc *crtc, struct drm_atomic_stat
 	struct device *dev = vs_crtc->dev;
 	struct vs_crtc_state *vs_crtc_state = to_vs_crtc_state(crtc->state);
 	struct vs_dc *vs_dc = dev_get_drvdata(dev);
+	bool is_active_modeset = vs_crtc_is_active_modeset(crtc);
 
 	DPU_ATRACE_BEGIN(__func__);
-	dev_dbg(dev, "%s: enter ON vblank_en:%d\n", __func__, vs_crtc->vblank_en);
+	dev_dbg(dev, "enter power on, vblank_en:%d is_active_modeset:%d\n", vs_crtc->vblank_en,
+		is_active_modeset);
 
-	ret = vs_dc_power_get(vs_crtc->dc_dev, true);
-	if (ret < 0)
-		dev_err(dev, "%s: failed to power ON\n", __func__);
+	if (is_active_modeset) {
+		dev_dbg(dev, "active modeset, skip DPU power on\n");
+	} else {
+		ret = vs_dc_power_get(vs_crtc->dc_dev, true);
+		if (ret < 0)
+			dev_err(dev, "failed to power on during modeset enable\n");
+	}
 
 	if (vs_crtc_state->base.active_changed && vs_dc->boost_fabrt_freq) {
 		/* boost FABRT freq during register configuration */
@@ -1438,26 +1492,31 @@ static void vs_crtc_enter_power_off(struct drm_crtc *crtc, struct drm_crtc_state
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct device *dev = vs_crtc->dev;
 	bool was_powered_off = vs_crtc_was_powered_off(crtc, old_state);
+	bool is_active_modeset = vs_crtc_is_active_modeset(crtc);
 
 	DPU_ATRACE_BEGIN(__func__);
-	dev_dbg(dev, "%s: enter OFF vblank_en:%d was_powered_off:%d\n", __func__,
-		vs_crtc->vblank_en, was_powered_off);
+	dev_dbg(dev, "enter power off, vblank_en:%d was_powered_off:%d is_active_modeset:%d\n",
+		vs_crtc->vblank_en, was_powered_off, is_active_modeset);
 
 	if (was_powered_off) {
-		dev_info(dev, "%s: was powered OFF, skipping pipeline disable", __func__);
-	} else {
-		vs_crtc_disable_pipeline(crtc, old_state);
+		dev_info(dev, "DPU already powered off, skip power off sequence\n");
+		goto end;
 	}
 
+	vs_crtc_disable_pipeline(crtc, old_state);
 	drm_crtc_vblank_off(crtc);
 	vs_crtc_flush_vblank_event(crtc);
 
-	if (!was_powered_off) {
-		ret = vs_dc_power_put(vs_crtc->dc_dev, true);
-		if (ret < 0)
-			dev_err(dev, "failed to power OFF\n");
+	if (is_active_modeset) {
+		dev_dbg(dev, "active modeset, skip DPU power off\n");
+		goto end;
 	}
 
+	ret = vs_dc_power_put(vs_crtc->dc_dev, true);
+	if (ret < 0)
+		dev_err(dev, "failed to power off during modeset disable\n");
+
+end:
 	DPU_ATRACE_END(__func__);
 }
 
@@ -1467,16 +1526,17 @@ static void vs_crtc_enter_psr(struct drm_crtc *crtc, struct drm_crtc_state *old_
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct device *dev = vs_crtc->dev;
 	bool was_powered_off = vs_crtc_was_powered_off(crtc, old_state);
+	bool is_active_modeset = vs_crtc_is_active_modeset(crtc);
 
 	DPU_ATRACE_BEGIN(__func__);
-	dev_dbg(dev, "%s: enter PSR vblank_en:%d was_powered_off:%d\n", __func__,
-		vs_crtc->vblank_en, was_powered_off);
+	dev_dbg(dev, "enter PSR, vblank_en:%d was_powered_off:%d is_active_modeset:%d\n",
+		vs_crtc->vblank_en, was_powered_off, is_active_modeset);
 
 	if (was_powered_off) {
-		dev_info(dev, "%s: DPU was powered OFF, needs to power it ON\n", __func__);
+		dev_info(dev, "DPU was powered off, need to power it on\n");
 		ret = vs_dc_power_get(vs_crtc->dc_dev, true);
 		if (ret < 0)
-			dev_err(dev, "failed to power ON\n");
+			dev_err(dev, "failed to power on during PSR entry\n");
 
 	} else {
 		vs_crtc_disable_pipeline(crtc, old_state);
@@ -1486,7 +1546,7 @@ static void vs_crtc_enter_psr(struct drm_crtc *crtc, struct drm_crtc_state *old_
 
 	ret = vs_dc_power_put(vs_crtc->dc_dev, true);
 	if (ret < 0)
-		dev_err(dev, "failed to power OFF\n");
+		dev_err(dev, "failed to power off during PSR entry\n");
 
 	DPU_ATRACE_END(__func__);
 }
@@ -1511,7 +1571,6 @@ static void vs_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_stat
 		vs_crtc_enter_power_off(crtc, old_state);
 		break;
 	case VS_POWER_STATE_ON:
-		/* by default called during full mode change */
 		vs_crtc_enter_power_off(crtc, old_state);
 		break;
 	case VS_POWER_STATE_PSR:
@@ -1531,11 +1590,14 @@ static void vs_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_state 
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct vs_crtc_state *vs_crtc_state = to_vs_crtc_state(crtc->state);
 	struct device *dev = vs_crtc->dev;
-	struct vs_dc *dc = dev_get_drvdata(dev);
 
-	if (vs_crtc_state->needs_recovery && !dc->disable_crtc_recovery) {
-		dev_info(dev, "[CRTC:%d:%s] trigger recovery", crtc->base.id, crtc->name);
-		vs_crtc_trigger_recovery(vs_crtc);
+	if (vs_crtc_state->recovery_info.needs_recovery && is_crtc_recovery_enabled()) {
+		dev_info(dev,
+			"[CRTC:%d:%s] trigger recovery; reason_bitmap:%#x panel_errors:%#llx dsi_errors:%#llx",
+			crtc->base.id, crtc->name, vs_crtc_state->recovery_info.recovery_srcs,
+			vs_crtc_state->recovery_info.panel_errors,
+			vs_crtc_state->recovery_info.dsi_errors);
+		vs_crtc_trigger_recovery(vs_crtc, vs_crtc_state->recovery_info.recovery_srcs);
 	}
 
 	if (vs_crtc_state->need_boost_fabrt)
@@ -1748,17 +1810,54 @@ end:
 	return 0;
 }
 
-void vs_crtc_trigger_gram_collision_coredump(struct vs_crtc *vs_crtc,
-					     struct drm_crtc_state *crtc_state)
+/**
+ * vs_crtc_trigger_panel_dsi_coredump() - Trigger sscd associated with DSI connection
+ *
+ * This is meant to capture all coredump reasons related to the DSI host and
+ * errors read from the panel DDIC connected to it. It is designed to be
+ * executed during the atomic_check phase; as such, the old_vs_crtc_state
+ * contains the active state of the crtc during the triggering incident.
+ *
+ * It is assumed when calling this function that it has already been checked
+ * whether the coredump source is enabled.
+ *
+ * @vs_crtc: crtc associated with error
+ * @old_vs_crtc_state: active state of the crtc
+ * @panel_errors: error bits set from panel DDIC registers
+ * @dsi_errors: error bits set from DSI host registers
+ * @source: reason for causing the coredump; if multiple could apply, this
+ *	    should be the primary coredump reason.
+ */
+void vs_crtc_trigger_panel_dsi_coredump(struct vs_crtc *vs_crtc,
+					struct vs_crtc_state *old_vs_crtc_state, u64 panel_errors,
+					u64 dsi_errors, enum coredump_source source)
 {
 	struct device *dev = vs_crtc->dev;
 	struct vs_dc *dc = dev_get_drvdata(dev);
-	static char reason[192] = {};
+	char reason[192] = {};
+	const char *reason_prefix;
+	u8 display_id = to_vs_display_id(dc, &vs_crtc->base);
+	u8 output_id = old_vs_crtc_state->output_id;
+	enum drm_vs_power_state power_state = old_vs_crtc_state->power_state;
+
+	switch (source) {
+	case SSCD_SRC_GRAM_COLLISION:
+		reason_prefix = "GRAM collision detected from panel";
+		break;
+	case SSCD_SRC_DSI_ERR:
+		reason_prefix = "DSI host error detected";
+		break;
+	case SSCD_SRC_DDIC_ERR:
+		reason_prefix = "Panel DDIC error detected";
+		break;
+	default:
+		reason_prefix = "Unsupported error detected";
+	}
 
 	scnprintf(reason, sizeof(reason),
-		  "GRAM collision detected from panel: display_mode=%s crtc=%s crtc_power_state=%d",
-		  crtc_state->mode.name, vs_crtc->base.name,
-		  to_vs_crtc_state(crtc_state)->power_state);
+		"%s; panel_errors %#llx; dsi_errors %#llx; display_mode %s; display_id %d; output_id %d; power_state %s;",
+		reason_prefix, panel_errors, dsi_errors, old_vs_crtc_state->base.mode.name,
+		display_id, output_id, power_state_names[power_state]);
 
 	vs_dc_coredump(dc, reason);
 }

@@ -1284,6 +1284,89 @@ static const struct attribute *panel_attrs[] = { &dev_attr_serial_number.attr,
 #endif
 						 NULL };
 
+struct panel_err_attr {
+	struct device_attribute dev_attr;
+	int index;
+};
+
+static ssize_t panel_error_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
+	const struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
+	struct panel_err_attr *p_attr = container_of(attr, struct panel_err_attr, dev_attr);
+
+	return sysfs_emit(buf, "%u\n", ctx->panel_errors_cnt[p_attr->index]);
+}
+
+#define PANEL_ERR_ATTR(_name, _index) \
+	static struct panel_err_attr _name = { \
+		.dev_attr = __ATTR(_name, 0444, panel_error_stats_show, NULL), \
+		.index = _index, \
+	}
+
+PANEL_ERR_ATTR(dsi_sot,                  GS_PANEL_ERR_DSI_SOT);
+PANEL_ERR_ATTR(dsi_sot_sync,             GS_PANEL_ERR_DSI_SOT_SYNC);
+PANEL_ERR_ATTR(dsi_eot_sync,             GS_PANEL_ERR_DSI_EOT_SYNC);
+PANEL_ERR_ATTR(dsi_escape_mode_entry,    GS_PANEL_ERR_DSI_ESCAPE_MODE_ENTRY);
+PANEL_ERR_ATTR(dsi_lp_xmit_sync,         GS_PANEL_ERR_DSI_LP_XMIT_SYNC);
+PANEL_ERR_ATTR(dsi_hs_rx_timeout,        GS_PANEL_ERR_DSI_HS_RX_TIMEOUT);
+PANEL_ERR_ATTR(dsi_false_control,        GS_PANEL_ERR_DSI_FALSE_CONTROL);
+PANEL_ERR_ATTR(dsi_data_lane_contention, GS_PANEL_ERR_DSI_DATA_LANE_CONTENTION);
+PANEL_ERR_ATTR(dsi_ecc_single,           GS_PANEL_ERR_DSI_ECC_SINGLE);
+PANEL_ERR_ATTR(dsi_ecc_multi,            GS_PANEL_ERR_DSI_ECC_MULTI);
+PANEL_ERR_ATTR(dsi_checksum,             GS_PANEL_ERR_DSI_CHECKSUM);
+PANEL_ERR_ATTR(dsi_data_type,            GS_PANEL_ERR_DSI_DATA_TYPE);
+PANEL_ERR_ATTR(dsi_vc_id_invalid,        GS_PANEL_ERR_DSI_VC_ID_INVALID);
+PANEL_ERR_ATTR(dsi_xmit_len,             GS_PANEL_ERR_DSI_XMIT_LEN);
+PANEL_ERR_ATTR(dsi_reserved,             GS_PANEL_ERR_DSI_RESERVED);
+PANEL_ERR_ATTR(dsi_protocol_violation,   GS_PANEL_ERR_DSI_PROTOCOL_VIOLATION);
+PANEL_ERR_ATTR(dsi_read_failure,         GS_PANEL_ERR_DSI_READ_FAILURE);
+PANEL_ERR_ATTR(vlin1,                    GS_PANEL_ERR_VLIN1);
+PANEL_ERR_ATTR(te,                       GS_PANEL_ERR_TE);
+PANEL_ERR_ATTR(pps,                      GS_PANEL_ERR_PPS);
+PANEL_ERR_ATTR(checksum,                 GS_PANEL_ERR_CHECKSUM);
+PANEL_ERR_ATTR(esd,                      GS_PANEL_ERR_ESD);
+PANEL_ERR_ATTR(disp_invalid,             GS_PANEL_ERR_DISP_INVALID);
+PANEL_ERR_ATTR(vgh,                      GS_PANEL_ERR_VGH);
+PANEL_ERR_ATTR(gram_collision,           GS_PANEL_ERR_GRAM_COLLISION);
+
+static struct attribute *panel_error_stats_attrs[] = {
+	&dsi_sot.dev_attr.attr,
+	&dsi_sot_sync.dev_attr.attr,
+	&dsi_eot_sync.dev_attr.attr,
+	&dsi_escape_mode_entry.dev_attr.attr,
+	&dsi_lp_xmit_sync.dev_attr.attr,
+	&dsi_hs_rx_timeout.dev_attr.attr,
+	&dsi_false_control.dev_attr.attr,
+	&dsi_data_lane_contention.dev_attr.attr,
+	&dsi_ecc_single.dev_attr.attr,
+	&dsi_ecc_multi.dev_attr.attr,
+	&dsi_checksum.dev_attr.attr,
+	&dsi_data_type.dev_attr.attr,
+	&dsi_vc_id_invalid.dev_attr.attr,
+	&dsi_xmit_len.dev_attr.attr,
+	&dsi_reserved.dev_attr.attr,
+	&dsi_protocol_violation.dev_attr.attr,
+	&dsi_read_failure.dev_attr.attr,
+	&vlin1.dev_attr.attr,
+	&te.dev_attr.attr,
+	&pps.dev_attr.attr,
+	&checksum.dev_attr.attr,
+	&esd.dev_attr.attr,
+	&disp_invalid.dev_attr.attr,
+	&vgh.dev_attr.attr,
+	&gram_collision.dev_attr.attr,
+	NULL, };
+
+static const struct attribute_group panel_error_stats_group = {
+	.name = "panel_error_stats",
+	.attrs = panel_error_stats_attrs,
+};
+static const struct attribute_group *panel_error_stats_groups[] = {
+	&panel_error_stats_group,
+	NULL,
+};
+
 int gs_panel_sysfs_create_files(struct device *dev, struct gs_panel *ctx)
 {
 	if (ctx->disp_stats.initialized) {
@@ -1298,6 +1381,9 @@ int gs_panel_sysfs_create_files(struct device *dev, struct gs_panel *ctx)
 		if (sysfs_create_file(&dev->kobj, &dev_attr_frame_rate.attr))
 			dev_err(ctx->dev, "unable to add set_frame_rate sysfs file\n");
 	}
+
+	if (sysfs_create_groups(&dev->kobj, panel_error_stats_groups))
+		dev_err(ctx->dev, "unable to add panel_error_stats group\n");
 
 	return sysfs_create_files(&dev->kobj, panel_attrs);
 }

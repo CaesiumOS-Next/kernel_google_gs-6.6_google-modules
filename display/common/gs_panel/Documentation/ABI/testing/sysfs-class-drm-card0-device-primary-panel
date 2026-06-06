@@ -329,3 +329,13 @@ Contact: "Chris Lu" <luchris@google.com>
 Description:
   Userspace client uses this to write the content gray level of screen UI. Some display and
   sensor configurations will be applied to optimize experiences of specific Apps (b/444467427).
+
+What: /sys/class/drm/card0/device/primary-panel/panel_error_stats/
+Date: December 2025
+KernelVersion: 6.6
+Contact: "Ken Lin" <lyenting@google.com>
+Description:
+  Directory containing read-only statistics for display panel errors.
+  Each file represents a specific error type from the gs_panel_err enum
+  (e.g., te, esd, dsi_sot). Reading a file returns the accumulated
+  error count as a decimal integer.

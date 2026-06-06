@@ -729,7 +729,7 @@ int gs_panel_set_panel_power_state(struct gs_panel *ctx, enum gs_panel_power_sta
 static int gs_panel_run_detect_fault(struct gs_panel *ctx)
 {
 	struct device *dev = ctx->dev;
-	int ret;
+	int bit, ret;
 	ktime_t now;
 	s64 delta_ms;
 	u32 fault_detect_interval_ms = ctx->desc->fault_detect_interval_ms;
@@ -763,6 +763,11 @@ static int gs_panel_run_detect_fault(struct gs_panel *ctx)
 		bitmap_and(ctx->panel_errors, ctx->panel_errors, mask, GS_PANEL_ERR_MAX);
 	}
 	trace_panel_errors(ctx->gs_connector->panel_index, ctx->panel_errors);
+
+	/* Count panel errors */
+	for_each_set_bit(bit, ctx->panel_errors, GS_PANEL_ERR_MAX) {
+		ctx->panel_errors_cnt[bit]++;
+	}
 
 	if (!bitmap_empty(ctx->panel_errors, GS_PANEL_ERR_MAX))
 		gs_fault_event_emit(ctx->dev, GS_FAULT_EVENT_TYPE_PANEL_ERROR,

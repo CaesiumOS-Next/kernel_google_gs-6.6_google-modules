@@ -92,6 +92,7 @@ enum gs_mipi_sync_mode {
  * @GS_PANEL_ERR_DSI_PROTOCOL_VIOLATION: A general DSI protocol rule was
  *					 encountered that was not covered by
  *					 other DSI error flags.
+ * @GS_PANEL_ERR_DSI_READ_FAILURE: Fail to read DDIC continuously
  * @GS_PANEL_ERR_VLIN1: A panel error was encountered relating to VLIN1
  * @GS_PANEL_ERR_TE: A panel error was encountered relating to TE
  * @GS_PANEL_ERR_PPS: The panel's PPS settings did not match expected values
@@ -118,6 +119,7 @@ enum gs_panel_err {
 	GS_PANEL_ERR_DSI_XMIT_LEN,
 	GS_PANEL_ERR_DSI_RESERVED,
 	GS_PANEL_ERR_DSI_PROTOCOL_VIOLATION,
+	GS_PANEL_ERR_DSI_READ_FAILURE,
 	GS_PANEL_ERR_VLIN1,
 	GS_PANEL_ERR_TE,
 	GS_PANEL_ERR_PPS,

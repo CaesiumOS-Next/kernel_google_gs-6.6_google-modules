@@ -48,6 +48,7 @@
 #include "vs_drm_state_record.h"
 #include "vs_drv.h"
 #include "vs_dc_info.h"
+#include "vs_module_params.h"
 #include "vs_writeback.h"
 #include "vs_dc_sram.h"
 #include "vs_dc_hw.h"
@@ -60,33 +61,6 @@
 #include <drm/drm_vblank.h>
 
 #define VS_DC_AUTOSUPEND_DELAY_MS 30
-
-static bool disable_crtc_recovery;
-module_param(disable_crtc_recovery, bool, 0644);
-MODULE_PARM_DESC(disable_crtc_recovery, "Disable crtc recovery on flip done timeout");
-
-static bool disable_hw_reset;
-module_param(disable_hw_reset, bool, 0644);
-MODULE_PARM_DESC(disable_hw_reset, "Disable hardware reset before power OFF");
-
-static bool disable_urgent;
-module_param(disable_urgent, bool, 0644);
-MODULE_PARM_DESC(disable_urgent, "Disable QoS urgent level feature");
-
-static bool disable_coredump;
-module_param(disable_coredump, bool, 0644);
-MODULE_PARM_DESC(disable_coredump, "Whether to disable subsystem coredump for this module");
-
-static u32 coredump_sources = BIT(SSCD_SRC_MANUAL) | BIT(SSCD_SRC_FRAME_UPDATE_TIMEOUT) |
-			      BIT(SSCD_SRC_DISABLE_TIMEOUT) | BIT(SSCD_SRC_GRAM_COLLISION);
-module_param(coredump_sources, uint, 0644);
-MODULE_PARM_DESC(coredump_sources,
-		 "Bitmask of which coredump sources are allowed to trigger subsystem coredump");
-
-bool dc_is_coredump_source_enabled(const struct vs_dc *dc, enum coredump_source source)
-{
-	return (coredump_sources & BIT(source)) != 0;
-}
 
 int vs_dc_power_get(struct device *dev, bool sync)
 {
@@ -177,9 +151,6 @@ static void vs_dc_do_hw_reset(struct device *dev)
 	int i;
 	bool needs_hw_reset = false;
 	struct vs_dc *dc = dev_get_drvdata(dev);
-
-	if (dc->disable_hw_reset)
-		return;
 
 	if (!dc_hw_fe_is_all_layers_idle(&dc->hw))
 		needs_hw_reset = true;
@@ -447,14 +418,9 @@ static int dc_init(struct device *dev)
 
 	dc->first_frame = true;
 
-	dc->disable_hw_reset = disable_hw_reset;
 	dc->hw_reg_dump_options = DC_HW_REG_DUMP_IN_NONE;
-	dc->disable_crtc_recovery = disable_crtc_recovery;
-	dc->disable_urgent = disable_urgent;
 
-	dev_info(dev, "disable_hw_reset:%d, hw_reg_dump_options:%d disable_crtc_recovery:%d disable_urgent:%d\n",
-		 dc->disable_hw_reset, dc->hw_reg_dump_options, dc->disable_crtc_recovery,
-		 dc->disable_urgent);
+	dev_info(dev, "hw_reg_dump_options:%d\n", dc->hw_reg_dump_options);
 
 	ret = dc_hw_init(&dc->hw);
 	if (ret) {
@@ -666,8 +632,7 @@ static void _vs_dc_handle_frame_done(struct vs_dc *dc, struct vs_crtc *vs_crtc, 
 	atomic_inc(&vs_crtc->frame_done_count);
 	wake_up_all(&vs_crtc->framedone_waitq);
 
-	if (!dc->disable_hw_reset)
-		vs_crtc->needs_hw_reset = false;
+	vs_crtc->needs_hw_reset = false;
 
 	vs_crtc->recovery.count = 0;
 }
@@ -1353,7 +1318,7 @@ static int dc_bind(struct device *dev, struct device *master, void *data)
 
 	device_create_file(dev, &dev_attr_early_wakeup);
 
-	if (dc->coredump_en) {
+	if (is_coredump_enabled()) {
 		ret = dc_init_sscd(dc, dev);
 		if (ret < 0)
 			goto err_clean_dc;
@@ -1376,7 +1341,7 @@ static void dc_unbind(struct device *dev, struct device *master, void *data)
 
 	vs_dc_disable_irqs(dc);
 
-	if (dc->coredump_en) {
+	if (dc->disp_sscd) {
 		display_sscd_device_free(dc->disp_sscd);
 		dc->disp_sscd = NULL;
 	}
@@ -1617,13 +1582,12 @@ static int dc_probe(struct platform_device *pdev)
 		goto detach_pd;
 	}
 
-	dc->coredump_en = !disable_coredump;
 	ret = dc_init_debugfs(dc);
 	if (ret) {
 		dev_err(dev, "failed to init debugfs\n");
 		goto detach_pd;
 	}
-	if (dc->coredump_en)
+	if (is_coredump_enabled())
 		dc->hw.reg_base_phys = resource->start;
 
 	dev_set_drvdata(dev, dc);

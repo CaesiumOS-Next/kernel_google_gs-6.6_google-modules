@@ -88,6 +88,16 @@
 #define INC_INT_CNT(int_cntr)
 #endif
 
+static u32 pm_runtime_suspend_version = 1;
+/*
+ * version 0 : original flow.
+ * version 1 : override MIPI output to LP00 upon pm_runtime suspend,
+ *	       override MIPI output to generate ULPS exit sequence during initialization.
+ */
+module_param(pm_runtime_suspend_version, uint, 0644);
+MODULE_PARM_DESC(pm_runtime_suspend_version,
+		"dsi2h pm_runtime_suspend control flow version");
+
 static const struct regmap_config dw_mipi_dsi2h_regmap_cfg = {
 	.name = "dw-mipi-dsi2h",
 	.reg_bits = 32,
@@ -373,6 +383,7 @@ static const struct dw_mipi_dsi2h_variant dw_mipi_dsi2h_lca01_layout = {
 };
 
 #define host_to_dsi2h(host) container_of(host, struct dw_mipi_dsi2h, dsi_host)
+static int dw_mipi_dsi2h_enable(struct dw_mipi_dsi2h *dsi2h);
 
 static inline struct dw_mipi_dsi2h *bridge_to_dsi(struct drm_bridge *bridge)
 {
@@ -601,6 +612,11 @@ static int dw_mipi_dsi2h_exit_ulps(struct dw_mipi_dsi2h *dsi2h)
 		return ret;
 	}
 	DPU_ATRACE_END("%s +", __func__);
+
+	/* wait for lanes to stabilize */
+	DPU_ATRACE_BEGIN("T_lane_stable");
+	usleep_range(100, 110);
+	DPU_ATRACE_END("T_lane_stable");
 
 	dsi2h->state = DSI2H_STATE_HS_EN;
 
@@ -992,6 +1008,11 @@ static ssize_t dw_mipi_dsi2h_host_transfer(struct mipi_dsi_host *host,
 		return -EINVAL;
 	}
 
+	if (!dsi2h->enabled) {
+		dev_err(dsi2h->dev, "Unable to transfer cmd. DSI is not enabled\n");
+		return -EPERM;
+	}
+
 	ret = pm_runtime_resume_and_get(dsi2h->dev);
 	if (ret) {
 		dev_err(dsi2h->dev, "Unable to transfer cmd. Runtime resume failed (%d)\n", ret);
@@ -1000,8 +1021,17 @@ static ssize_t dw_mipi_dsi2h_host_transfer(struct mipi_dsi_host *host,
 
 	mutex_lock(&dsi2h->dsi2h_lock);
 	dsi2h_pre_state = dsi2h->state;
-	if (dsi2h_pre_state == DSI2H_STATE_ULPS)
+	if (dsi2h_pre_state == DSI2H_STATE_ULPS) {
 		dw_mipi_dsi2h_exit_ulps(dsi2h);
+	} else if (dsi2h_pre_state == DSI2H_STATE_SUSPEND) {
+		dev_info(dsi2h->dev, "DSI suspended during transfer, enabling...\n");
+		ret = dw_mipi_dsi2h_enable(dsi2h);
+		if (ret < 0) {
+			dev_err(dsi2h->dev, "%s Failed to enable DSI from suspend (%d)\n",
+				__func__, ret);
+			goto EXIT;
+		}
+	}
 
 	ret = _dw_mipi_dsi2h_host_transfer(dsi2h, msg);
 
@@ -1014,11 +1044,14 @@ static ssize_t dw_mipi_dsi2h_host_transfer(struct mipi_dsi_host *host,
 	if (ret < 0)
 		dev_err(dsi2h->dev, "DSI message transfer failed even after dsi reset\n");
 
-	if (dsi2h_pre_state == DSI2H_STATE_ULPS || dsi2h_pre_state == DSI2H_STATE_PENDING_ULPS) {
+	if (dsi2h_pre_state == DSI2H_STATE_ULPS || dsi2h_pre_state == DSI2H_STATE_PENDING_ULPS ||
+	    dsi2h_pre_state == DSI2H_STATE_SUSPEND) {
 		dsi2h->state = DSI2H_STATE_PENDING_ULPS;
 		kthread_mod_delayed_work(&dsi2h->dsi2h_worker, &dsi2h->ulps_dwork,
 			msecs_to_jiffies(DSI2H_ULPS_DWORK_MS));
 	}
+
+EXIT:
 	pm_runtime_mark_last_busy(dsi2h->dev);
 	if (pm_runtime_put_autosuspend(dsi2h->dev) < 0)
 		dev_WARN(dsi2h->dev, "failed to runtime put %d\n", ret);
@@ -1487,8 +1520,9 @@ static void dw_irq_status(struct dw_mipi_dsi2h *dsi2h)
 			      "RC Control Error\n");
 		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_errcontentionlp0, 3,
 			      PHY_RSTN | HARD_RSTN, "RC LP0 Contention Error\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_errcontentionlp1, 4,
-			      PHY_RSTN | HARD_RSTN, "RC LP1 Contention Error\n");
+		/* TODO(b/447004565): relax LP1 Contention due to MIPI OVR solution */
+		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_errcontentionlp1, 4, NO_RSTN,
+			      "RC LP1 Contention Error\n");
 		INT_BIT_CHECK(dsi2h, val_spec, int_txhs_fifo_over, 16, NO_RSTN,
 			      "RC DSI2-HOST reports this error when write operation is performed but PHY High-Speed data FIFO is full\n");
 		INT_BIT_CHECK(dsi2h, val_spec, int_txhs_fifo_under, 17, NO_RSTN,
@@ -1798,7 +1832,7 @@ int dw_mipi_dsi2h_resume(void *handle)
 
 	mutex_lock(&dsi2h->dsi2h_lock);
 	dev_dbg(dsi2h->dev, "%s: enabled=%d state=%d\n", __func__, dsi2h->enabled, dsi2h->state);
-	if (dsi2h->enabled) {
+	if ((dsi2h->pm_ver == 0) && dsi2h->enabled) {
 		pending_ulps = (dsi2h->state == DSI2H_STATE_PENDING_ULPS);
 
 		ret = dw_mipi_dsi2h_enable(dsi2h);
@@ -1822,11 +1856,33 @@ int dw_mipi_dsi2h_suspend(void *handle)
 	struct dw_mipi_dsi2h *dsi2h = handle;
 	int ret = 0;
 
+	/* cancel and confirm all delay ulps works are done */
+	kthread_cancel_delayed_work_sync(&dsi2h->ulps_dwork);
+
 	mutex_lock(&dsi2h->dsi2h_lock);
 	dev_dbg(dsi2h->dev, "%s: enabled=%d state=%d\n", __func__, dsi2h->enabled, dsi2h->state);
+
+	/* update pm_runtime logic */
+	if (pm_runtime_suspend_version == 1) {
+		/* MIPI PHY enable override */
+		phy_set_mode_ext(dsi2h->phy, PHY_MODE_MIPI_DPHY, DW_MIPI_CDPHY_OP_OVR_LANE_ENABLE);
+		dsi2h->pm_ver = 1;
+	} else {
+		/* MIPI PHY disable override */
+		phy_set_mode_ext(dsi2h->phy, PHY_MODE_MIPI_DPHY, DW_MIPI_CDPHY_OP_OVR_LANE_DISABLE);
+		dsi2h->pm_ver = 0;
+	}
+
+	/* handle case that delay ulps worker does not switch DSI to ulps state. */
+	if (unlikely(dsi2h->state == DSI2H_STATE_PENDING_ULPS))
+		dw_mipi_dsi2h_enter_ulps(dsi2h);
+
 	if (dsi2h->state == DSI2H_STATE_HS_EN) {
 		ret = dw_mipi_dsi2h_disable(dsi2h);
 	} else if (dsi2h->state == DSI2H_STATE_ULPS) {
+		/* override MIPI lane output to LP00 before exit ulps */
+		if (dsi2h->pm_ver == 1)
+			phy_set_mode_ext(dsi2h->phy, PHY_MODE_MIPI_DPHY, DW_MIPI_CDPHY_OP_OVR_LANE_LP00);
 		/* exit ULPS first, then power off. */
 		ret = dw_mipi_dsi2h_exit_ulps(dsi2h);
 		if (unlikely(ret < 0))
@@ -1835,7 +1891,12 @@ int dw_mipi_dsi2h_suspend(void *handle)
 		ret = dw_mipi_dsi2h_disable(dsi2h);
 		if (unlikely(ret < 0))
 			dev_err(dsi2h->dev, "%s: failed to disable DSI\n", __func__);
-		dsi2h->state = DSI2H_STATE_PENDING_ULPS;
+		/* set MIPI PHY in ULPS state after override enabled */
+		if (dsi2h->pm_ver == 1) /* set MIPI PHY in ULPS state after override enabled */
+			phy_set_mode_ext(dsi2h->phy, PHY_MODE_MIPI_DPHY,
+				 DW_MIPI_CDPHY_OP_OVR_PHY_ULPS_STATE);
+		else
+			dsi2h->state = DSI2H_STATE_PENDING_ULPS;
 	}
 	mutex_unlock(&dsi2h->dsi2h_lock);
 
@@ -1862,6 +1923,35 @@ void dw_dsi2h_import_device(struct dw_mipi_dsi2h *dsi2h,
 			    struct mipi_dsi_device *dsi_dev)
 {
 	dw_dsi2h_import_device_config(&dsi2h->cfg, dsi_dev);
+}
+
+static bool is_active_modeset(struct drm_bridge *bridge, struct drm_bridge_state *bridge_state)
+{
+	struct dw_mipi_dsi2h *dsi2h = bridge_to_dsi(bridge);
+	struct drm_atomic_state *state = bridge_state->base.state;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *new_crtc_state;
+	bool is_active_modeset = false;
+
+	if (!bridge->encoder)
+		return false;
+
+	crtc = drm_atomic_get_new_crtc_for_encoder(state, bridge->encoder);
+	if (!crtc)
+		return false;
+
+	new_crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+	if (!new_crtc_state)
+		return false;
+
+	is_active_modeset = (new_crtc_state->mode_changed && new_crtc_state->active &&
+			     !new_crtc_state->active_changed);
+
+	dev_dbg(dsi2h->dev, "active modeset:%d (mc:%d a:%d ac:%d)\n", is_active_modeset,
+		new_crtc_state->mode_changed, new_crtc_state->active,
+		new_crtc_state->active_changed);
+
+	return is_active_modeset;
 }
 
 static bool is_seamless_modeset(struct drm_bridge *bridge,
@@ -1925,6 +2015,7 @@ static struct drm_bridge_state *dw_mipi_dsi2h_atomic_duplicate_state(struct drm_
 
 	__drm_atomic_helper_bridge_duplicate_state(bridge, &copy->base);
 	copy->is_seamless_modeset = false;
+	copy->is_active_modeset = false;
 
 	return &copy->base;
 }
@@ -1994,6 +2085,7 @@ static int dw_mipi_dsi2h_atomic_check(struct drm_bridge *bridge,
 
 	dw_dsi2h_import_device_config(&dsi2h_state->cfg, dsi_dev);
 	dsi2h_state->is_seamless_modeset = is_seamless_modeset(bridge, bridge_state);
+	dsi2h_state->is_active_modeset = is_active_modeset(bridge, bridge_state);
 
 	mutex_lock(&dsi2h->dsi2h_lock);
 	update_gs_hs_clk(dsi2h, conn_state);
@@ -2033,10 +2125,14 @@ static void dw_mipi_dsi2h_bridge_atomic_enable(struct drm_bridge *bridge,
 		dev_dbg(dsi2h->dev, "power ON\n");
 	}
 
-	ret = pm_runtime_resume_and_get(dsi2h->dev);
-	if (unlikely(ret < 0)) {
-		dev_err(dsi2h->dev, "%s: failed to runtime enable\n", __func__);
-		return;
+	if (dsi2h_state->is_active_modeset) {
+		dev_dbg(dsi2h->dev, "active modeset, skip DSI power on\n");
+	} else {
+		ret = pm_runtime_resume_and_get(dsi2h->dev);
+		if (unlikely(ret < 0)) {
+			dev_err(dsi2h->dev, "failed to runtime enable during atomic enable\n");
+			return;
+		}
 	}
 
 	mutex_lock(&dsi2h->dsi2h_lock);
@@ -2068,13 +2164,26 @@ static void dw_mipi_dsi2h_bridge_atomic_enable(struct drm_bridge *bridge,
 		dw_mipi_dsi2h_enable(dsi2h);
 		dsi2h->enabled = true;
 	/* following cases are for exit ULPS state transition */
-	} else if (dsi2h->state == DSI2H_STATE_PENDING_ULPS) {
-		/* DSI exit ULPS already in PENDING_ULPS state */
-		dsi2h->state = DSI2H_STATE_HS_EN;
-	} else if (dsi2h->state == DSI2H_STATE_ULPS) {
-		ret = dw_mipi_dsi2h_exit_ulps(dsi2h);
-		if (ret < 0)
-			dev_err(dsi2h->dev, "exit ulps fail\n");
+	} else {
+		switch (dsi2h->state) {
+		case DSI2H_STATE_ULPS:
+			ret = dw_mipi_dsi2h_exit_ulps(dsi2h);
+			if (ret < 0)
+				dev_err(dsi2h->dev, "exit ulps fail\n");
+			break;
+		case DSI2H_STATE_PENDING_ULPS:
+			/* DSI exit ULPS already in PENDING_ULPS state */
+			dsi2h->state = DSI2H_STATE_HS_EN;
+			break;
+		case DSI2H_STATE_SUSPEND:
+			/* enable DSI from system suspend state */
+			dw_mipi_dsi2h_enable(dsi2h);
+			dsi2h->enabled = true;
+			break;
+		case DSI2H_STATE_HS_EN:
+			/* Already in HS mode, do nothing */
+			break;
+		}
 	}
 
 	if (dsi2h->psr_rpm_on) {
@@ -2114,7 +2223,7 @@ static void dw_mipi_dsi2h_bridge_atomic_disable(struct drm_bridge *bridge,
 
 		if (was_in_psr && new_crtc_state &&
 		    drm_atomic_crtc_effectively_active(new_crtc_state)) {
-			dev_dbg(dsi2h->dev, "%s: no change in active mode\n", __func__);
+			dev_dbg(dsi2h->dev, "no change in active mode, skip atomic disable\n");
 			return;
 		}
 
@@ -2165,9 +2274,14 @@ static void dw_mipi_dsi2h_bridge_atomic_disable(struct drm_bridge *bridge,
 	mutex_unlock(&dsi2h->dsi2h_lock);
 
 	if (should_rpm_put) {
-		ret = pm_runtime_put_sync(dsi2h->dev);
-		if (unlikely(ret < 0))
-			dev_err(dsi2h->dev, "failed to runtime disable during dsi disable\n");
+		if (dsi2h_state->is_active_modeset) {
+			dev_dbg(dsi2h->dev, "active modeset, skip DSI power off\n");
+		} else {
+			ret = pm_runtime_put_sync(dsi2h->dev);
+			if (unlikely(ret < 0))
+				dev_err(dsi2h->dev,
+					"failed to runtime disable during atomic disable\n");
+		}
 	}
 }
 

@@ -4,3 +4,13 @@ Contact: Long Ling <longling@google.com>
 Description:
     (RW) CDPHY high speed data rate with unit Mbps. New value will
     take effect at the next time the DSI host powers on.
+
+What: /sys/module/mipi_dsi2h/parameters/pm_runtime_suspend_version
+Date: Jan 2026
+Contact: Tai-Hua Tseng <taihua@google.com>
+Description:
+    Switch DSI driver's control flow upon pm_runtime suspend:
+    value 0: orginal flow.
+    value 1: override MIPI output to LP00 during pm_runtime_suspend,
+             override MIPI output to generate ULPS exit sequence during
+             initialization.
