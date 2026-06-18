@@ -1,7 +1,7 @@
 /*
  * Broadcom device-specific manifest constants.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -27,6 +27,7 @@
 /* PCI vendor IDs */
 #define	VENDOR_EPIGRAM		0xfeda
 #define	VENDOR_BROADCOM		0x14e4
+#define	VENDOR_SYNAPTICS	0x1e01
 #define	VENDOR_3COM		0x10b7
 #define	VENDOR_NETGEAR		0x1385
 #define	VENDOR_DIAMOND		0x1092
@@ -100,6 +101,7 @@
 /* PCI Subsystem IDs */
 // Please leave this UNRELEASEDCHIP MOG wrapper in place even if there is nothing inside it
 #define BCM4383_D11AX_ID	0x4449		/* 4383 802.11ax triband device */
+#define BCM4384_D11BE_ID	0x4452		/* 4384 802.11be dualband device */
 #define BCM4387_D11AX_ID	0x4433		/* 4387 802.11ax dualband device */
 #define BCM4388_D11AX_ID	0x4434		/* 4388 802.11ax dualband device */
 #define BCM4389_D11AX_ID	0x4441		/* 4389 802.11ax dualband device */
@@ -108,10 +110,15 @@
 #define BCM4397_D11AX_ID	0x4443		/* 4397 802.11ax dualband device */
 #define BCM4398_D11AX_ID	0x4444		/* 4398 802.11ax triband device */
 #define BCM4399_D11BE_ID	0x4451		/* 4399 802.11be dualband device */
+#define BCM43992_D11BE_ID	0x4453		/* 43992 802.11be dualband device */
+#define BCM43109_D11BN_ID	0x4454		/* 43109 802.11bn dualband device */
+#define BCM43101_D11BN_ID	0x4455		/* 43101 802.11bn dualband device */
 
 /* Chip IDs */
 // Please leave this UNRELEASEDCHIP MOG wrapper in place even if there is nothing inside it
+#define BCM4381_CHIP_ID		0x4381          /* 4381 chipcommon chipid */
 #define BCM4383_CHIP_ID		0x4383          /* 4383 chipcommon chipid */
+#define BCM4384_CHIP_ID		0x4384          /* 4384 chipcommon chipid */
 #define BCM4387_CHIP_ID		0x4387          /* 4387 chipcommon chipid */
 #define BCM4388_CHIP_ID		0x4388          /* 4388 chipcommon chipid */
 #define BCM4389_CHIP_ID		0x4389          /* 4389 chipcommon chipid */
@@ -126,6 +133,9 @@
 
 #define BCM4383_CHIP(chipid)	(CHIPID(chipid) == BCM4383_CHIP_ID)
 #define BCM4383_CHIP_GRPID	BCM4383_CHIP_ID
+
+#define BCM4384_CHIP(chipid)	(CHIPID(chipid) == BCM4384_CHIP_ID)
+#define BCM4384_CHIP_GRPID	BCM4384_CHIP_ID
 
 #define BCM4387_CHIP(chipid)    (CHIPID(chipid) == BCM4387_CHIP_ID)
 #define BCM4387_CHIP_GRPID	BCM4387_CHIP_ID

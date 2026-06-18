@@ -74,48 +74,23 @@ static inline void gia_unlock_process_context(raw_spinlock_t *lock, unsigned lon
 	raw_spin_unlock_irqrestore(lock, *flags);
 }
 
-static inline bool gia_get_power(struct gia_device_data *gdd, bool irq_context,
-				 bool *skip_put_power)
+static inline int gia_get_power(struct gia_device_data *gdd)
 {
 	int ret;
 
 	if (!gdd->dev->pm_domain)
-		return true;
+		return 0;
 
-	trace_gia_get_power(gdd, irq_context);
-	if (irq_context) {
-		/*
-		 * Currently, power domain enabling is non-atomic process. And hence, we cannot
-		 * turn power ON from the atomic context. During interrupt handling, GIA driver
-		 * fairly expects the consumers to keep the required power domain ON before even
-		 * interrupt is fired. But if the power is not ON, don't attempt to handle the
-		 * interrupt, just shout out (as this is not expected) and bail out.
-		 *
-		 * If we are saying that consumer should have power ON at the time of interrupt
-		 * firing, okay, but the device may plug it off right in the middle of interrupt
-		 * handling, possible. So, need to take explicit vote to hold the power until we
-		 * are done here.
-		 */
-		ret = pm_runtime_get_if_in_use(gdd->dev);
-		if (ret > 0)
-			return true;
+	trace_gia_get_power(gdd);
 
-		if (gdd->ignore_rpm_status) {
-			trace_gia_error(gdd, "[ATTENTION] Ignoring power domain off");
-			dev_warn(gdd->dev, "[ATTENTION] Ignoring power domain off - ret %d\n", ret);
-			if (skip_put_power)
-				*skip_put_power = true;
-			return true;
-		}
-
-		trace_gia_error(gdd, "[ATTENTION] Power domain off and can't be turned on from irq context");
-		dev_err(gdd->dev, "[ATTENTION] Power domain off and can't be turned on from irq context - ret %d\n", ret);
-		return false;
+	ret = pm_runtime_get_sync(gdd->dev);
+	if (ret < 0) {
+		dev_warn(gdd->dev, "Error turning on power: %d\n", ret);
+		trace_gia_error(gdd, "pm_runtime_get_sync() failed.");
+		return ret;
 	}
 
-	pm_runtime_resume_and_get(gdd->dev);
-
-	return true;
+	return 0;
 }
 
 static inline void gia_put_power(struct gia_device_data *gdd)
@@ -429,7 +404,15 @@ static ssize_t irq_hw_status_show(struct kobject *kobj, struct kobj_attribute *a
 	gdd = container_of(gia_kobj, struct gia_device_data, gia_kobj);
 	gil = container_of(kobj, struct gia_irq_latency, irq_kobj);
 
-	gia_get_power(gdd, false, NULL);
+	/*
+	 * gia_get_power can fail when the system is collecting a bugreport which includes hw_stats
+	 * If it fails, we must not touch the GIA registers since that will cause an SError
+	 */
+	if (gia_get_power(gdd)) {
+		gia_put_power(gdd);
+		return sysfs_emit(buf, "NO POWER\n");
+	}
+
 	gia_lock_process_context(&gdd->lock, &flags);
 
 	enabled = check_hwirq_reg_status(gdd, gdd->type_data->enable_offset, gil->hwirq);
@@ -715,14 +698,10 @@ static void gia_irq_handler_chained(struct irq_desc *desc)
 	struct irq_chip *chip = irq_desc_get_chip(desc);
 	struct irq_data *d = irq_desc_get_irq_data(desc);
 	struct gia_device_data *gdd = irq_desc_get_handler_data(desc);
-	bool skip_put_power = false;
 	u32 nr_irqs_handled = 0;
 
 	trace_gia_irq_handler_entry(gdd, d);
 	gia_telemetry_start(gdd);
-
-	if (!gia_get_power(gdd, true, &skip_put_power))
-		return;
 
 	chained_irq_enter(chip, desc);
 
@@ -738,9 +717,6 @@ static void gia_irq_handler_chained(struct irq_desc *desc)
 			gia_process_each_status_reg(gdd, gdd->type_data->status_overflow_offset);
 
 	chained_irq_exit(chip, desc);
-
-	if (!skip_put_power)
-		gia_put_power(gdd);
 
 	gia_telemetry_end(gdd, nr_irqs_handled);
 	trace_gia_irq_handler_exit(gdd, d);
@@ -795,7 +771,7 @@ static void gia_irq_bus_lock(struct irq_data *d)
 	struct gia_device_data *gdd = d->domain->host_data;
 
 	trace_gia_irq_bus_lock(gdd, d);
-	gia_get_power(gdd, false, NULL);
+	gia_get_power(gdd);
 }
 
 static void gia_irq_bus_sync_unlock(struct irq_data *d)
@@ -1032,6 +1008,53 @@ static void gia_restore_state(struct gia_device_data *gdd)
 }
 
 #ifdef CONFIG_PM
+static void gia_log_pending_irqs(struct gia_device_data *gdd, bool suspend)
+{
+	unsigned long flags;
+	void __iomem *isr_addr;
+	u32 isr, imr, pending;
+
+	gia_lock_process_context(&gdd->lock, &flags);
+	for (int i = 0; i < gdd->nr_irq_chips; i++) {
+		isr_addr = gia_reg_addr(gdd, gdd->type_data->status_offset, i);
+		isr = readl_relaxed(isr_addr);
+		if (gdd->type_data->check_overflow_reg) {
+			isr_addr = gia_reg_addr(gdd, gdd->type_data->status_overflow_offset, i);
+			isr |= readl_relaxed(isr_addr);
+		}
+
+		imr = gdd->mask_cache[i];
+
+		/*
+		 * Log only relevant irqs. Filter out ones who are actually disabled by their
+		 * clients. That's definitely one way for clients to disable their irqs.
+		 */
+		pending = (isr & imr);
+
+		if (!pending)
+			continue;
+
+		/*
+		 * Logs printed here do not necessarily suggests an underlying issue. It varies
+		 * case to case. Some clients okay to drop their IRQ.
+		 */
+		if (suspend) {
+			trace_gia_pending_irq_error(gdd, i, pending,
+						    "IRQs may be dropped in suspend!!");
+			dev_warn(gdd->dev,
+				 "chip %d, pending irq_status %#x at suspend may be dropped\n",
+				 i, pending);
+		} else {
+			trace_gia_pending_irq_error(gdd, i, pending,
+						    "Unexpected pending IRQs at resume!!");
+			dev_warn(gdd->dev,
+				 "chip %d, pending irq_status %#x before resume is unexpected\n",
+				 i, pending);
+		}
+	}
+	gia_unlock_process_context(&gdd->lock, &flags);
+}
+
 /*
  * Note:
  * Doing MASK register restoration is not required all the time. There are cases, where power
@@ -1045,6 +1068,25 @@ int gia_runtime_suspend(struct device *dev)
 
 	trace_gia_runtime_suspend(gdd);
 
+	if (!gdd->dev->pm_domain)
+		return 0;
+
+	for (int i = 0; i < gdd->nr_out_irq; i++)
+		/*
+		 * We can just wait for ACTIVE interrupts today. No upstream method to wait
+		 * on, PENDING but not yet ACTIVE interrupts. This helps clients who have no
+		 * means to know if their IRQ is raised or not, and hence can't wait for
+		 * it to be handled before going RPM SUSPENDED. We'd drop them today.
+		 */
+		disable_irq(gdd->virqs[i]);
+
+	/*
+	 * Pending IRQs at this time may be dropped. Idea is to be explicit about it. If clients
+	 * really care not dropping their IRQs, they may wait to get all their pending IRQs handled
+	 * and then go to RPM SUSPENDED state.
+	 */
+	gia_log_pending_irqs(gdd, true);
+
 	return 0;
 }
 
@@ -1054,6 +1096,17 @@ int gia_runtime_resume(struct device *dev)
 
 	trace_gia_runtime_resume(gdd);
 	gia_restore_state(gdd);
+
+	if (!gdd->dev->pm_domain)
+		return 0;
+
+	/*
+	 * Any pending IRQ at this time, means clients raised IRQs while they were RPM
+	 * SUSPENDED. Something, clients need to fix, ideally.
+	 */
+	gia_log_pending_irqs(gdd, false);
+	for (int i = 0; i < gdd->nr_out_irq; i++)
+		enable_irq(gdd->virqs[i]);
 
 	return 0;
 }
@@ -1198,10 +1251,6 @@ int gia_init(struct gia_device_data *gdd)
 		return -EINVAL;
 	}
 
-	gdd->ignore_rpm_status = of_property_read_bool(gdd->dev->of_node, "ignore-rpm-status");
-	if (gdd->ignore_rpm_status)
-		dev_warn(gdd->dev, "ignore_rpm_status set\n");
-
 	/*
 	 * Each GIA node sends 1 (or more) interrupts out to upstream interrupt controller. For
 	 * each of the out-going interrupt lines, it requires to register a handler so that it can
@@ -1222,8 +1271,18 @@ int gia_init(struct gia_device_data *gdd)
 	 * CPU. And that makes their multiple sources gets similar serialized treatement as any
 	 * other aggregating GIAs.
 	 */
-	for (int i = 0; i < gdd->nr_out_irq; i++)
+	for (int i = 0; i < gdd->nr_out_irq; i++) {
+		/*
+		 * Default, disable_irq() does IRQ masking at SW layer. So, when an IRQ fires next,
+		 * IRQ handling flow would reach the upstream interrupt controller handler and
+		 * interrupt core would mask calling the device handler (GIA handler in this case).
+		 * We prefer "masking" at HW layer. That guarantees, IRQ won't propagate till CPU.
+		 * This is now a hard requirement, because we exactly want this behavior in GIA's
+		 * runtime suspend callback. IRQ_DISABLE_UNLAZY flag achieves that.
+		 */
+		irq_set_status_flags(gdd->virqs[i], IRQ_DISABLE_UNLAZY);
 		irq_set_chained_handler_and_data(gdd->virqs[i], gia_irq_handler_chained, gdd);
+	}
 
 	/* Attach gdd in global linked list */
 	mutex_lock(&gia_global_mutex);
@@ -1271,6 +1330,7 @@ const char *gia_trace_events[] = {
 	"gia_init",
 	"gia_exit",
 	"gia_error",
+	"gia_pending_irq_error",
 };
 
 static struct trace_array *gia_trace_init(void)

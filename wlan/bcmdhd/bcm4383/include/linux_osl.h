@@ -1,7 +1,7 @@
 /*
  * Linux OS Independent Layer
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -26,6 +26,10 @@
 
 #include <typedefs.h>
 #include <linuxerrmap.h>
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+#include <linux/sched/clock.h>
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0) */
 
 #define DECLSPEC_ALIGN(x)	__attribute__ ((aligned(x)))
 
@@ -313,6 +317,7 @@ extern void * osl_virt_to_phys(void * va);
 #define OSL_RMB()		rmb()
 #define OSL_SMP_WMB()		smp_wmb()
 #define OSL_SMP_RMB()		smp_rmb()
+#define DMB()		OSL_MB()
 
 #if defined(__aarch64__)
 #define OSL_ISB()	isb()
@@ -341,6 +346,11 @@ extern void osl_preempt_enable(osl_t *osh);
 	#define OSL_CACHE_INV(va, len)		BCM_REFERENCE(va)
 	#define OSL_PREFETCH(ptr)		BCM_REFERENCE(ptr)
 #endif /* !__ARM_ARCH_7A__ */
+
+#ifdef AXI_TIMEOUTS_NIC
+extern void osl_bpt_rreg(osl_t *osh, ulong addr, volatile void *v, ulong r,
+	uint size, bool *chk_rdsts);
+#endif /* AXI_TIMEOUTS_NIC */
 
 /* register access macros */
 #if defined(BCMSDIO)
@@ -380,13 +390,32 @@ extern uint64 osl_sysuptime_ns(void);
 #define OSL_SYSUPTIME()		((uint32)jiffies_to_msecs(jiffies))
 #define OSL_SYSUPTIME_US()	osl_sysuptime_us()
 #define OSL_SYSUPTIME_NS()	osl_sysuptime_ns()
+#define OSL_TIME_MS()		OSL_SYSUPTIME()
+#define OSL_TIME_US()		OSL_SYSUPTIME_US()
+#define OSL_TIME_NS()		OSL_SYSUPTIME_NS()
+
+#define OSL_DURATION_NS_START()		OSL_TIME_NS()
+#define OSL_DURATION_NS(start)		((uint32)(OSL_TIME_NS() - (start)))
+#define OSL_DURATION_US_START()		OSL_TIME_US()
+#define OSL_DURATION_US(start)		((uint32)(OSL_TIME_US() - (start)))
+#define OSL_DURATION_MS_START()		OSL_TIME_MS()
+#define OSL_DURATION_MS(start)		((OSL_TIME_MS() - (start)))
+
 extern uint64 osl_localtime_ns(void);
 extern void osl_get_localtime(uint64 *sec, uint64 *usec);
 extern uint64 osl_systztime_us(void);
-#ifdef CUSTOM_PREFIX
+
+/* Temporary change till CUSTOM_PREFIX is removed from all src */
+#if defined(CUSTOM_PREFIX) && !defined(LOG_CUSTOM_PREFIX_AND_RTC)
+#define LOG_CUSTOM_PREFIX_AND_RTC
+#endif /* CUSTOM_PREFIX && !LOG_CUSTOM_PREFIX_AND_RTC */
+
+#ifdef LOG_CUSTOM_PREFIX_AND_RTC
 extern char* osl_get_rtctime(void);
 #define OSL_GET_RTCTIME()	osl_get_rtctime()
-#endif /* CUSTOM_PREFIX */
+#else
+#define OSL_GET_RTCTIME()	"N/A"
+#endif /* LOG_CUSTOM_PREFIX_AND_RTC */
 
 #define OSL_LOCALTIME_NS()	osl_localtime_ns()
 #define OSL_GET_LOCALTIME(sec, usec)	osl_get_localtime((sec), (usec))
@@ -395,7 +424,11 @@ uint64 osl_getcycles(void);
 
 /* RTC format %02d:%02d:%02d.%06lu, LEN including the trailing null space */
 #define RTC_TIME_BUF_LEN	16u
+#ifdef CUSTOM_PREFIX_NORTCTIME
+#define printf(fmt, args...)    printk(CUSTOM_PREFIX_NORTCTIME fmt , ## args)
+#else
 #define	printf(fmt, args...)	printk(fmt , ## args)
+#endif
 #define	vprintf(fmt, ap)	vprintk(fmt, ap)
 #include <linux/kernel.h>	/* for vsn/printf's */
 #include <linux/string.h>	/* for mem*, str* */
@@ -494,6 +527,22 @@ extern uintptr __osl_v;
 		OSL_READ_REG(osh, r)) \
 )
 #else
+#ifdef AXI_TIMEOUTS_NIC
+/* Besides reading the register.. this checks if their is a possible read failure
+ * due to axi timeout and accordingly invoke a handler to capture err info
+ */
+#define NO_WIN_CHECK_R_REG(osh, r, addr, read_st) (\
+	SELECT_BUS_READ(osh, \
+		({ \
+			__typeof(*(r)) __osl_v = 0; \
+			os_l1_exit_io; \
+			osl_bpt_rreg(osh, (uintptr)(addr), &__osl_v, (uintptr)r, \
+				sizeof(*(r)), read_st); \
+			__osl_v; \
+		}), \
+		OSL_READ_REG(osh, r)) \
+)
+#else
 #define NO_WIN_CHECK_R_REG(osh, r, addr) (\
 	SELECT_BUS_READ(osh, \
 		({ \
@@ -514,6 +563,7 @@ extern uintptr __osl_v;
 		}), \
 		OSL_READ_REG(osh, r)) \
 )
+#endif /* AXI_TIMEOUTS_NIC */
 #endif /* NIC_PCIE_DEDICATED_WINDOWS */
 #else /* !CONFIG_64BIT */
 #define R_REG(osh, r) (\
@@ -842,6 +892,17 @@ extern uint32 osl_rand(void);
 #define	DMA_MAP(osh, va, size, direction, p, dmah) \
 	osl_dma_map((osh), (va), (size), (direction), (p), (dmah))
 
+/*
+ * The main router kernel has a separate namespace for some FS functions that
+ * are exported in the mainline kernel. These functions include filp_open,
+ * kernel_read, kernel_write, kern_path, and close_fd.  For compatibility we
+ * import them using the NS below. If the NS doesn't exist, linux doesn't seem
+ * to complain.
+ */
+#ifdef MODULE_IMPORT_NS
+MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+#endif
+
 #else /* ! BCMDRIVER */
 
 /* ASSERT */
@@ -917,6 +978,21 @@ volatile void *osl_update_pcie_win(osl_t *osh, volatile void *reg_addr);
 #define BAR0_WINDOW_OFFSET_MASK		0xFFFu
 #define BAR0_WINDOW_ADDRESS_MASK	~BAR0_WINDOW_OFFSET_MASK
 
+#ifdef AXI_TIMEOUTS_NIC
+/* Read the register and check the status only after releasing the spinlock.
+ * There would be further register accesses to check possible axi errors
+ */
+#define WIN_CHECK_R_REG(osh, r) ({ \
+	unsigned long _lock_flags_r_ = osl_spin_lock(osl_reg_access_pcie_window.bp_access_lock_r); \
+	volatile void *_bar_addr_r_ = osl_update_pcie_win(osh, (volatile void *)r); \
+	bool rd_status = FALSE; \
+	typeof(*r) _retval_; \
+	_retval_ = (typeof(*r))NO_WIN_CHECK_R_REG(osh, r, _bar_addr_r_, &rd_status); \
+	osl_spin_unlock(osl_reg_access_pcie_window.bp_access_lock_r, _lock_flags_r_); \
+	osl_bpt_chk_rreg_status(rd_status); \
+	_retval_; \
+})
+#else
 #define WIN_CHECK_R_REG(osh, r) ({ \
 	unsigned long _lock_flags_r_ = osl_spin_lock(osl_reg_access_pcie_window.bp_access_lock_r); \
 	volatile void *_bar_addr_r_ = osl_update_pcie_win(osh, (volatile void *)r); \
@@ -925,6 +1001,7 @@ volatile void *osl_update_pcie_win(osl_t *osh, volatile void *reg_addr);
 	osl_spin_unlock(osl_reg_access_pcie_window.bp_access_lock_r, _lock_flags_r_); \
 	_retval_; \
 })
+#endif /* AXI_TIMEOUTS_NIC */
 
 #define WIN_CHECK_W_REG(osh, r, v) ({ \
 	unsigned long _lock_flags_w_ = osl_spin_lock(osl_reg_access_pcie_window.bp_access_lock_w); \
@@ -960,20 +1037,21 @@ typedef struct sk_buff_head PKT_LIST;
 #ifndef _linuxver_h_
 typedef struct timer_list_compat timer_list_compat_t;
 #endif /* _linuxver_h_ */
-typedef struct osl_timer {
-	timer_list_compat_t *timer;
-	bool   set;
-#ifdef BCMDBG
-	char    *name;          /* Desription of the timer */
-#endif
-} osl_timer_t;
+
+typedef struct osl_timer osl_timer_t;
+
+extern void *osl_timer_get_ctx(void *arg);
 
 typedef void (*linux_timer_fn)(ulong arg);
 
-extern osl_timer_t * osl_timer_init(osl_t *osh, const char *name, void (*fn)(void *arg), void *arg);
-extern void osl_timer_add(osl_t *osh, osl_timer_t *t, uint32 ms, bool periodic);
+extern osl_timer_t *osl_timer_create(osl_t *osh, const char *name, void (*fn)(void *arg),
+	void *arg);
+extern osl_timer_t *osl_timer_init(osl_t *osh, const char *name, void (*fn)(void *arg), void *arg);
+extern bool osl_timer_add(osl_t *osh, osl_timer_t *t, uint us, bool periodic);
+extern void osl_timer_add_us(osl_t *osh, osl_timer_t *t, uint32 ms, bool periodic);
 extern void osl_timer_update(osl_t *osh, osl_timer_t *t, uint32 ms, bool periodic);
 extern bool osl_timer_del(osl_t *osh, osl_timer_t *t);
+extern void osl_timer_free(osl_t *osh, osl_timer_t *t);
 
 #ifdef BCMDRIVER
 typedef atomic_t osl_atomic_t;
@@ -985,7 +1063,9 @@ typedef atomic_t osl_atomic_t;
 #define OSL_ATOMIC_DEC(osh, v)		atomic_dec(v)
 #define OSL_ATOMIC_DEC_RETURN(osh, v)	atomic_dec_return(v)
 #define OSL_ATOMIC_READ(osh, v)		atomic_read(v)
-#define OSL_ATOMIC_ADD(osh, v, x)	atomic_add(v, x)
+#define OSL_ATOMIC_ADD(osh, x, v)	atomic_add(x, v)
+#define OSL_ATOMIC_ADD_RETURN(osh, v, x) atomic_add_return(x, v)
+#define OSL_ATOMIC_SUB_RETURN(osh, v, x) atomic_sub_return(x, v)
 
 #ifndef atomic_set_mask
 #define OSL_ATOMIC_OR(osh, v, x)	atomic_or(x, v)
@@ -1004,6 +1084,7 @@ extern unsigned long osl_spin_lock_irq(void *lock);
 extern void osl_spin_unlock_irq(void *lock, unsigned long flags);
 extern unsigned long osl_spin_lock_bh(void *lock);
 extern void osl_spin_unlock_bh(void *lock, unsigned long flags);
+extern void osl_bpt_chk_rreg_status(bool read_st);
 
 extern void *osl_mutex_lock_init(osl_t *osh);
 extern void osl_mutex_lock_deinit(osl_t *osh, void *lock);
@@ -1015,19 +1096,37 @@ extern uint32 osl_get_fatal_logbuf_size(osl_t *osh);
 extern uchar *osl_get_fatal_logbuf_addr(osl_t *osh);
 extern void *osl_get_fatal_logbuf(osl_t *osh, uint32 request_size, uint32 *allocated_size);
 extern void *osl_get_fatal_logbuf_end(osl_t *osh, uint32 request_size, uint32 *allocated_size);
-extern int osl_create_directory(char *pathname, int mode);
+extern int osl_create_directory(const char *pathname, int mode);
+extern struct task_struct *_get_task_info(const char *pname);
+extern int osl_send_sig_info(int signo, int arg, struct task_struct *tsk);
 
-#ifndef CUSTOM_PREFIX
+/*
+ * LOG_CUSTOM_PREFIX - Adds only a custom string to all the logs emitted out
+ * of the driver
+ * LOG_CUSTOM_PREFIX_AND_RTC - Existing feature that adds a custom string and also
+ * RTC time stamp to all the logs emitted out of the driver
+ */
+#if defined(LOG_CUSTOM_PREFIX)
+#define OSL_PRINT_PREFIX LOG_CUSTOM_PREFIX
+#endif /* LOG_CUSTOM_PREFIX */
+
+#if defined(LOG_CUSTOM_PREFIX_AND_RTC)
+#define OSL_PRINT_PREFIX "[%s]"LOG_CUSTOM_PREFIX_AND_RTC, OSL_GET_RTCTIME()
+#elif defined(CUSTOM_PREFIX_NORTCTIME)
+#define OSL_PRINT_PREFIX CUSTOM_PREFIX_NORTCTIME
+#endif /* CUSTOM_PREFIX_NORTCTIME */
+
+#if !defined (LOG_CUSTOM_PREFIX_AND_RTC) && !defined(LOG_CUSTOM_PREFIX) && \
+	!defined(CUSTOM_PREFIX_NORTCTIME)
 #define OSL_PRINT(args)	\
 do {			\
 	pr_cont args;	\
 } while (0)
 #else
-#define OSL_PRINT_PREFIX "[%s]"CUSTOM_PREFIX, OSL_GET_RTCTIME()
 #define OSL_PRINT(args)			\
 do {					\
 	pr_cont(OSL_PRINT_PREFIX);	\
 	pr_cont args;			\
 } while (0)
-#endif /* CUSTOM_PREFIX */
+#endif /* LOG_CUSTOM_PREFIX_AND_RTC || LOG_CUSTOM_PREFIX || CUSTOM_PREFIX_NORTCTIME */
 #endif	/* _linux_osl_h_ */

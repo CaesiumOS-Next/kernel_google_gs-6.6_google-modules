@@ -89,7 +89,6 @@ enum tc_version_t {
 	ODIN_VERSION_TCF_BONNIE,
 	ODIN_VERSION_FPGA,
 	ODIN_VERSION_ORION,
-	ODIN_VERSION_VALI,
 };
 
 struct tc_interrupt_handler {
@@ -113,7 +112,6 @@ struct tc_device {
 
 	enum tc_version_t version;
 	bool odin;
-	bool vali;
 	bool orion;
 
 	int mem_mode;

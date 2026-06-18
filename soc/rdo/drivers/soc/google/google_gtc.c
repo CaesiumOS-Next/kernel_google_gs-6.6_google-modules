@@ -46,6 +46,12 @@ u64 goog_gtc_get_time_ns(void)
 }
 EXPORT_SYMBOL_GPL(goog_gtc_get_time_ns);
 
+u64 goog_gtc_get_freq_hz(void)
+{
+	return gtc_freq_hz;
+}
+EXPORT_SYMBOL_GPL(goog_gtc_get_freq_hz);
+
 static int __init gtc_init(void)
 {
 	/*

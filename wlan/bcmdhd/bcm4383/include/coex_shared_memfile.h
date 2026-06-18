@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -36,11 +36,6 @@
 #define COEX_COMBINED_FW_MAGIC		0x57465843u	/* 'CXFW', for firmware binary */
 #define COEX_COMBINED_DUMP_MAGIC	0x504d4443u	/* 'CDMP', for memory dump */
 #define COEX_COMBINED_FW_HDR_VERSION	1u
-
-#define COEX_ITCM_BASE 0x1a000000u
-#define COEX_ITCM_SIZE 98304u
-#define COEX_DTCM_BASE 0x1a018000u
-#define COEX_DTCM_SIZE 24576u
 
 /**
  * @brief Coex firmware tlv header with 32bit length.

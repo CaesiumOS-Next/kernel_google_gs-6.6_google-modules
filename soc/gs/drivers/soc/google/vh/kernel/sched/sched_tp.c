@@ -26,6 +26,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_compute_energy);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_wakeup_task_attr);
 EXPORT_TRACEPOINT_SYMBOL_GPL(per_task_memory_pressure);
 EXPORT_TRACEPOINT_SYMBOL_GPL(per_task_pmu_stats);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_group_tracker);
 
 static inline struct sched_avg *sched_trace_cfs_rq_avg(struct cfs_rq *cfs_rq)
 {

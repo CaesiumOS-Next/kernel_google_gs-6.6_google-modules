@@ -44,6 +44,13 @@
 typedef enum GPU_SECURE_CMDS gpu_secure_req_command_t;
 #undef GPU_SECURE_CONV
 
+// versions for command GPU_SECURE_REQ_SEND_FIRMWARE_IMAGE
+typedef enum gpu_secure_req_firmware_version_t {
+	GPU_SECURE_REQ_FIRMWARE_VERSION_PRE_25_2,
+	GPU_SECURE_REQ_FIRMWARE_VERSION_25_2,
+	GPU_SECURE_REQ_FIRMWARE_VERSION_COUNT,
+} gpu_secure_req_firmware_version_t;
+
 /**
  * IPC request base -- the common denominator of all requests.
  */
@@ -67,6 +74,7 @@ typedef struct gpu_secure_rsp_base_t {
 typedef enum {
 	GPU_SECURE_SECTION_CODE,
 	GPU_SECURE_SECTION_DATA,
+	GPU_SECURE_SECTION_RODATA,
 	GPU_SECURE_SECTION_COREMEM_CODE,
 	GPU_SECURE_SECTION_COREMEM_DATA,
 	GPU_SECURE_SECTION_COUNT
@@ -115,7 +123,7 @@ typedef struct gpu_secure_req_firmware_t {
 	/*
 	 * Any new additional fields must be added here.
 	 */
-	uint8_t reserved1[400];
+	uint8_t reserved1[384];
 } PACKED_ALIGNED(8)
 gpu_secure_req_firmware_t;
 

@@ -2,7 +2,7 @@
  * Process CIS information from OTP for customer platform
  * (Handle the MAC address and module information)
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -38,6 +38,7 @@
 #include <linux/fs.h>
 #include <linux/list.h>
 #include <bcmiov.h>
+#include <bcmstdlib_s.h>
 
 #ifdef DHD_USE_CISINFO_FROM_OTP
 #include <bcmdevs_legacy.h>    /* need to still support chips no longer in trunk firmware */
@@ -100,7 +101,7 @@ typedef struct chip_rev_table {
 chip_rev_table_t chip_revs[] = {
 	{0x4383, {"a0", "a1", "a3", "\0", "\0", "\0", "\0", "\0", "\0", "\0"}},
 	{0x4398, {"a0", "b0", "c0", "d0", "\0", "\0", "\0", "\0", "\0", "\0"}},
-	{0x4390, {"a0", "\0", "b0", "\0", "\0", "\0", "\0", "\0", "\0", "\0"}},
+	{0x4390, {"a0", "\0", "b0", "\0", "\0", "b1", "\0", "\0", "\0", "\0"}},
 	/* 4389 - not yet supported for now */
 	{0x4389, {"\0", "\0", "\0", "\0", "\0", "\0", "\0", "\0", "\0", "\0"}},
 };
@@ -147,14 +148,24 @@ vid_info_t vid_naming_table_4398[] = {
 
 vid_info_t vid_naming_table_4390[] = {
 	/* 4390a0 */
-	{ 3, { 0x10, 0x63, }, { "_USI_G6BB_6310_V10" } },
+	{ 3, { 0x10, 0x63, }, { "_USI_G6BB_6311_V11" } },
 	{ 3, { 0x11, 0x63, }, { "_USI_G6BB_6311_V11" } },
+	{ 3, { 0x12, 0x63, }, { "_USI_G6BB_6313_V13" } },
 	{ 3, { 0x13, 0x63, }, { "_USI_G6BB_6313_V13" } },
+	{ 3, { 0x20, 0x63, }, { "_USI_G6BB_6321_V21" } },
 	{ 3, { 0x21, 0x63, }, { "_USI_G6BB_6321_V21" } },
 
 	/* 4390b0 */
+	{ 3, { 0x22, 0x63, }, { "_USI_G6BB_6323_V23" } },
 	{ 3, { 0x23, 0x63, }, { "_USI_G6BB_6323_V23" } },
+	{ 3, { 0x24, 0x63, }, { "_USI_G6BB_6325_V25" } },
 	{ 3, { 0x25, 0x63, }, { "_USI_G6BB_6325_V25" } },
+
+	/* 4390b1 */
+	{ 3, { 0x26, 0x63, }, { "_USI_G6BB_6327_V27" } },
+	{ 3, { 0x27, 0x63, }, { "_USI_G6BB_6327_V27" } },
+	{ 3, { 0x11, 0x73, }, { "_USI_G7BB_7311_V11" } },
+	{ 3, { 0x21, 0x73, }, { "_USI_G7BB_7321_V21" } },
 };
 
 #ifdef DHD_USE_CISINFO
@@ -2552,6 +2563,7 @@ concate_revision(dhd_bus_t *bus, char *fw_path, char *nv_path)
 	case BCM4389_CHIP_ID:
 	case BCM4397_CHIP_GRPID:
 	case BCM4383_CHIP_ID:
+	case BCM4384_CHIP_ID:
 	case BCM4390_CHIP_GRPID:
 		res = dhd_get_fw_nvram_names(bus->dhd, chipid, chiprev, fw_path,
 			nv_path, map_path);

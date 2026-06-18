@@ -26,7 +26,7 @@
 // at least a factor of 10 smaller.
 #define WAIT_TRY_COUNT                           (10000)
 
-#define SYS_RGX_OF_COMPATIBLE "google," PIXEL_GPU_GENERATION "-gpu"
+#define SYS_RGX_OF_COMPATIBLE _COMPAT("google," PIXEL_GPU_GENERATION "-gpu")
 #define SYS_RGX_DEV_NAME "rgx"
 
 // The offset in bytes from the IOVA returned by the dma-heap driver, to the IPA that should be

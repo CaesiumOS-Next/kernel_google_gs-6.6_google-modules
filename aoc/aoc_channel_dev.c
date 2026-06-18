@@ -24,6 +24,8 @@
 #include "uapi/aoc_channel_dev.h"
 
 #define AOCC_CHARDEV_NAME "aoc_chan"
+#define AOCC_WAKELOCK_PREFIX "aocc_"
+#define AOCC_WAKELOCK_NAME_LENGTH (AOC_SERVICE_NAME_LENGTH + sizeof(AOCC_WAKELOCK_PREFIX))
 
 static int aocc_major = -1;
 static int aocc_major_dev;
@@ -792,10 +794,14 @@ static int aocc_probe(struct aoc_service_dev *dev)
 	}
 
 	if (strcmp(dev_name(&dev->dev), "usf_sh_mem_doorbell") != 0) {
+		char ws_name[AOCC_WAKELOCK_NAME_LENGTH];
+
 		ret = create_character_device(dev);
 		if (ret)
 			return ret;
-		prvdata->user_wakelock = wakeup_source_register(&dev->dev, dev_name(&dev->dev));
+		scnprintf(ws_name, sizeof(ws_name), "%s%s",
+				AOCC_WAKELOCK_PREFIX, dev_name(&dev->dev));
+		prvdata->user_wakelock = wakeup_source_register(&dev->dev, ws_name);
 		dev->prvdata = prvdata;
 		prvdata->demux_task =  kthread_run(&aocc_demux_kthread, dev, dev_name(&dev->dev));
 		sched_setscheduler(prvdata->demux_task, SCHED_FIFO, &param);

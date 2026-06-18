@@ -10,8 +10,8 @@
 #include <linux/module.h>
 #include <linux/ktime.h>
 
-#include "include/uwb_fw.h"
 #include "include/uwb.h"
+#include "include/uwb_fw.h"
 #include "include/uwb_fw_common.h"
 #include "include/uwb_spi.h"
 
@@ -40,7 +40,7 @@ MODULE_PARM_DESC(flash_bl1_retry_cnt, "The max retry count of flash BL1");
 
 static int uwb_prepare_firmware(struct u100_ctx *ctx, struct uwb_firmware *uwb_fw);
 
-void notify_progress(struct uwb_fw_progress_data *progress_data,
+static void notify_progress(struct uwb_fw_progress_data *progress_data,
 		int flashed_len, bool force, uint32_t per_pkt_size)
 {
 	per_pkt_size = !per_pkt_size ? MAX_APDU_DATA_LEN : per_pkt_size;
@@ -198,7 +198,7 @@ static int uwb_parse_fw_binary(struct uwb_firmware *uwb_fw)
 	return 0;
 }
 
-int uwb_fw_flash(struct u100_ctx *u100_ctx)
+static int uwb_fw_flash(struct u100_ctx *u100_ctx)
 {
 	struct uwb_tlv *tlv;
 	int index;
@@ -208,6 +208,8 @@ int uwb_fw_flash(struct u100_ctx *u100_ctx)
 	struct uwb_firmware_ctx *uwb_fw_ctx = &u100_ctx->uwb_fw_ctx;
 	int current_bin_idx = uwb_fw_ctx->current_bin_idx;
 	struct uwb_firmware *uwb_fw = &uwb_fw_ctx->uwb_fw[current_bin_idx];
+
+	uwb_set_spi_type(SPI_TYPE_FLASH);
 
 	if (uwb_get_bl1_version(u100_ctx) != FW_OK)
 		u100_ctx->u100_state = U100_UNKNOWN_STATE;
@@ -259,6 +261,9 @@ int uwb_fw_flash(struct u100_ctx *u100_ctx)
 			break;
 		UWB_INFO("FW Flash %s[%#02x] length %d success", tlv->label, tlv->type, tlv->len);
 	}
+
+	uwb_set_spi_type(SPI_TYPE_UCI);
+
 	return ret;
 }
 
@@ -390,43 +395,10 @@ err:
 	return ret;
 }
 
-/**
- * @brief Start to flash firmware
- * @param ctx Pointer to the u100 context
- * @return If the return value is 0, it's successful; otherwise, it fails.
- */
-static int uwb_flash(struct u100_ctx *ctx)
+int fw_download(struct u100_ctx *ctx)
 {
-	int ret;
-
-	ret = uwb_prepare_firmware(ctx, &ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_IDX]);
-
-	if (ret)
-		return ret;
-
-	ctx->uwb_fw_ctx.current_bin_idx = DEFAULT_BIN_IDX;
-	ctx->uwb_fw_ctx.test_fw_loaded = false;
-
-	ret = uwb_fw_flash(ctx);
-	if (!ret) {
-		UWB_INFO("Flash progress 100%%\n");
-		UWB_INFO("FW_FLASH Flash FW binary[%s] success!\n",
-			ctx->uwb_fw_ctx.uwb_fw[ctx->uwb_fw_ctx.current_bin_idx].fw_name);
-	} else
-		UWB_ERR("FW_FLASH Flash FW binary[%s] failed!\n",
-			ctx->uwb_fw_ctx.uwb_fw[ctx->uwb_fw_ctx.current_bin_idx].fw_name);
-	uwb_set_spi_type(SPI_TYPE_UCI);
-	uwbs_sync_reset(ctx);
-
-	uwb_release_firmware(&ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_IDX]);
-	uwb_release_firmware(&ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_TEST_IDX]);
-	return ret;
-}
-
-static int fw_download_task(void *data)
-{
-	int ret;
-	struct u100_ctx *ctx = data;
+	int ret, ret_reset;
+	const char *coredump_msg;
 	ktime_t start_time;
 	ktime_t end_time;
 
@@ -440,43 +412,49 @@ static int fw_download_task(void *data)
 		UWB_DEBUG("No need to flash firmware\n");
 		return 0;
 	}
+
 	try_module_get(THIS_MODULE);
 	atomic_inc_return(&ctx->flashing);
-	uwb_set_spi_type(SPI_TYPE_FLASH);
+
+	ret = uwb_prepare_firmware(ctx, &ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_IDX]);
+	if (ret)
+		goto end_fw_download;
+
 	ctx->uwb_fw_ctx.notify_progress = notify_progress;
-	ret = uwb_flash(ctx);
+	ctx->uwb_fw_ctx.current_bin_idx = DEFAULT_BIN_IDX;
+	ctx->uwb_fw_ctx.test_fw_loaded = false;
+
+	ret = uwb_fw_flash(ctx);
+	if (!ret) {
+		UWB_INFO("Flash progress 100%%\n");
+		UWB_INFO("FW_FLASH Flash FW binary[%s] success!\n",
+			ctx->uwb_fw_ctx.uwb_fw[ctx->uwb_fw_ctx.current_bin_idx].fw_name);
+	} else {
+		UWB_ERR("FW_FLASH Flash FW binary[%s] failed!\n",
+			ctx->uwb_fw_ctx.uwb_fw[ctx->uwb_fw_ctx.current_bin_idx].fw_name);
+	}
+
 	ctx->uwb_fw_ctx.notify_progress = NULL;
-	uwb_set_spi_type(SPI_TYPE_UCI);
+
+	/*
+	 * Regardless of the fw flash result, the system resets the chip
+	 * and reports a failure if it fails to power on.
+	 */
+	coredump_msg = ret ? "AFTER_FAILED_FLASH" : "AFTER_SUCCESSFUL_FLASH";
+	ret_reset = uwbs_sync_reset_and_coredump(ctx, coredump_msg);
+
+	/* Treat the flash as a failure if the chip can't be turned on */
+	if (!ret && ret_reset)
+		ret = ret_reset;
+
+	uwb_release_firmware(&ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_IDX]);
+	uwb_release_firmware(&ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_TEST_IDX]);
+
+end_fw_download:
 	atomic_dec_return(&ctx->flashing);
 	module_put(THIS_MODULE);
 
 	end_time = ktime_get();
 	UWB_DEBUG("Fw flash cost [%lld]ms", ktime_to_ms(ktime_sub(end_time, start_time)));
 	return ret;
-}
-
-int init_fw_download_thread(struct u100_ctx *u100_ctx, bool flag)
-{
-	u100_ctx->fw_download_thr = NULL;
-	if (!flag)
-		return fw_download_task(u100_ctx);
-
-	u100_ctx->fw_download_thr = kthread_run(fw_download_task, u100_ctx, "fw-download");
-	if (!u100_ctx->fw_download_thr) {
-		UWB_ERR("Init fw download thread error\n");
-		return -ECHILD;
-	}
-	return 0;
-}
-
-void stop_fw_download_thread(struct u100_ctx *u100_ctx)
-{
-	if (!u100_ctx->fw_download_thr)
-		return;
-
-	UWB_DEBUG("Stop fw download thread\n");
-	uwb_release_firmware(&u100_ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_IDX]);
-	uwb_release_firmware(&u100_ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_TEST_IDX]);
-	kthread_stop(u100_ctx->fw_download_thr);
-	u100_ctx->fw_download_thr = NULL;
 }

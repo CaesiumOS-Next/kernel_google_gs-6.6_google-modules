@@ -8,14 +8,13 @@
 #include <linux/slab.h>
 
 
-#include <pvrsrvkm/interrupt_support.h>
-#include <pvrsrvkm/syscommon.h>
-#include <pvrsrvkm/sysconfig_cmn.h>
-#include <pvrsrvkm/volcanic/rgxdevice.h>
-
-#include <pvrsrvkm/rgxstartstop.h>
-#include <pvrsrvkm/rgxfwimageutils.h>
-#include <pvrsrvkm/rgx_memallocflags.h>
+#include <pvrsrvkm/services/system/include/interrupt_support.h>
+#include <pvrsrvkm/services/system/include/syscommon.h>
+#include <pvrsrvkm/services/system/include/sysconfig_cmn.h>
+#include <pvrsrvkm/services/server/devices/volcanic/rgxdevice.h>
+#include <pvrsrvkm/services/server/devices/rgxstartstop.h>
+#include <pvrsrvkm/services/server/devices/rgxfwimageutils.h>
+#include <pvrsrvkm/services/include/rgx_memallocflags.h>
 
 #include <pvr_drv.h>
 #include <pvrversion.h>
@@ -98,7 +97,9 @@ enum GPU_HEAPS {
 #endif
 #if defined(SUPPORT_TRUSTED_DEVICE)
 	GPU_SECURE_HEAP,
-	FW_PRIVATE_HEAP,
+	FW_CODE_HEAP,
+	FW_PRIV_DATA_HEAP,
+	FW_PRIV_RODATA_HEAP,
 	FW_SHARED_HEAP,
 	FW_PT_HEAP,
 #endif
@@ -151,17 +152,44 @@ static PHYS_HEAP_CONFIG phys_heaps[] = {
 		.uConfig.sUMA.sCardBase            = {},
 		.uConfig.sUMA.hPrivData            = NULL,
 	},
-	[FW_PRIVATE_HEAP] = {
+	[FW_CODE_HEAP] = {
 		.eType                             = PHYS_HEAP_TYPE_LMA,
-		.ui32UsageFlags                    = PHYS_HEAP_USAGE_FW_PRIVATE,
+		.ui32UsageFlags                    = PHYS_HEAP_USAGE_FW_CODE,
 		.sIPAConfig                        =
 			PHYS_HEAP_IPA_CONFIG(PBHA_DEFAULT),
-		.uConfig.sLMA.pszPDumpMemspaceName = "FIRMWARE Private",
+		.uConfig.sLMA.pszPDumpMemspaceName = "FIRMWARE Code",
 		.uConfig.sLMA.psMemFuncs           = &g_sUmaHeapFns,
-		.uConfig.sLMA.pszHeapName          = "lma_fw_private",
+		.uConfig.sLMA.pszHeapName          = "lma_fw_code",
 		.uConfig.sLMA.sStartAddr           = {},
 		.uConfig.sLMA.sCardBase            = {},
-		.uConfig.sLMA.uiSize               = SECURE_FW_MEM_SIZE,
+		.uConfig.sLMA.uiSize               = RGX_FW_CODE_SECTION_SIZE,
+		.uConfig.sLMA.hPrivData            = NULL,
+	},
+	[FW_PRIV_DATA_HEAP] = {
+		.eType                             = PHYS_HEAP_TYPE_LMA,
+		.ui32UsageFlags                    = PHYS_HEAP_USAGE_FW_PRIV_DATA,
+		.sIPAConfig                        =
+			PHYS_HEAP_IPA_CONFIG(PBHA_DEFAULT),
+		.uConfig.sLMA.pszPDumpMemspaceName = "FIRMWARE Private Data",
+		.uConfig.sLMA.psMemFuncs           = &g_sUmaHeapFns,
+		.uConfig.sLMA.pszHeapName          = "lma_priv_data",
+		.uConfig.sLMA.sStartAddr           = {},
+		.uConfig.sLMA.sCardBase            = {},
+		.uConfig.sLMA.uiSize               = RGX_FW_DATA_SECTION_SIZE,
+		.uConfig.sLMA.hPrivData            = NULL,
+	},
+	[FW_PRIV_RODATA_HEAP] = {
+		.eType                             = PHYS_HEAP_TYPE_LMA,
+		.ui32UsageFlags                    =
+			PHYS_HEAP_USAGE_FW_PRIV_RODATA,
+		.sIPAConfig                        =
+			PHYS_HEAP_IPA_CONFIG(PBHA_DEFAULT),
+		.uConfig.sLMA.pszPDumpMemspaceName = "FIRMWARE Private RO Data",
+		.uConfig.sLMA.psMemFuncs           = &g_sUmaHeapFns,
+		.uConfig.sLMA.pszHeapName          = "lma_priv_ro_data",
+		.uConfig.sLMA.sStartAddr           = {},
+		.uConfig.sLMA.sCardBase            = {},
+		.uConfig.sLMA.uiSize               = RGX_FW_RODATA_SECTION_SIZE,
 		.uConfig.sLMA.hPrivData            = NULL,
 	},
 	[FW_SHARED_HEAP] = {
@@ -175,8 +203,7 @@ static PHYS_HEAP_CONFIG phys_heaps[] = {
 		.uConfig.sLMA.pszHeapName          = "lma_fw_shared",
 		.uConfig.sLMA.sStartAddr           = {},
 		.uConfig.sLMA.sCardBase            = {},
-		.uConfig.sLMA.uiSize               =
-			RGX_FIRMWARE_RAW_HEAP_SIZE - SECURE_FW_MEM_SIZE,
+		.uConfig.sLMA.uiSize               = RGX_FIRMWARE_RAW_HEAP_SIZE - SECURE_FW_MEM_SIZE,
 		.uConfig.sLMA.hPrivData            = NULL,
 	},
 	[FW_PT_HEAP] = {
@@ -211,19 +238,27 @@ static void rgx_heaps_configure(phys_addr_t carveout_base)
 	 * -------------------------------------------------------------------------------------
 	 */
 
-	/* FW_PRIVATE_HEAP */
-	phys_heaps[FW_PRIVATE_HEAP].uConfig.sLMA.sStartAddr.uiAddr = carveout_base;
-	phys_heaps[FW_PRIVATE_HEAP].uConfig.sLMA.sCardBase.uiAddr  = carveout_base;
+	static_assert((RGX_FW_CODE_SECTION_SIZE + RGX_FW_DATA_SECTION_SIZE + RGX_FW_RODATA_SECTION_SIZE) == SECURE_FW_MEM_SIZE, "FW PRIVATE HEAPs must be exactly 2MB");
 
-	/* FW_SHARED_HEAP */
-	phys_heaps[FW_SHARED_HEAP].uConfig.sLMA.sStartAddr.uiAddr = carveout_base +
-		phys_heaps[FW_PRIVATE_HEAP].uConfig.sLMA.uiSize;
-	phys_heaps[FW_SHARED_HEAP].uConfig.sLMA.sCardBase.uiAddr  = phys_heaps[FW_SHARED_HEAP].uConfig.sLMA.sStartAddr.uiAddr;
+	size_t offset = 0;
+
+	/* FW_CODE_HEAP */
+	phys_heaps[FW_CODE_HEAP].uConfig.sLMA.sStartAddr.uiAddr = carveout_base;
+	phys_heaps[FW_CODE_HEAP].uConfig.sLMA.sCardBase.uiAddr  = carveout_base;
+
+	for (int heap = FW_PRIV_DATA_HEAP; heap < FW_PT_HEAP; heap++) {
+		offset += phys_heaps[heap - 1].uConfig.sLMA.uiSize;
+		phys_heaps[heap].uConfig.sLMA.sStartAddr.uiAddr =
+			carveout_base + offset;
+		phys_heaps[heap].uConfig.sLMA.sCardBase.uiAddr =
+			phys_heaps[heap].uConfig.sLMA.sStartAddr.uiAddr;
+	}
 
 	/* FW_PT_HEAP */
 	phys_heaps[FW_PT_HEAP].uConfig.sLMA.sStartAddr.uiAddr = carveout_base +
 		RGX_FIRMWARE_RAW_HEAP_SIZE * RGX_NUM_DRIVERS_SUPPORTED;
-	phys_heaps[FW_PT_HEAP].uConfig.sLMA.sCardBase.uiAddr  = phys_heaps[FW_PT_HEAP].uConfig.sLMA.sStartAddr.uiAddr;
+	phys_heaps[FW_PT_HEAP].uConfig.sLMA.sCardBase.uiAddr =
+		phys_heaps[FW_PT_HEAP].uConfig.sLMA.sStartAddr.uiAddr;
 }
 #endif
 
@@ -258,7 +293,9 @@ const char *rgx_context_reset_reason_str(RGX_CONTEXT_RESET_REASON reason)
 			return "RGX_CONTEXT_RESET_REASON_GPU_LATENT_HWR";
 		case RGX_CONTEXT_RESET_REASON_DCLS_ERR: return "RGX_CONTEXT_RESET_REASON_DCLS_ERR";
 		case RGX_CONTEXT_RESET_REASON_ICS_HWR: return "RGX_CONTEXT_RESET_REASON_ICS_HWR";
-
+		case RGX_CONTEXT_RESET_REASON_GPU_PAGE_FAULT_HWR: return "RGX_CONTEXT_RESET_REASON_GPU_PAGE_FAULT_HWR";
+		case RGX_CONTEXT_RESET_REASON_GPU_LOCKUP_HWR: return "RGX_CONTEXT_RESET_REASON_GPU_LOCKUP_HWR";
+		case RGX_CONTEXT_RESET_REASON_CPU_PAGE_FAULT: return "RGX_CONTEXT_RESET_REASON_CPU_PAGE_FAULT";
 	}
 	return "UNKNOWN";
 }
@@ -278,6 +315,12 @@ const char *rgxfwif_dm_str(RGXFWIF_DM dm)
 		case RGXFWIF_DM_GEOM4: return "GEOM4";
 	}
 	return "UNKNOWN";
+}
+
+static IMG_UINT64 RGXGetFaultAddress(IMG_UINT64 ui64MMUStatus)
+{
+	return ((ui64MMUStatus & ~RGX_CR_MMU_FAULT_STATUS1_ADDRESS_CLRMSK)
+			 >> RGX_CR_MMU_FAULT_STATUS1_ADDRESS_SHIFT) << 4; /* align shift */
 }
 
 static void gpu_error_notify(IMG_HANDLE sysdata, PVRSRV_ROBUSTNESS_NOTIFY_DATA *error)
@@ -356,11 +399,11 @@ static void gpu_error_notify(IMG_HANDLE sysdata, PVRSRV_ROBUSTNESS_NOTIFY_DATA *
 		if (lockup_data->ui32Flags &
 		    RGXFWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF) {
 			dev_warn(dev, "  DataMaster=%s fault_address=0x%"
-				 IMG_UINT64_FMTSPECx
-				 " pc_address=0x%"IMG_UINT64_FMTSPECx,
-				 rgxfwif_dm_str(lockup_data->eDM),
-				 lockup_data->sFaultAddress.uiAddr,
-				 lockup_data->ui64PCAddress);
+				IMG_UINT64_FMTSPECx
+				" pc_address=0x%"IMG_UINT64_FMTSPECx,
+				rgxfwif_dm_str(lockup_data->eDM),
+				RGXGetFaultAddress(lockup_data->aui64MMUStatus[0]),
+				lockup_data->ui64PCAddress);
 		} else
 			dev_warn(dev, "  DataMaster=%s",
 				 rgxfwif_dm_str(lockup_data->eDM));
@@ -750,6 +793,7 @@ PVRSRV_ERROR SysDevInit(void *osdev, PVRSRV_DEVICE_CONFIG **devcfg)
 	}
 	rgx_data->psRGXTimingInfo->ui32CoreClockSpeed = init_frequency;
 	rgx_data->psRGXTimingInfo->ui32SOCClockSpeed = GTC_FREQUENCY_HZ;
+	rgx_data->psRGXTimingInfo->ui32USCTimerFreq = GTC_FREQUENCY_HZ;
 
 	pixel_dev->dev_config = cfg;
 

@@ -6,7 +6,7 @@
  * Provides type definitions and function prototypes used to create, delete and manage flow rings at
  * high level.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -294,6 +294,7 @@ typedef struct flow_hash_info {
 	struct flow_hash_info	*next;
 } flow_hash_info_t;
 
+#define WLC_IF_FLAGS2_NAN_USE	0x1	/* interface desinated for nan */
 typedef struct if_flow_lkup {
 	bool		status;
 	uint8		role;	/* Interface role: STA/AP */
@@ -304,6 +305,7 @@ typedef struct if_flow_lkup {
 	uint8		flags;
 
 	flow_hash_info_t *fl_hash[DHD_FLOWRING_HASH_SIZE];	/* Lkup Hash table */
+	uint8		op_flags; /* holds driver internal transient states */
 } if_flow_lkup_t;
 
 static INLINE flow_ring_node_t *
@@ -348,6 +350,8 @@ extern void dhd_flow_rings_flush(dhd_pub_t *dhdp, uint8 ifindex);
 extern void dhd_flow_rings_delete_for_peer(dhd_pub_t *dhdp, uint8 ifindex,
 	char *addr);
 
+void dhd_flow_reset_op_flags(dhd_pub_t *dhdp, uint8 ifidx);
+void dhd_flowring_update_nan_iface_role(dhd_pub_t *dhd, uint8 ifidx, uint8 role);
 /* Handle Interface ADD, DEL operations */
 extern void dhd_update_interface_flow_info(dhd_pub_t *dhdp, uint8 ifindex,
 	uint8 op, uint8 role, uint8 if_flags);

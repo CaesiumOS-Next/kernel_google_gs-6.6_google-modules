@@ -8,7 +8,7 @@
  *
  * The interface is OS independent/common.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -81,8 +81,19 @@ typedef enum dhd_log_type {
 	LOG_TYPE_PCIE_IPC	= 2,
 	LOG_TYPE_ERROR		= 3, /* Error messages like FW trap ..etc */
 	LOG_TYPE_DATA_PKT	= 4,
-	LOG_TYPE_EVENT_LOGS	= 5
+	LOG_TYPE_MGMT 		= 5,
+	LOG_TYPE_CTL 		= 6,
+	LOG_TYPE_EVENT_LOGS	= 7
 } dhd_log_type_t;
+
+/* dhd log filter bitfields */
+#define FILTER_IOCTL		0x00000001u
+#define FILTER_EVENT      	0x00000002u
+#define FILTER_PCIE_IPC   	0x00000004u
+#define FILTER_EVENT_LOGS 	0x00000008u
+#define FILTER_DATA    		0x00000010u
+#define FILTER_MGMT    		0x00000020u
+#define FILTER_CTRL		0x00000040u
 
 /*
  * The user space applications like wireshark expect ethernet packet.
@@ -111,7 +122,7 @@ dhd_logger_deinit(dhd_logger_t *pdl);
 
 /* API to add packet log where any header need not be prepended for userspace */
 int32
-dhd_log_pkt(dhd_logger_t *pdl, uint32 type, void *pkt, uint32 len);
+dhd_log_pkt(dhd_logger_t *pdl, uint32 pkt_type, void *pkt, uint32 len);
 
 void
 dhd_log_ioctlreq(dhd_logger_t *pdl, uint32 cmd, uint8 action, int ifidx,
@@ -182,6 +193,13 @@ do { \
 		} \
 	} while (0)
 
+#define DHD_LOG_PKT(pdl, pkt_type, pkt, len) \
+	do { \
+		if (dhd_logger == TRUE) { \
+			dhd_log_pkt(pdl, pkt_type, pkt, len); \
+		} \
+	} while (0)
+
 #define DHD_LOG_INFOBUF_EVENTLOGS(pdl, pkt) \
 	do { \
 		if (dhd_logger == TRUE) { \
@@ -216,6 +234,9 @@ bool
 dhd_log_show_route_events(dhd_logger_t *pdl);
 int32
 dhd_log_set_route_events(dhd_logger_t *pdl, bool route_events);
+bool
+dhd_log_lpcap_is_mgmt_pkt(osl_t *osh, struct sk_buff *skb);
+
 
 #else
 /*
@@ -251,7 +272,7 @@ dhd_logger_deinit(dhd_logger_t *pdl)
 }
 
 static INLINE int32
-dhd_log_pkt(dhd_logger_t *pdl, uint32 type, void *pkt, uint32 len)
+dhd_log_pkt(dhd_logger_t *pdl, uint32 pkt_type, void *pkt, uint32 len)
 {
 	BCM_REFERENCE(pdl);
 	return 0;
@@ -265,6 +286,7 @@ dhd_log_pkt(dhd_logger_t *pdl, uint32 type, void *pkt, uint32 len)
 	do { \
 		BCM_REFERENCE(driver_state); \
 	} while (0)
+#define DHD_LOG_PKT(pdl, pkt_type, pkt, len)
 #define DHD_LOG_ROUTE_EVENTS(pdl, pkt, len)
 #define DHD_LOG_INFOBUF_EVENTLOGS(pdl, pkt)
 #define DHD_LOG_EDL_EVENTLOGS(pdl, msg)

@@ -88,15 +88,16 @@ bool vs_dc_property_register_state(struct vs_dc_property_state_group *states,
 {
 	struct vs_dc_property_state *item;
 
+	if (!proto) {
+		pr_err("%s: Null proto for property registration.\n", __func__);
+		return false;
+	}
+
 	if (states->num == VS_DC_MAX_PROPERTY_NUM) {
 		pr_err("%s: No more empty state for %s\n", __func__, proto->name);
 		return false;
 	}
 
-	if (!proto) {
-		pr_err("%s: Null proto for property registration.\n", __func__);
-		return false;
-	}
 	if (!proto->check)
 		pr_debug("%s: No check function configured for property %s.\n", __func__,
 			 proto->name);

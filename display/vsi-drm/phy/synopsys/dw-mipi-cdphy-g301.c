@@ -2405,7 +2405,6 @@ static int dw_dphy_configure_g301(struct phy *phy, union phy_configure_opts *opt
 		/* TODO: dump corresponding CSR */
 		dev_err(&cdphy->phy->dev, "%s: Failed to wait PHY Lock\n", __func__);
 		DPU_ATRACE_INSTANT("fail to wait PHY Lock");
-		DPU_ATRACE_END("%s, %d", __func__, enable);
 		return ret;
 	}
 

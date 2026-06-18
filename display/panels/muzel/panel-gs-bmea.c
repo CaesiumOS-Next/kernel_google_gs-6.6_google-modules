@@ -57,6 +57,11 @@ struct bmea_panel {
 	 *                                         has been triggered
 	 */
 	bool reg_dump_for_gram_collision_triggered;
+	/**
+	 * @prev_gram_collision_count: previous count of GRAM collision for calculating the
+	 *                             increased count
+	 */
+	u8 prev_gram_collision_count;
 };
 
 #define to_spanel(ctx) container_of(ctx, struct bmea_panel, base)
@@ -360,7 +365,8 @@ static struct drm_dsc_config pps_configs[PANEL_TYPE_MAX][NUM_SUPPORTED_RESOLUTIO
 #define BZEA_TE_USEC_AOD 1104
 #define MTEA_TE_USEC_AOD 1102
 
-#define BMEA_TE_USEC_VRR 275
+#define BZEA_TE_USEC_VRR 377
+#define MTEA_TE_USEC_VRR 373
 
 #define BMEA_OSC_DOE_CODE 0x00010000
 
@@ -628,7 +634,7 @@ static const struct gs_panel_mode_array bzea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = BZEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = BZEA_WQHD_DSC,
 		},
@@ -649,7 +655,7 @@ static const struct gs_panel_mode_array bzea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = BZEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = BZEA_FHD_DSC,
 		},
@@ -670,7 +676,7 @@ static const struct gs_panel_mode_array bzea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = BZEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = BZEA_WQHD_DSC,
 		},
@@ -691,7 +697,7 @@ static const struct gs_panel_mode_array bzea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = BZEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = BZEA_FHD_DSC,
 		},
@@ -935,7 +941,7 @@ static const struct gs_panel_mode_array mtea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = MTEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = MTEA_WQHD_DSC,
 		},
@@ -956,7 +962,7 @@ static const struct gs_panel_mode_array mtea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = MTEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = MTEA_FHD_DSC,
 		},
@@ -977,7 +983,7 @@ static const struct gs_panel_mode_array mtea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = MTEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = MTEA_WQHD_DSC,
 		},
@@ -998,7 +1004,7 @@ static const struct gs_panel_mode_array mtea_modes = GS_PANEL_MODES(
 		.gs_mode = {
 			.mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS,
 			.vblank_usec = 120,
-			.te_usec = BMEA_TE_USEC_VRR,
+			.te_usec = MTEA_TE_USEC_VRR,
 			.bpc = 8,
 			.dsc = MTEA_FHD_DSC,
 		},
@@ -1637,8 +1643,8 @@ static enum gs_panel_tex_opt bmea_set_panel_feat_te(struct gs_panel *ctx, bool i
 						{ 0xB9, 0x57, 0x23, 0x02, 0x57, 0x23, 0x02 },
 					},
 					{ /* DVT and after */
-						{ 0xB9, 0xB3, 0x23, 0x02, 0x57, 0xA3, 0x02 },
-						{ 0xB9, 0x57, 0xA3, 0x02, 0x57, 0xA3, 0x02 },
+						{ 0xB9, 0xB0, 0xE3, 0x02, 0x55, 0x63, 0x02 },
+						{ 0xB9, 0x55, 0x63, 0x02, 0x55, 0x63, 0x02 },
 					},
 				},
 				{ /* MTEA */
@@ -1647,8 +1653,8 @@ static enum gs_panel_tex_opt bmea_set_panel_feat_te(struct gs_panel *ctx, bool i
 						{ 0xB9, 0x5A, 0xF3, 0x02, 0x5A, 0xF3, 0x02 },
 					},
 					{ /* DVT and after */
-						{ 0xB9, 0xBA, 0xE3, 0x02, 0x5B, 0x63, 0x02 },
-						{ 0xB9, 0x5B, 0x63, 0x02, 0x5B, 0x63, 0x02 },
+						{ 0xB9, 0xB8, 0xA3, 0x02, 0x59, 0x23, 0x02 },
+						{ 0xB9, 0x59, 0x23, 0x02, 0x59, 0x23, 0x02 },
 					},
 				},
 			};
@@ -1663,19 +1669,35 @@ static enum gs_panel_tex_opt bmea_set_panel_feat_te(struct gs_panel *ctx, bool i
 			/* VRR Masking */
 			GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x1A, 0xB9);
 			GS_DCS_BUF_ADD_CMD(dev, 0xB9, vrr_mask_setting[ctx->pwm_mode]);
-		} else {
-			static const u8 fixed_te_settings[PANEL_TYPE_MAX][2][7] = {
+		} else { /* 120Hz */
+			static const u8 fixed_te_settings[PANEL_TYPE_MAX][2][2][7] = {
 				{ /* BZEA */
-					/* EVT1.1 and before */
-					{ 0xB9, 0xB2, 0x23, 0x02, 0xB2, 0x23, 0x02 },
-					/* DVT and after */
-					{ 0xB9, 0xB3, 0x23, 0x02, 0xB3, 0x23, 0x02 },
+					{ /* MRR */
+						/* EVT1.1 and before */
+						{ 0xB9, 0xB2, 0x23, 0x02, 0xB2, 0x23, 0x02 },
+						/* DVT and after */
+						{ 0xB9, 0xB3, 0x23, 0x02, 0xB3, 0x23, 0x02 },
+					},
+					{ /* VRR */
+						/* EVT1.1 and before */
+						{ 0xB9, 0xB2, 0x23, 0x02, 0xB2, 0x23, 0x02 },
+						/* DVT and after */
+						{ 0xB9, 0xB0, 0xE3, 0x02, 0xB0, 0xE3, 0x02 },
+					},
 				},
 				{ /* MTEA */
-					/* EVT1.1 and before */
-					{ 0xB9, 0xB9, 0xF3, 0x02, 0xB9, 0xF3, 0x02 },
-					/* DVT and after */
-					{ 0xB9, 0xBA, 0xE3, 0x02, 0xBA, 0xE3, 0x02 },
+					{ /* MRR */
+						/* EVT1.1 and before */
+						{ 0xB9, 0xB9, 0xF3, 0x02, 0xB9, 0xF3, 0x02 },
+						/* DVT and after */
+						{ 0xB9, 0xBA, 0xE3, 0x02, 0xBA, 0xE3, 0x02 },
+					},
+					{ /* VRR */
+						/* EVT1.1 and before */
+						{ 0xB9, 0xB9, 0xF3, 0x02, 0xB9, 0xF3, 0x02 },
+						/* DVT and after */
+						{ 0xB9, 0xB8, 0xA3, 0x02, 0xB8, 0xA3, 0x02 },
+					},
 				},
 			};
 
@@ -1683,17 +1705,30 @@ static enum gs_panel_tex_opt bmea_set_panel_feat_te(struct gs_panel *ctx, bool i
 			GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x29);
 			/* TE width */
 			GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x08, 0xB9);
-			GS_DCS_BUF_ADD_CMDLIST(dev, fixed_te_settings[panel_type][dvt_and_after]);
+			GS_DCS_BUF_ADD_CMDLIST(dev,
+					fixed_te_settings[panel_type][is_vrr][dvt_and_after]);
 		}
 	} else {
-		static const u8 changeable_te_settings[PANEL_TYPE_MAX][2][4] = {
+		static const u8 changeable_te_settings[PANEL_TYPE_MAX][2][2][4] = {
 			{ /* BZEA */
-				{ 0xB9, 0xB2, 0x23, 0x02 }, /* EVT1.1 and before */
-				{ 0xB9, 0xB3, 0x23, 0x02 }, /* DVT and after */
+				{ /* MRR */
+					{ 0xB9, 0xB2, 0x23, 0x02 }, /* EVT1.1 and before */
+					{ 0xB9, 0xB3, 0x23, 0x02 }, /* DVT and after */
+				},
+				{ /* VRR */
+					{ 0xB9, 0xB2, 0x23, 0x02 }, /* EVT1.1 and before */
+					{ 0xB9, 0xB0, 0xE3, 0x02 }, /* DVT and after */
+				},
 			},
 			{ /* MTEA */
-				{ 0xB9, 0xB9, 0xF3, 0x02 }, /* EVT1.1 and before */
-				{ 0xB9, 0xBA, 0xE3, 0x02 }, /* DVT and after */
+				{ /* MRR */
+					{ 0xB9, 0xB9, 0xF3, 0x02 }, /* EVT1.1 and before */
+					{ 0xB9, 0xBA, 0xE3, 0x02 }, /* DVT and after */
+				},
+				{ /* VRR */
+					{ 0xB9, 0xB9, 0xF3, 0x02 }, /* EVT1.1 and before */
+					{ 0xB9, 0xB8, 0xA3, 0x02 }, /* DVT and after */
+				},
 			},
 		};
 
@@ -1701,7 +1736,8 @@ static enum gs_panel_tex_opt bmea_set_panel_feat_te(struct gs_panel *ctx, bool i
 		GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x04);
 		/* TE width */
 		GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x08, 0xB9);
-		GS_DCS_BUF_ADD_CMDLIST(dev, changeable_te_settings[panel_type][dvt_and_after]);
+		GS_DCS_BUF_ADD_CMDLIST(dev,
+				changeable_te_settings[panel_type][is_vrr][dvt_and_after]);
 		te_opt = TEX_OPT_CHANGEABLE;
 	}
 
@@ -2237,16 +2273,23 @@ static void bmea_set_panel_lp_feat_te(struct gs_panel *ctx)
 {
 	struct device *dev = ctx->dev;
 	enum bmea_panel_type panel_type = GET_PANEL_TYPE(ctx);
-	static const u8 fixed_te_settings[PANEL_TYPE_MAX][7] = {
-		{ 0xB9, 0xB2, 0x23, 0x02, 0xB2, 0x23, 0x02 },
-		{ 0xB9, 0xB9, 0xF3, 0x02, 0xB9, 0xF3, 0x02 },
+	bool dvt_and_after = (ctx->panel_rev_id.id <= PANEL_REVID_EVT1_1) ? 0 : 1;
+	static const u8 fixed_te_settings[PANEL_TYPE_MAX][2][7] = {
+		{ /* BZEA */
+			{ 0xB9, 0xB2, 0x23, 0x02, 0xB2, 0x23, 0x02 }, /* EVT1.1 and before */
+			{ 0xB9, 0xB3, 0x23, 0x02, 0xB3, 0x23, 0x02 }, /* DVT and after */
+		},
+		{ /* MTEA */
+			{ 0xB9, 0xB9, 0xF3, 0x02, 0xB9, 0xF3, 0x02 }, /* EVT1.1 and before */
+			{ 0xB9, 0xBA, 0xE3, 0x02, 0xBA, 0xE3, 0x02 }, /* DVT and after */
+		},
 	};
 
 	/* Fixed TE */
 	GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x29);
 	/* TE width */
 	GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x08, 0xB9);
-	GS_DCS_BUF_ADD_CMDLIST(dev, fixed_te_settings[panel_type]);
+	GS_DCS_BUF_ADD_CMDLIST(dev, fixed_te_settings[panel_type][dvt_and_after]);
 
 	ctx->hw_status.te.option = TEX_OPT_FIXED;
 }
@@ -3018,6 +3061,7 @@ static int bmea_disable(struct drm_panel *panel)
 {
 	struct gs_panel *ctx = container_of(panel, struct gs_panel, base);
 	struct device *dev = ctx->dev;
+	struct bmea_panel *spanel = to_spanel(ctx);
 	int ret;
 
 	dev_info(dev, "%s\n", __func__);
@@ -3043,6 +3087,7 @@ static int bmea_disable(struct drm_panel *panel)
 	ctx->hw_status.dbv = 0;
 	ctx->hw_status.irc_mode = IRC_FLAT_DEFAULT;
 	ctx->ffc_en = false;
+	spanel->prev_gram_collision_count = 0;
 
 	/* set manual and peak before turning off display */
 	bmea_enforce_manual_and_peak(ctx);
@@ -3110,11 +3155,13 @@ static void bmea_update_idle_state(struct gs_panel *ctx)
 
 #define BR_LEN 2
 /**
- * The threshold of TEAR_CNT to set the error bit of GRAM collision. That is, if the collision
- * symptom lasts (or the accumulated time) over 200ms (120Hz, 200/8.3=~24), set the error bit,
- * which will trigger dumps for debugging.
+ * define TRIGGER_DUMP_FOR_COLLISION_TH - threshold of triggering dumps for GRAM collision
+ *
+ * If the collision symptom lasts (or the accumulated time) over 200ms, i.e. 24 TEAR_CNT at 120Hz
+ * (200/8.3=~24), set the flag, which will trigger dumps for debugging.
  */
-#define SET_COLLISION_BIT_TH 24
+#define TRIGGER_DUMP_FOR_COLLISION_TH 24
+#define DDIC_MAX_COLLISION_CNT 255
 static int bmea_detect_fault(struct gs_panel *ctx)
 {
 	struct device *dev = ctx->dev;
@@ -3124,35 +3171,59 @@ static int bmea_detect_fault(struct gs_panel *ctx)
 	int ret;
 
 	PANEL_ATRACE_BEGIN("bmea_detect_fault");
-	GS_DCS_BUF_ADD_CMDLIST(dev, unlock_cmd_f0);
-	GS_DCS_BUF_ADD_CMDLIST_AND_FLUSH(dev, unlock_cmd_fc);
-
 	bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
+
+	/* GRAM collision */
+	GS_DCS_BUF_ADD_CMDLIST(dev, unlock_cmd_f0);
+	GS_DCS_BUF_ADD_CMDLIST(dev, unlock_cmd_fc);
+	GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x01, 0xC4);
+	GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0xC4, 0x00);
 	ret = mipi_dsi_dcs_read(dsi, TEAR_CNT_ADDR, &collision_cnt, 1);
 	if (ret != 1) {
 		dev_warn(dev, "Error reading TEAR_CNT (%pe)\n", ERR_PTR(ret));
 	} else {
-		dev_dbg(dev, "TEAR_CNT: %d\n", collision_cnt);
-		if (collision_cnt) {
-			/* TODO(b/454161439): decrease fault_detect_interval_ms if needed */
-			dev_err(dev, "GRAM collision found, TEAR_CNT: %d\n", collision_cnt);
-			if (collision_cnt > SET_COLLISION_BIT_TH) {
-				set_bit(GS_PANEL_ERR_GRAM_COLLISION, ctx->panel_errors);
-				dev_dbg(dev, "set bit for GRAM COLLISION\n");
+		struct bmea_panel *spanel = to_spanel(ctx);
 
+		if (collision_cnt > spanel->prev_gram_collision_count) {
+			ctx->gram_collision_count +=
+				collision_cnt - spanel->prev_gram_collision_count;
+			dev_err(dev, "GRAM collision found (underrun), count %u (TEAR_CNT %u)\n",
+				ctx->gram_collision_count, collision_cnt);
+		} else if (collision_cnt < spanel->prev_gram_collision_count) {
+			dev_warn(dev, "unexpected GRAM collision count %u (prev %u)\n",
+				 collision_cnt, spanel->prev_gram_collision_count);
+		}
+
+		if (collision_cnt) {
+			set_bit(GS_PANEL_ERR_GRAM_COLLISION, ctx->panel_errors);
+			dev_dbg(dev, "set bit for GRAM COLLISION\n");
+
+			if (collision_cnt > TRIGGER_DUMP_FOR_COLLISION_TH)
+				ctx->trigger_dumps_for_gram_collision = true;
+
+			if (collision_cnt == DDIC_MAX_COLLISION_CNT) {
 				/* reset TEAR_CNT */
 				GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x01, 0xC4);
-				GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0xC4, 0x01);
+				GS_DCS_BUF_ADD_CMD(dev, 0xC4, 0x01);
+
+				collision_cnt = 0;
+				dev_dbg(dev, "TEAR_CNT reset for GRAM COLLISION\n");
 			}
 		}
+		spanel->prev_gram_collision_count = collision_cnt;
 	}
 
 	ret = mipi_dsi_dcs_read(dsi, ERR_FG_ADDR, buf, ERR_FG_LEN);
 	if (ret != ERR_FG_LEN) {
-		dev_warn(dev, "Error reading ERR_FG (%pe)\n", ERR_PTR(ret));
+		ctx->ddic_read_fail_cnt++;
+		dev_warn(dev, "Error reading ERR_FG (%pe), cnt=%d\n",
+			ERR_PTR(ret), ctx->ddic_read_fail_cnt);
+		if (ctx->ddic_read_fail_cnt >= MAX_DDIC_READ_FAIL_CNT)
+			set_bit(GS_PANEL_ERR_DSI_READ_FAILURE, ctx->panel_errors);
 		goto end;
 	} else {
 		dev_dbg(dev, "ERR_FG: %02x %02x\n", buf[0], buf[1]);
+		ctx->ddic_read_fail_cnt = 0;
 	}
 
 	if (buf[0] & ERR_FG_VGH_ERR)
@@ -3179,10 +3250,14 @@ static int bmea_detect_fault(struct gs_panel *ctx)
 		u8 br_buf[BR_LEN] = { 0 };
 		u8 pps_buf[BMEA_PPS_LEN] = { 0 };
 
-		/* skip reg dump if it has been triggered and only GRAM collision is detected */
-		if (spanel->reg_dump_for_gram_collision_triggered &&
-		    gs_panel_only_specific_error_detected_in_bitmap(ctx->panel_errors,
-								    GS_PANEL_ERR_GRAM_COLLISION)) {
+		/**
+		 * Skip reg dump if only GRAM collision is detected and collision count is less
+		 * than the threshold or it has been triggered before.
+		 */
+		if (gs_panel_only_specific_error_detected_in_bitmap(ctx->panel_errors,
+								    GS_PANEL_ERR_GRAM_COLLISION) &&
+		    (!ctx->trigger_dumps_for_gram_collision ||
+		     spanel->reg_dump_for_gram_collision_triggered)) {
 			ret = 1;
 			goto end;
 		}
@@ -3207,7 +3282,8 @@ static int bmea_detect_fault(struct gs_panel *ctx)
 			dev_err(dev, "Error reading pps (%pe)\n", ERR_PTR(ret));
 		}
 
-		if (test_bit(GS_PANEL_ERR_GRAM_COLLISION, ctx->panel_errors))
+		if (test_bit(GS_PANEL_ERR_GRAM_COLLISION, ctx->panel_errors) &&
+		    ctx->trigger_dumps_for_gram_collision)
 			spanel->reg_dump_for_gram_collision_triggered = true;
 
 		/* positive return to indicate successful read of extant faults */
@@ -3508,6 +3584,7 @@ static int bmea_panel_probe(struct mipi_dsi_device *dsi)
 	ctx->hw_status.dbv = 0;
 	clear_bit(FEAT_ZA, ctx->hw_status.feat);
 	spanel->reg_dump_for_gram_collision_triggered = false;
+	spanel->prev_gram_collision_count = 0;
 
 	return gs_dsi_panel_common_init(dsi, ctx);
 }
@@ -3621,8 +3698,8 @@ static struct gs_panel_desc NAME = {								\
 	 */											\
 	.notify_te2_freq_changed_work_delay_ms = 50,						\
 	.fault_detect_interval_ms = 5000,							\
-	.panel_errors_mask = ~(BIT(GS_PANEL_ERR_DSI_SOT) | BIT(GS_PANEL_ERR_DSI_SOT_SYNC) |	\
-			BIT(GS_PANEL_ERR_DSI_HS_RX_TIMEOUT)), /* Peripheral timeout */		\
+	.panel_errors_mask = BIT(GS_PANEL_ERR_DSI_READ_FAILURE) |				\
+			BIT(GS_PANEL_ERR_GRAM_COLLISION),					\
 }
 
 DEFINE_BMEA_PANEL_DESC(gs_bzea, bzea_modes, bzea_lp_modes, bzea_binned_lp,

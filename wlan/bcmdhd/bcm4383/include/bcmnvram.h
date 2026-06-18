@@ -1,7 +1,7 @@
 /*
  * NVRAM variable manipulation
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -133,7 +133,7 @@ extern int nvram_getall(char *nvram_buf, int count);
  * returns the crc value of the nvram
  * @param	nvh	nvram header pointer
  */
-uint8 nvram_calc_crc(struct nvram_header * nvh);
+uint8 nvram_calc_crc(struct nvram_header *nvh);
 
 extern void nvram_printall(void);
 

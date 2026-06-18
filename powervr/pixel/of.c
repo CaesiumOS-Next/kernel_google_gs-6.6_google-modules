@@ -3,7 +3,7 @@
 #include "of.h"
 #include "sysconfig.h"
 
-#include <pvrsrvkm/volcanic/rgxdevice.h>
+#include <pvrsrvkm/services/server/devices/volcanic/rgxdevice.h>
 
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
@@ -275,11 +275,11 @@ int init_pixel_of(struct pixel_gpu_device *pixel_dev)
 	timing_info->bEnableActivePM       = of_properties->apm;
 	timing_info->ui32ActivePMLatencyms = of_properties->apm_latency;
 
-#if defined(EMULATOR_OF)
-	pixel_dev->dev_config->emulator = of_properties->emulator;
+#if defined(RUNTIME_CHECK_EMULATOR_PLATFORM)
+	pixel_dev->dev_config->bIsEmulatorPlatform = of_properties->emulator;
 #endif
-#if defined(VIRTUAL_PLATFORM_OF)
-	pixel_dev->dev_config->virtual_platform = of_properties->virtual_platform;
+#if defined(RUNTIME_CHECK_VIRTUAL_PLATFORM)
+	pixel_dev->dev_config->bIsVirtualPlatform = of_properties->virtual_platform;
 #endif
 
 	// Perform checks based on OF

@@ -43,14 +43,17 @@ int vs_qos_check_qos_config(struct drm_crtc *crtc, struct drm_crtc_state *crtc_s
 void vs_qos_set_qos_config(struct device *dev, struct drm_crtc *crtc);
 void vs_qos_clear_qos_configs(struct vs_dc *dc);
 
-void vs_qos_set_fabrt_boost(struct drm_crtc *crtc);
-void vs_qos_clear_fabrt_boost(struct drm_crtc *crtc);
+void vs_qos_set_freq_boost(struct drm_crtc *crtc);
+void vs_qos_clear_freq_boost(struct drm_crtc *crtc);
 int vs_qos_add_devfreq_request(struct vs_dc *dc, struct drm_crtc *crtc,
 			       enum dev_pm_qos_req_type type, s32 value);
 int vs_qos_remove_devfreq_request(struct drm_crtc *crtc);
 
-int vs_qos_add_fabrt_devfreq_request(struct vs_dc *dc, struct drm_crtc *crtc,
-				     enum dev_pm_qos_req_type type, s32 value);
+int vs_qos_add_boost_fab_devfreq_request(struct vs_dc *dc, struct drm_crtc *crtc,
+					 enum dev_pm_qos_req_type type, s32 value);
+int vs_qos_remove_boost_fab_devfreq_request(struct drm_crtc *crtc);
+int vs_qos_add_boost_core_devfreq_request(struct vs_dc *dc, struct drm_crtc *crtc,
+					  enum dev_pm_qos_req_type type, s32 value);
+int vs_qos_remove_boost_core_devfreq_request(struct drm_crtc *crtc);
 
-int vs_qos_remove_fabrt_devfreq_request(struct drm_crtc *crtc);
 #endif /* __VS_QOS_H__ */

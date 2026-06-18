@@ -9,8 +9,24 @@ ddk_headers(
     name = "zram_headers",
     hdrs = [
         "zcomp.h",
+        "zcomp_cpu.h",
+        "zcomp_eh.h",
         "zram_drv.h",
+        "zram_ioctl.h",
         "zram_vh.h",
+    ],
+)
+
+ddk_headers(
+    name = "zcomp_cpu_headers",
+    hdrs = [
+        "backend_842.h",
+        "backend_deflate.h",
+        "backend_lz4.h",
+        "backend_lz4hc.h",
+        "backend_lzo.h",
+        "backend_lzorle.h",
+        "backend_zstd.h",
     ],
 )
 
@@ -25,6 +41,11 @@ ddk_module(
         "CONFIG_ZRAM_GS_VENDOR_HOOK": {
             True: [
                 "zram_vh.c",
+            ],
+        },
+        "CONFIG_ZRAM_GS_ANDROID_IOCTL": {
+            True: [
+                "zram_ioctl.c",
             ],
         },
     },
@@ -46,12 +67,46 @@ ddk_module(
     srcs = [
         "zcomp_cpu.c",
     ],
-    out = "zcomp_cpu.ko",
+    out = "zcomp_gs_cpu.ko",
+    conditional_srcs = {
+        "CONFIG_ZRAM_GS_BACKEND_LZO": {
+            True: [
+                "backend_lzo.c",
+                "backend_lzorle.c",
+            ],
+        },
+        "CONFIG_ZRAM_GS_BACKEND_LZ4": {
+            True: [
+                "backend_lz4.c",
+            ],
+        },
+        "CONFIG_ZRAM_GS_BACKEND_LZ4HC": {
+            True: [
+                "backend_lz4hc.c",
+            ],
+        },
+        "CONFIG_ZRAM_GS_BACKEND_ZSTD": {
+            True: [
+                "backend_zstd.c",
+            ],
+        },
+        "CONFIG_ZRAM_GS_BACKEND_DEFLATE": {
+            True: [
+                "backend_deflate.c",
+            ],
+        },
+        "CONFIG_ZRAM_GS_BACKEND_842": {
+            True: [
+                "backend_842.c",
+            ],
+        },
+    },
     defconfig = "defconfig",
     kconfig = "Kconfig",
     kernel_build = "//private/devices/google/common:kernel",
     visibility = ["//private/devices/google:__subpackages__"],
     deps = [
+        ":zcomp_cpu_headers",
         ":zram_gs",
         ":zram_headers",
         "//common:all_headers_aarch64",
@@ -63,7 +118,7 @@ ddk_module(
     srcs = [
         "zcomp_eh.c",
     ],
-    out = "zcomp_eh.ko",
+    out = "zcomp_gs_eh.ko",
     defconfig = "defconfig",
     kconfig = "Kconfig",
     kernel_build = "//private/devices/google/common:kernel",

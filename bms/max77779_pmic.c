@@ -231,8 +231,10 @@ int max77779_pmic_init(struct max77779_pmic_info *info)
 		return -ENODEV;
 	}
 
-	mfd_add_devices(info->dev, PLATFORM_DEVID_AUTO, max77779_pmic_devs,
-			ARRAY_SIZE(max77779_pmic_devs), NULL, 0, NULL);
+	err = mfd_add_devices(info->dev, PLATFORM_DEVID_AUTO, max77779_pmic_devs,
+			      ARRAY_SIZE(max77779_pmic_devs), NULL, 0, NULL);
+	if (err)
+		return dev_err_probe(info->dev, err, "Failed to add sub-devices\n");
 
 	dbg_init_fs(info);
 

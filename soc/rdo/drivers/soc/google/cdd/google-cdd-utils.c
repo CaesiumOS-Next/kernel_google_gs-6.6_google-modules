@@ -18,7 +18,6 @@
 #include <soc/google/google-cdd.h>
 #include <soc/google/google-smc.h>
 #include <soc/google/google_wdt.h>
-#include <soc/google/google-ufs.h>
 #include <trace/hooks/debug.h>
 #include <uapi/linux/psci.h>
 
@@ -653,10 +652,6 @@ static int google_cdd_panic_handler(struct notifier_block *nb, unsigned long l, 
 	google_cdd_log_output();
 	google_cdd_print_timestamp();
 	google_cdd_print_log_report();
-
-#if IS_ENABLED(CONFIG_UFS_DW_GOOGLE)
-	ufs_google_kp_dump(cdd_ctx.ufs_pdev);
-#endif
 
 	google_cdd_do_dpm_policy(cdd_ctx.panic_action, kernel_panic_msg);
 

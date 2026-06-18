@@ -2,7 +2,7 @@
  * Structure used by apps whose drivers access SDIO drivers.
  * Pulled out separately so dhdu and wlu can both use it.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -114,8 +114,8 @@ typedef struct sdio_bus_metrics {
 
 /* Bus interface info for SDIO */
 typedef struct wl_pwr_sdio_stats {
-	uint16 type;	     /* WL_PWRSTATS_TYPE_SDIO */
-	uint16 len;	     /* Up to 4K-1, top 4 bits are reserved */
+	uint16 type;	/* WL_PWRSTATS_TYPE_SDIO */
+	uint16 len;	/* Up to 4K-1, top 4 bits are reserved */
 
 	sdio_bus_metrics_t sdio;	/* stats from SDIO bus driver */
 } wl_pwr_sdio_stats_t;

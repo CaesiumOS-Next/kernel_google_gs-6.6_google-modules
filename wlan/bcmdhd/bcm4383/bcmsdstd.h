@@ -1,7 +1,7 @@
 /*
  *  'Standard' SDIO HOST CONTROLLER driver
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -45,7 +45,7 @@
 #define sd_sync_dma(sd, read, nbytes)
 #define sd_init_dma(sd)
 #define sd_ack_intr(sd)
-#define sd_wakeup(sd);
+#define sd_wakeup(sd)
 /* Allocate/init/free per-OS private data */
 extern int sdstd_osinit(sdioh_info_t *sd);
 extern void sdstd_osfree(sdioh_info_t *sd);
@@ -267,8 +267,8 @@ extern void sdstd_unlock(sdioh_info_t *sd);
 extern void sdstd_waitlockfree(sdioh_info_t *sd);
 
 /* OS-specific wrappers for safe concurrent register access */
-extern void sdstd_os_lock_irqsave(sdioh_info_t *sd, ulong* flags);
-extern void sdstd_os_unlock_irqrestore(sdioh_info_t *sd, ulong* flags);
+extern void sdstd_os_lock_irqsave(sdioh_info_t *sd, ulong *flags);
+extern void sdstd_os_unlock_irqrestore(sdioh_info_t *sd, ulong *flags);
 
 /* OS-specific wait-for-interrupt-or-status */
 extern int sdstd_waitbits(sdioh_info_t *sd, uint16 norm, uint16 err, bool yield, uint16 *bits);
@@ -292,7 +292,7 @@ extern void sdstd_3_start_tuning(sdioh_info_t *sd);
 extern void sdstd_3_osinit_tuning(sdioh_info_t *sd);
 extern void sdstd_3_osclean_tuning(sdioh_info_t *sd);
 
-extern void sdstd_enable_disable_periodic_timer(sdioh_info_t * sd, uint val);
+extern void sdstd_enable_disable_periodic_timer(sdioh_info_t *sd, uint val);
 
 extern sdioh_info_t *sdioh_attach(osl_t *osh, void *bar0, uint irq);
 extern SDIOH_API_RC sdioh_detach(osl_t *osh, sdioh_info_t *sd);

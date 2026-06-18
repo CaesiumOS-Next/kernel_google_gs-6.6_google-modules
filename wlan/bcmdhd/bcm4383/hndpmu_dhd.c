@@ -1,7 +1,7 @@
 /*
  * Misc utility routines for DHD's accessing PMU core.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -68,8 +68,7 @@ si_pmu_set_min_res_mask(si_t *sih, osl_t *osh, uint min_res_mask)
 	origidx = si_coreidx(sih);
 	if (AOB_ENAB(sih)) {
 		pmu = si_setcore(sih, PMU_CORE_ID, 0);
-	}
-	else {
+	} else {
 		pmu = si_setcoreidx(sih, SI_CC_IDX);
 	}
 	ASSERT(pmu != NULL);

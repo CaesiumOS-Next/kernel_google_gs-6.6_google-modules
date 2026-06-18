@@ -47,6 +47,8 @@
 #define PLAYBACK_HEAP_SIZE SZ_16K
 #define CAPTURE_HEAP_SIZE SZ_64K
 
+#define TPU_OFFLOAD_HEAP_SIZE SZ_128K
+
 /* mmap pcm offload buffer size */
 #define OFFLOAD_HEAP_SIZE SZ_8M
 #define AOC_MMAP_OFFLOAD_PLAYBACK_SERVICE "audio_playback6"
@@ -125,11 +127,13 @@ struct aoc_prvdata {
 	struct dma_heap *audio_playback_heap;
 	struct dma_heap *audio_capture_heap;
 	struct dma_heap *audio_offload_heap;
+	struct dma_heap *tpu_offload_heap;
 
 	phys_addr_t sensor_heap_base;
 	phys_addr_t audio_playback_heap_base;
 	phys_addr_t audio_capture_heap_base;
 	phys_addr_t audio_offload_heap_base;
+	phys_addr_t tpu_offload_heap_base;
 
 	int watchdog_irq;
 	struct work_struct watchdog_work;
@@ -370,6 +374,8 @@ enum AOC_FIRMWARE_INFORMATION {
 	kAOCVolteReleaseMif = 0x1015,
 	kAOCChipProductId = 0x1016,
 	kAOCWifiChip = 0x1017,
+	kAOCTpuOffloadHeapAddress = 0x101B,
+	kAOCTpuOffloadHeapSize = 0x101C,
 };
 
 extern enum AOC_FW_STATE aoc_state;

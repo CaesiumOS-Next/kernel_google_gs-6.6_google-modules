@@ -126,7 +126,6 @@ struct u100_ctx {
 	unsigned long flags;
 	bool is_download_mode;
 	bool is_bhalf_entered;
-	struct task_struct *fw_download_thr;
 	struct uwb_sysnode uwb_node;
 	struct dentry *debugfs;
 
@@ -169,8 +168,7 @@ void handle_fw_ap_send(struct u100_ctx *u100_ctx);
 #define UWB_NOTICE(fmt, ...) \
 	pr_notice(LOG_TAG "%s: " pr_fmt(fmt), __func__, ##__VA_ARGS__)
 
-int init_fw_download_thread(struct u100_ctx *u100_ctx, bool flag);
-void stop_fw_download_thread(struct u100_ctx *u100_ctx);
+int fw_download(struct u100_ctx *u100_ctx);
 
 /* Load Switch On */
 void pin_ldsw_high(struct u100_ctx *u100_ctx);
@@ -206,6 +204,15 @@ void uwbs_ldsw_reset(struct u100_ctx *u100_ctx);
  */
 int uwbs_sync_reset(struct u100_ctx *u100_ctx);
 
+/**
+ * uwbs_sync_reset_and_coredump() - Reset UWBS and get ATR and report coredump when it fails.
+ * @u100_ctx: U100 context.
+ * @msg: coredump message.
+ *
+ * Return: 0 on success.
+ */
+int uwbs_sync_reset_and_coredump(struct u100_ctx *u100_ctx, const char *msg);
+
 int uwbs_start_download(struct u100_ctx *u100_ctx);
 
 bool uwbs_sync_start_download(struct u100_ctx *u100_ctx);
@@ -214,8 +221,9 @@ static inline unsigned int get_irq_count(struct irq_desc *irq)
 {
 	unsigned int cnt = 0;
 
+	/* Unlike irq_count, tot_count is countable and works well after IRQ re-registration. */
 	if (!IS_ERR_OR_NULL(irq))
-		cnt = irq->irq_count;
+		cnt = irq->tot_count;
 	return cnt;
 }
 

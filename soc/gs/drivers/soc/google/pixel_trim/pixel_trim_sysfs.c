@@ -30,7 +30,9 @@ static ssize_t trim_store(struct kobject *kobj,
         if (kstrtoul(buf, 10, &reclaim_kb))
                 return -EINVAL;
 
-	run_trim();
+	if (reclaim_kb)
+		run_trim();
+
         return len;
 }
 PIXEL_TRIM_ATTR_WO(trim);

@@ -3648,8 +3648,32 @@ static int max77779_charger_post_election_work(struct gvotable_election *el, voi
 	schedule_delayed_work(&data->usecase_work, 0);
 
 	if (blocking) {
-		bms_usecase_down(entry);
-		ret = entry->uc_work_ret;
+		ret = bms_usecase_down(entry);
+
+		/*
+		 * If wait is interrupted (ret < 0), check if the node is still
+		 * in the queue.
+		 * 1. If in queue: Set status=ORPHAN so worker frees it (FREE_ALL).
+		 * 2. If not in queue: Worker is done, we must free it (FREE_ENTRY).
+		 */
+		if (ret < 0) {
+			mutex_lock(&bms_uc_data->queue_lock);
+			/* Check if list node is still attached */
+			if (klist_node_attached(&entry->list_node)) {
+				/* Use ORPHAN status to handle ownership transfer safely */
+				entry->status = BMS_USECASE_STATUS_ORPHAN;
+				mutex_unlock(&bms_uc_data->queue_lock);
+				dev_warn(data->dev, "Blocking wait interrupted, orphaning node %d\n",
+					 entry->id);
+
+				/* Return error to caller as requested */
+				ret = -EAGAIN;
+				goto relax;
+			}
+			mutex_unlock(&bms_uc_data->queue_lock);
+		} else {
+			ret = entry->uc_work_ret;
+		}
 		bms_usecase_free_node(bms_uc_data, entry, BMS_USECASE_FREE_ENTRY);
 	}
 

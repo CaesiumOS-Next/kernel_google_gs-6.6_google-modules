@@ -8,6 +8,7 @@
 #include <linux/mutex.h>
 #include <linux/sched/clock.h>
 #include <linux/platform_device.h>
+#include <linux/reboot.h>
 #include <host/ufshcd-pltfrm.h>
 #include <core/ufshcd-priv.h>
 #include <ip-idle-notifier/google_ip_idle_notifier.h>
@@ -31,6 +32,8 @@
 #define UIC_COMMAND_POLL_TIMEOUT_US 4000000
 #define UIC_COMMAND_DELAY_US 10
 
+#define RESETB_DELAY_MIN_US 200
+#define RESETB_DELAY_MAX_US 300
 #define PWR_EN_DELAY_MIN_US 1500
 #define PWR_EN_DELAY_MAX_US 2000
 #define PWR_RESET_DELAY_MIN_US 2500
@@ -67,6 +70,8 @@ static const char *const ufs_event_type_str[] = {
 	[UFS_EVT_HOST_RESET] = "UFS_EVT_HOST_RESET",
 	[UFS_EVT_ABORT] = "UFS_EVT_ABORT",
 };
+
+#define ufs_pr_emerg(fmt, ...) pr_emerg("ufs-kp: " fmt, ##__VA_ARGS__)
 
 static inline u32 ufs_top_csr_readl(struct ufs_google_host *host, u32 reg)
 {
@@ -292,6 +297,37 @@ static int ufs_google_phy_setup_vreg(struct ufs_hba *hba, bool on);
 static int ufs_google_pd_notifier(struct notifier_block *nb,
 				  unsigned long action, void *data);
 static void ufs_google_sleep_handler(struct work_struct *work);
+
+/* Kernel Panic Dump */
+static void ufs_google_kp_dump(struct ufs_hba *hba)
+{
+	struct ufs_google_host *host;
+
+	if (!hba) {
+		ufs_pr_emerg("invalid hba\n");
+		return;
+	}
+
+	host = ufshcd_get_variant(hba);
+	if (!host) {
+		ufs_pr_emerg("invalid host\n");
+		return;
+	}
+
+	if (host->sig_err_str[0]) {
+		ufs_pr_emerg("UFS UNRECOVERABLE ERROR: %s @ %llu\n",
+			     host->sig_err_str, host->sig_err_tstamp);
+		if (host->saved_err_str[0])
+			ufs_pr_emerg("saved error: %s @ %llu\n",
+				     host->saved_err_str,
+				     host->saved_err_tstamp);
+	} else if (host->saved_err_str[0]) {
+		ufs_pr_emerg("UFS ERROR HANDLER SUCCESS: %s @ %llu\n",
+			     host->saved_err_str, host->saved_err_tstamp);
+	} else {
+		ufs_pr_emerg("NO UFS ERRORS\n");
+	}
+}
 
 static int ufs_google_toggle_vreg(struct ufs_hba *hba, struct ufs_vreg *vreg,
 				  bool on)
@@ -578,6 +614,17 @@ static int ufs_google_set_device_off(struct ufs_google_host *host)
 	return 0;
 }
 
+static int ufs_google_restart_handler(struct notifier_block *nb,
+				      unsigned long mode, void *cmd)
+{
+	struct ufs_google_host *host =
+		container_of(nb, struct ufs_google_host, restart_nb);
+
+	ufs_google_kp_dump(host->hba);
+
+	return 0;
+}
+
 static int ufs_google_init(struct ufs_hba *hba)
 {
 	int err = 0;
@@ -598,6 +645,11 @@ static int ufs_google_init(struct ufs_hba *hba)
 	/* two way bind between variant and hba */
 	host->hba = hba;
 	ufshcd_set_variant(hba, host);
+
+	/* a number higher than google_cdd_restart_handler() priority */
+	host->restart_nb.priority = 140;
+	host->restart_nb.notifier_call = ufs_google_restart_handler;
+	register_restart_handler(&host->restart_nb);
 
 #if IS_ENABLED(CONFIG_GOOGLE_MBA_CPM_INTERFACE)
 	err = ufs_google_init_cpm(hba);
@@ -1409,21 +1461,6 @@ static int ufs_google_phy_initialization(struct ufs_hba *hba)
 	bool skip_phy_init =
 		device_property_read_bool(hba->dev, "google,skip-ufs-phy-init");
 
-	if (!host->phy_init_needed) {
-		dev_info(hba->dev, "phy init skipped");
-		return 0;
-	}
-
-	/* Program RMMI attributes and update configuration */
-	ret = ufs_plat_get_phy_rmmi_attrs(host, &rmmi_attrs, &attr_len);
-	if (ret) {
-		ufs_dev_err(hba, "get rmmi attrs failed %d", ret);
-		return ret;
-	}
-	ret = ufshcd_google_dme_set_seq(hba, rmmi_attrs, attr_len);
-	if (ret)
-		return ret;
-
 	/*
 	 * MPHY_G5_CBULPH8_OFFSET controls PHY PG which should match HC PG
 	 * configuration. If neither AH8 nor SWH8 support HC PG, then disable
@@ -1438,6 +1475,21 @@ static int ufs_google_phy_initialization(struct ufs_hba *hba)
 	/* Trigger configuration update */
 	ret = ufshcd_dme_set_logged(hba, UIC_ARG_MIB(UNIPRO_DME_MPHY_CFG_UPD),
 				    0x1);
+	if (ret)
+		return ret;
+
+	if (!host->phy_init_needed) {
+		dev_info(hba->dev, "phy init skipped");
+		return 0;
+	}
+
+	/* Program RMMI attributes and update configuration */
+	ret = ufs_plat_get_phy_rmmi_attrs(host, &rmmi_attrs, &attr_len);
+	if (ret) {
+		ufs_dev_err(hba, "get rmmi attrs failed %d", ret);
+		return ret;
+	}
+	ret = ufshcd_google_dme_set_seq(hba, rmmi_attrs, attr_len);
 	if (ret)
 		return ret;
 
@@ -2292,12 +2344,18 @@ out:
 
 static int ufs_google_device_reset(struct ufs_hba *hba)
 {
+	struct ufs_google_host *host = ufshcd_get_variant(hba);
+
 	/*
 	 * In prior to getting this, GENPD_NOTIFY_PRE_ON and
 	 * GENPD_NOTIFY_ON were called by generic resume callback.
 	 * Hence, returning zero makes ufshcd_set_ufs_dev_active()
 	 * which avoids link_startup_again = true in ufshcd_link_startup.
 	 */
+	gpiod_set_value(host->resetb, 0);
+	usleep_range(RESETB_DELAY_MIN_US, RESETB_DELAY_MAX_US);
+	gpiod_set_value(host->resetb, 1);
+
 	return 0;
 }
 
@@ -2405,6 +2463,8 @@ static int ufs_google_remove(struct platform_device *pdev)
 {
 	struct ufs_hba *hba = platform_get_drvdata(pdev);
 	struct ufs_google_host *host = ufshcd_get_variant(hba);
+
+	unregister_restart_handler(&host->restart_nb);
 
 	cancel_delayed_work_sync(&host->ufs_sleep_work);
 	atomic_dec(&ufs_host_index);
@@ -2713,47 +2773,6 @@ static void ufs_google_sleep_handler(struct work_struct *work)
 		hba->rpm_lvl = UFS_PM_LVL_2;
 	ufshcd_rpm_put_sync(hba);
 }
-
-#define ufs_pr_emerg(fmt, ...) pr_emerg("ufs-kp: " fmt, ##__VA_ARGS__)
-
-/* Kernel Panic Dump. Intended to be called by cdd driver */
-void ufs_google_kp_dump(struct platform_device *pdev)
-{
-	struct ufs_google_host *host;
-	struct ufs_hba *hba;
-
-	if (!pdev) {
-		ufs_pr_emerg("invalid pdev");
-		return;
-	}
-
-	hba = platform_get_drvdata(pdev);
-	if (!hba) {
-		ufs_pr_emerg("invalid hba");
-		return;
-	}
-
-	host = ufshcd_get_variant(hba);
-	if (!host) {
-		ufs_pr_emerg("invalid host");
-		return;
-	}
-
-	if (host->sig_err_str[0]) {
-		ufs_pr_emerg("UFS UNRECOVERABLE ERROR: %s @ %llu",
-			     host->sig_err_str, host->sig_err_tstamp);
-		if (host->saved_err_str[0])
-			ufs_pr_emerg("saved error: %s @ %llu",
-				     host->saved_err_str,
-				     host->saved_err_tstamp);
-	} else if (host->saved_err_str[0]) {
-		ufs_pr_emerg("UFS ERROR HANDLER SUCCESS: %s @ %llu",
-			     host->saved_err_str, host->saved_err_tstamp);
-	} else {
-		ufs_pr_emerg("NO UFS ERRORS");
-	}
-}
-EXPORT_SYMBOL_GPL(ufs_google_kp_dump);
 
 static const struct dev_pm_ops ufs_google_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(ufshcd_system_suspend, ufshcd_system_resume)

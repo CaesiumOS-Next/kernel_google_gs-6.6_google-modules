@@ -317,10 +317,12 @@ static void goog_mba_ctrl_enable_client_irq_locked(struct goog_mba_ctrl_info *mb
 
 static int goog_mba_ctrl_send_data_nq(struct goog_mba_ctrl_info *mbox_info, void *data)
 {
-	if (data) {
+	u32 data_size;
+
+	data_size = data ? mbox_info->payload_size : 0;
+	trace_goog_mba_ctrl_send_data_nq(mbox_info, data, data_size);
+	if (data)
 		goog_mba_ctrl_wr_payload(mbox_info, data);
-		trace_goog_mba_ctrl_send_data_nq(mbox_info, data);
-	}
 
 	goog_mba_ctrl_trigger_host_irq(mbox_info);
 
@@ -330,6 +332,7 @@ static int goog_mba_ctrl_send_data_nq(struct goog_mba_ctrl_info *mbox_info, void
 static int goog_mba_ctrl_send_data_q(struct goog_mba_ctrl_info *mbox_info,
 				     struct mbox_chan *chan, void *data)
 {
+	u32 data_size;
 	int chan_idx;
 	unsigned long flags;
 	int ret = 0;
@@ -354,9 +357,10 @@ static int goog_mba_ctrl_send_data_q(struct goog_mba_ctrl_info *mbox_info,
 		goto exit;
 	}
 
+	data_size = data ? mbox_info->payload_size : 0;
+	trace_goog_mba_ctrl_send_data_q(mbox_info, data, data_size);
 	if (data) {
 		goog_mba_ctrl_wr_payload(mbox_info, data);
-		trace_goog_mba_ctrl_send_data_q(mbox_info, data);
 
 		mbox_info->tx_q_wr_ptr = (mbox_info->tx_q_wr_ptr + 1) % mbox_info->tx_q_capacity;
 		mbox_info->tx_q_size++;

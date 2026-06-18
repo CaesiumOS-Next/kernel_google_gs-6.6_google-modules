@@ -458,7 +458,7 @@ int vpu_pm_init(struct vpu_core *core)
 
 	rc = dev_pm_genpd_add_notifier(pd_dev, &core->genpd_nb);
 	if (rc) {
-		dev_pm_domain_detach(core->pd_dev, true);
+		dev_pm_domain_detach(pd_dev, true);
 		return rc;
 	}
 	core->pd_dev = pd_dev;

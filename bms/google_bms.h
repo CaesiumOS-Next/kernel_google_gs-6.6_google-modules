@@ -42,6 +42,7 @@ struct device_node;
 #define GBMS_AACT_PROFILE_MAX 100
 #define GBMS_AACC_TEMP_NB_MAX 10
 #define GBMS_AACC_SOC_SIZE 100
+#define GBMS_AACV_DATA_MAX 10
 
 struct aacc_weight_profile {
 	/* the profile of aacc_chg/aacc_dsg */
@@ -56,6 +57,7 @@ struct aacc_profile {
 	int start_soc;			/* the start soc in each session */
 	int end_soc;			/* the end soc in each session */
 	int aawc;			/* wrights cycles */
+	u8 lotr;			/* determine the storage layout version */
 
 	/* to calculate the average temperature */
 	long long temp_sum;
@@ -129,6 +131,12 @@ struct gbms_chg_profile {
 
 	/* AACC feature */
 	struct aacc_profile aacc_cycles;
+
+	/* AACV feature */
+	u32 aacv_cycles[GBMS_AACV_DATA_MAX];
+	u32 aacv_offsets[GBMS_AACV_DATA_MAX];
+	u32 aacv_nb_limits;
+	u32 aacv_offset;
 
 	bool debug_chg_profile;
 	bool enable_switch_chg_profile;
@@ -682,7 +690,6 @@ int gbms_cycle_count_cstr_bc(char *buff, size_t size,
 #define gbms_cycle_count_cstr(buff, size, cc)	\
 	gbms_cycle_count_cstr_bc(buff, size, cc, GBMS_CCBIN_BUCKET_COUNT)
 
-
 /* Time to full */
 int ttf_soc_cstr(char *buff, int size, const struct ttf_soc_stats *soc_stats,
 		 int start, int end);
@@ -740,6 +747,9 @@ int gbms_read_aacc_chg_weights(struct gbms_chg_profile *profile,
 int gbms_read_aacc_dsg_weights(struct gbms_chg_profile *profile,
 			       struct device_node *node);
 int gbms_aacc_temp_idx(const struct gbms_chg_profile *profile, int temp, bool is_charge);
+int gbms_read_aacv_limits(struct gbms_chg_profile *profile,
+			  struct device_node *node);
+int gbms_aacv_get_offset(const struct gbms_chg_profile *profile, const int cycles);
 
 bool chg_state_is_disconnected(const union gbms_charger_state *chg_state);
 
@@ -938,6 +948,9 @@ enum charging_state {
 #define LONGLIFE_CHARGE_START_LEVEL 77
 #define ADAPTIVE_ALWAYS_ON_SOC 80
 
+/* Input values for userspace clients.
+ * Use `charging_policy_translate` to convert to internal values.
+ */
 enum charging_policy {
        CHARGING_POLICY_UNKNOWN = -1,
 
@@ -951,13 +964,26 @@ enum charging_policy {
  * and AC also must take precedence over the AON limit.
  */
 enum charging_policy_vote {
-       CHARGING_POLICY_VOTE_UNKNOWN = -1,
+	CHARGING_POLICY_VOTE_UNKNOWN = -1,
 
-       CHARGING_POLICY_VOTE_DEFAULT = 1,
-       CHARGING_POLICY_VOTE_ADAPTIVE_AON = 2,
-       CHARGING_POLICY_VOTE_ADAPTIVE_AC = 3,
-       CHARGING_POLICY_VOTE_LONGLIFE = 4,
-       CHARGING_POLICY_VOTE_FORCE_FULL_CHARGE = 5,
+	CHARGING_POLICY_VOTE_DEFAULT = 1,
+	CHARGING_POLICY_VOTE_ADAPTIVE_AON = 2,
+	CHARGING_POLICY_VOTE_ADAPTIVE_AC = 3,
+	CHARGING_POLICY_VOTE_LONGLIFE = 4,
+	CHARGING_POLICY_VOTE_FORCE_FULL_CHARGE = 5,
+};
+
+/* Output values for userspace clients.
+ * Use `charging_policy_translate_to_userspace` to convert from internal values.
+ */
+enum charging_policy_out {
+	CHARGING_POLICY_OUT_UNKNOWN = -1,
+
+	CHARGING_POLICY_OUT_DEFAULT = 1,
+	CHARGING_POLICY_OUT_ADAPTIVE_AON = 2,
+	CHARGING_POLICY_OUT_ADAPTIVE_AC = 3,
+	CHARGING_POLICY_OUT_LONGLIFE = 4,
+	CHARGING_POLICY_OUT_FORCE_FULL_CHARGE = 5,
 };
 
 #define to_cooling_device(_dev)	\

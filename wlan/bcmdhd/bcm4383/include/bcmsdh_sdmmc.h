@@ -1,7 +1,7 @@
 /*
  * BCMSDH Function Driver for the native SDIO/MMC driver in the Linux Kernel
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -43,7 +43,7 @@
 #define sd_sync_dma(sd, read, nbytes)
 #define sd_init_dma(sd)
 #define sd_ack_intr(sd)
-#define sd_wakeup(sd);
+#define sd_wakeup(sd)
 
 #ifdef BCMPERFSTATS
 #define sd_log(x)	do { if (sd_msglevel & SDH_LOG_VAL)	 bcmlog x; } while (0)

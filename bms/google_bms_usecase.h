@@ -209,6 +209,7 @@ BMS_USECASE_BFF(bms_usecase_meta_async, 16, 16)
 enum bms_usecase_status {
 	BMS_USECASE_STATUS_UNINITIALIZED = 0,
 	BMS_USECASE_STATUS_NEW,
+	BMS_USECASE_STATUS_ORPHAN, /* New status for ownership transfer */
 };
 
 enum bms_usecase_state {
@@ -311,7 +312,7 @@ int bms_usecase_add_hops(struct bms_usecase_data *bms_uc_data, struct bms_usecas
 void bms_usecase_free_node(struct bms_usecase_data *bms_uc_data, struct bms_usecase_entry *entry,
 			   enum bms_usecase_free_state free_state);
 void bms_usecase_up(struct bms_usecase_entry *entry);
-void bms_usecase_down(struct bms_usecase_entry *entry);
+int bms_usecase_down(struct bms_usecase_entry *entry);
 void bms_usecase_work_lock(struct bms_usecase_data *bms_uc_data);
 void bms_usecase_work_unlock(struct bms_usecase_data *bms_uc_data);
 struct klist_node *bms_usecase_queue_next(struct bms_usecase_data *bms_uc_data,

@@ -267,10 +267,13 @@ static void hook_irq_begin(void *data, int irq, struct irqaction *action)
 	s64 irq_start_diff_usec;
 	s64 curr_storm_count;
 	s64 curr_max_storm_count;
+
+	if (in_nmi())
+		return;
 	if (irq >= MAX_IRQ_NUM)
 		return;
-	cpu_num = raw_smp_processor_id();
 
+	cpu_num = raw_smp_processor_id();
 
 	prev_irq_start = atomic64_read(&(long_irq_stat.irq_storms[irq].irq_storm_start));
 
@@ -307,8 +310,12 @@ static void hook_irq_end(void *data, int irq, struct irqaction *action, int ret)
 	int cpu_num;
 	ktime_t irq_end;
 	s64 curr_max_irq;
+
+	if (in_nmi())
+		return;
 	if (irq >= MAX_IRQ_NUM)
 		return;
+
 	cpu_num = raw_smp_processor_id();
 	irq_end = ktime_get();
 	irq_usec = ktime_to_us(ktime_sub(irq_end,

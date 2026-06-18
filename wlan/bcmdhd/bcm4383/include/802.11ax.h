@@ -2,7 +2,7 @@
  * Basic types and constants relating to 802.11ax/HE STA
  * This is a portion of 802.11ax definition. The rest are in 802.11.h.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -446,6 +446,9 @@ typedef uint8 he_phy_cap_t[HE_PHY_CAP_INFO_SIZE];
 * 128 in the SSID element
 */
 #define WLC_SSID_VAL_IN_SHORT_SSID	128u
+#define WLC_SSID_LEN_IN_SHORT_SSID	1u
+#define IS_SSID_IE_INDICATING_SHORT_SSID(ssidie) (((ssidie)->len == WLC_SSID_LEN_IN_SHORT_SSID) && \
+						 ((ssidie)->data[0] == WLC_SSID_VAL_IN_SHORT_SSID))
 
 /* Defines for The Max HE MCS For n SS subfield (where n = 1, ..., 8) */
 #define HE_MCS_MAP_NSS_MAX	8u	/* Max number of streams possible */
@@ -650,25 +653,46 @@ typedef BWL_PRE_PACKED_STRUCT struct he_op_ie {
 #define HE_6G_OP_REG_INFO_INDOOR_AP_US  0u
 #define HE_6G_OP_REG_INFO_SP_AP_US      1u
 
-/* Figure 9-788l Control field format in Draft P802.11ax_D6.0 */
+/* Figure 9-906 Control field format in Draft P802.11-REVme/D5.0 */
 #define HE_6G_CTL_CHBW_MASK         0x03u
 #define HE_6G_OP_CTL_CHBW(ctl) (ctl & HE_6G_CTL_CHBW_MASK)
+
 #define HE_6G_CTL_DUP_BCN_MASK      0x04u
-#define HE_6G_CTL_REG_INFO_MASK     0x38u
-#define HE_6G_CTL_REG_INFO_SHIFT    3u
-#define HE_6G_OP_CTL_REG_INFO(ctl) \
-	((ctl & HE_6G_CTL_REG_INFO_MASK) >> HE_6G_CTL_REG_INFO_SHIFT)
-
-#define HE_6G_OP_REG_INFO_LOW_PWR	0u	/* INDOOR Low Power */
-#define HE_6G_OP_REG_INFO_STD_PWR	1u	/* Standard Power */
-#define HE_6G_OP_REG_INFO_VLP_PWR	2u	/* Very low Power */
-#define HE_6G_OP_REG_INFO_INDR_ENAB	3u	/* Indoor Enabled */
-#define HE_6G_OP_REG_INFO_INDR_STD_PWR	4u	/* Indoor Standard Power */
-#define HE_6G_OP_REG_INFO_CAT_MAX	5u	/* Category reserved */
-
 #define HE_6G_CTL_DUP_BCN_SHIFT     0x02u
 #define HE_6G_OP_CTL_DUP_BCN(ctl) \
 	((ctl & HE_6G_CTL_DUP_BCN_MASK) >> HE_6G_CTL_DUP_BCN_SHIFT)
+
+#define HE_6G_CTL_REG_INFO_MASK		0x38u /* Reg Info 3 bits leagcy version */
+#define HE_6G_CTL_REG_INFO_MASK_4BITS	0x78u /* Use Reg Info 4 bits, Draft P802.11-REVme/D5.0 */
+
+#define HE_6G_CTL_REG_INFO_SHIFT	3u
+
+/* This is for legacy Reg Info 3 bits */
+#define HE_6G_OP_CTL_REG_INFO(ctl) \
+	((ctl & HE_6G_CTL_REG_INFO_MASK) >> HE_6G_CTL_REG_INFO_SHIFT)
+
+/* Use new Reg Info 4 bits, Draft P802.11-REVme/D5.0 */
+#define HE_6G_OP_CTL_REG_INFO_4BITS(ctl) \
+	((ctl & HE_6G_CTL_REG_INFO_MASK_4BITS) >> HE_6G_CTL_REG_INFO_SHIFT)
+
+/* See Table E-12 in Draft P802.11-REVme/D5.0 */
+#define HE_6G_OP_REG_INFO_LOW_PWR			0u	/* Indoor AP (LPI) */
+#define HE_6G_OP_REG_INFO_STD_PWR			1u	/* Standard Power (SP) */
+#define HE_6G_OP_REG_INFO_VLP_PWR			2u	/* Very Low Power (VLP) */
+#define HE_6G_OP_REG_INFO_INDR_ENAB			3u	/* Indoor Enabled AP */
+#define HE_6G_OP_REG_INFO_INDR_STD_PWR			4u	/* Indoor Standard Power AP */
+
+/* See Table E-13 in Draft P802.11-REVme/D5.0
+ * The Composite AP (i.e., LPI plus SP) is 8.
+ * The Reg Info values 9..15 are reserved.
+ */
+#define HE_6G_OP_REG_INFO_COMPOSITE_LPI_SP		8u	/* Supports LPI + SP */
+
+/* Category max for the legacy vlaues (0,1,2,3 and 4).
+ * Currently, this is used for IOVAR input validation in the case of TPETEST.
+ * Do not change this value.
+ */
+#define HE_6G_OP_REG_INFO_CAT_MAX			5u
 
 /* HE 6G Operation info */
 typedef BWL_PRE_PACKED_STRUCT struct he_6g_op_info {
@@ -1044,6 +1068,25 @@ typedef BWL_PRE_PACKED_STRUCT struct he_bsscolor_change_ie {
 
 /* For HE MU SIG A : RX PLCP4 bit fields [8bit] */
 #define HE_MU_SIGA2_STBC_RX_MASK	0x40u
+
+/**
+ * Draft P802.11REVme_D4.2; 9.4.2.312 Non-AP STA Regulatory Connectivity element
+ */
+typedef BWL_PRE_PACKED_STRUCT struct he_non_ap_sta_reg_conn_ie {
+	uint8 id;
+	uint8 len;
+	uint8 id_ext;
+	uint8 reg_conn_data[];	/* Variable length Regulatory Connectivity Data */
+} BWL_POST_PACKED_STRUCT he_non_ap_sta_reg_conn_ie_t;
+
+/* Refer Table 9-415 Regulatory Connectivity field.
+ * Client device capabilities, various bits for byte 0.
+ */
+#define HE_NON_AP_STA_REG_CONN_DATA_LPI_CLIENT_VALID	(1u << 0u) /* bit 0 */
+#define HE_NON_AP_STA_REG_CONN_DATA_LPI_CLIENT		(1u << 1u) /* bit 1 */
+
+#define HE_NON_AP_STA_REG_CONN_DATA_SP_CLIENT_VALID	(1u << 2u) /* bit 2 */
+#define HE_NON_AP_STA_REG_CONN_DATA_SP_CLIENT		(1u << 3u) /* bit 3 */
 
 /* This marks the end of a packed structure section. */
 #include <packed_section_end.h>

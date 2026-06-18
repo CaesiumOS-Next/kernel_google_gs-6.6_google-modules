@@ -1,7 +1,7 @@
 /*
  * Debug/trace/assert driver definitions for Dongle Host Driver.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -44,8 +44,8 @@
 #define DHD_LOG_DUMP_FWLOG_TS	DHD_LOG_DUMP_WRITE_TS
 #endif
 
-#ifdef CUSTOM_PREFIX
-#define DBG_PRINT_PREFIX "[%s]"CUSTOM_PREFIX, OSL_GET_RTCTIME()
+#ifdef LOG_CUSTOM_PREFIX_AND_RTC
+#define DBG_PRINT_PREFIX "[%s]"LOG_CUSTOM_PREFIX_AND_RTC, OSL_GET_RTCTIME()
 #define DBG_PRINT_SYSTEM_TIME pr_cont(DBG_PRINT_PREFIX)
 #define DHD_CONS_ONLY(args)	\
 do {	\
@@ -54,27 +54,29 @@ do {	\
 } while (0)
 #else
 #define DBG_PRINT_SYSTEM_TIME
-#define DHD_CONS_ONLY(args) do { printf args;} while (0)
-#endif /* CUSTOM_PREFIX */
+#define DHD_CONS_ONLY(args) do { \
+		printf args; \
+	} while (0)
+#endif /* LOG_CUSTOM_PREFIX_AND_RTC */
 
 #if defined(BCMDBG) || defined(DHD_DEBUG)
 
 #if defined(NDIS)
 #define DHD_ERROR(args)		do { \
 		if (dhd_msg_level & DHD_ERROR_VAL) {\
-			printf args;  \
+			printf args; \
 			DHD_NDDBG_OUTPUT args; \
 		} \
 	} while (0)
 #define DHD_TRACE(args)		do { \
 		if (dhd_msg_level & DHD_TRACE_VAL) {\
-			printf args;  \
+			printf args; \
 			DHD_NDDBG_OUTPUT args; \
 		} \
 	} while (0)
 #define DHD_INFO(args)		do { \
 		if (dhd_msg_level & DHD_INFO_VAL) {\
-			printf args;  \
+			printf args; \
 			DHD_NDDBG_OUTPUT args; \
 		} \
 	} while (0)

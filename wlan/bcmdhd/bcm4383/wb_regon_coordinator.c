@@ -1,7 +1,7 @@
 /*
  * DHD WiFi BT RegON Coordinator - WBRC
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -393,7 +393,11 @@ wbrc_bt_dev_open(struct inode *inodep, struct file *filep)
 			WBRC_WAIT_TIMEOUT, &wbrc_data->state, IDLE);
 		if (tmo_ret <= 0) {
 			pr_err("%s: WLAN ON/OFF timed out !\n", __func__);
-			goto exit;
+			/* return error if WLAN ON times out, else there is a chance
+			 * that BTHal can proceed with BT FW dwnld without
+			 * WLAN FW running first
+			 */
+			return -EFAULT;
 		} else {
 			pr_err("%s: WLAN ON/OFF finished\n", __func__);
 		}

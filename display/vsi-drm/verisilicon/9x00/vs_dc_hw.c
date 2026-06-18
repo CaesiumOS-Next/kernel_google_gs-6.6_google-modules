@@ -581,7 +581,7 @@ static u32 _get_plane_zorder_offset(u32 hw_id)
 }
 
 /* Get the display test pattern addr offset based on HW_DISPLAY_0 */
-static u32 _get_display_tp_offset(u32 hw_id, enum drm_vs_disp_tp_pos pos)
+static u32 _get_display_tp_offset(u32 hw_id, u32 output_id, enum drm_vs_disp_tp_pos pos)
 {
 	u32 offset = 0;
 	u32 base_offset =
@@ -593,7 +593,10 @@ static u32 _get_display_tp_offset(u32 hw_id, enum drm_vs_disp_tp_pos pos)
 	pos_offset[2] =
 		DCREG_SH_PANEL0_OFIFO_TP_ENABLE_Address - DCREG_SH_PANEL0_BLEND_TP_ENABLE_Address;
 
-	offset = (u32)hw_id * base_offset + pos_offset[pos];
+	if (pos == VS_DISP_TP_OFIFO)
+		offset = output_id * base_offset + pos_offset[pos];
+	else
+		offset = hw_id * base_offset + pos_offset[pos];
 
 	return offset;
 }
@@ -959,19 +962,36 @@ void dc_hw_deinit(struct dc_hw *hw)
 
 void dc_hw_reinit(struct dc_hw *hw)
 {
+	int ret = 0;
+
 	dc_hw_deinit(hw);
 
-	dc_hw_init(hw);
-	dc_be_hw_init(hw);
-	dc_fe0_hw_init(hw);
-	dc_fe1_hw_init(hw);
-	dc_wb_hw_init(hw);
+	ret = dc_hw_init(hw);
+	if (ret < 0)
+		dev_err(hw->dev, "dc_hw_init failed (%d)", ret);
+	ret = dc_be_hw_init(hw);
+	if (ret < 0)
+		dev_err(hw->dev, "dc_be_hw_init failed (%d)", ret);
+	ret = dc_fe0_hw_init(hw);
+	if (ret < 0)
+		dev_err(hw->dev, "dc_fe0_hw_init failed (%d)", ret);
+	ret = dc_fe1_hw_init(hw);
+	if (ret < 0)
+		dev_err(hw->dev, "dc_fe1_hw_init failed (%d)", ret);
+	ret = dc_wb_hw_init(hw);
+	if (ret < 0)
+		dev_err(hw->dev, "dc_wb_hw_init failed (%d)", ret);
 }
 
 void dc_hw_update_plane(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && fb) {
 		bool original_secure = plane->fb.secure;
@@ -992,8 +1012,13 @@ void dc_hw_update_plane(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 
 void dc_hw_update_plane_sram(struct dc_hw *hw, u8 id, struct dc_hw_sram_pool *sram)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && sram) {
 		memcpy(&plane->sram, sram, sizeof(*sram) - sizeof(sram->dirty));
@@ -1012,8 +1037,13 @@ void dc_hw_update_plane_sram(struct dc_hw *hw, u8 id, struct dc_hw_sram_pool *sr
 
 void dc_hw_update_plane_position(struct dc_hw *hw, u8 id, struct dc_hw_position *pos)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && pos) {
 		memcpy(&plane->pos, pos, sizeof(*pos) - sizeof(pos->dirty));
@@ -1026,8 +1056,13 @@ void dc_hw_update_plane_position(struct dc_hw *hw, u8 id, struct dc_hw_position 
 
 void dc_hw_update_ext_fb(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && fb) {
 		memcpy(&plane->fb_ext, fb, sizeof(*fb) - sizeof(fb->dirty));
@@ -1041,8 +1076,13 @@ void dc_hw_update_ext_fb(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 
 void dc_hw_update_plane_y2r(struct dc_hw *hw, u8 id, struct dc_hw_y2r *y2r_conf)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && y2r_conf) {
 		memcpy(&plane->y2r, y2r_conf, sizeof(*y2r_conf) - sizeof(y2r_conf->dirty));
@@ -1055,8 +1095,13 @@ void dc_hw_update_plane_y2r(struct dc_hw *hw, u8 id, struct dc_hw_y2r *y2r_conf)
 
 void dc_hw_update_plane_scale(struct dc_hw *hw, u8 id, struct dc_hw_scale *scale)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (!plane || !scale) {
 		plane->scale.enable = false;
@@ -1081,8 +1126,13 @@ end:
 
 void dc_hw_update_plane_roi(struct dc_hw *hw, u8 id, struct dc_hw_roi *roi)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && roi) {
 		memcpy(&plane->roi, roi, sizeof(struct dc_hw_roi));
@@ -1096,8 +1146,13 @@ void dc_hw_update_plane_roi(struct dc_hw *hw, u8 id, struct dc_hw_roi *roi)
 
 void dc_hw_update_plane_clear(struct dc_hw *hw, u8 id, struct dc_hw_clear *clear)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && clear) {
 		memcpy(&plane->clear, clear, sizeof(struct dc_hw_clear) - sizeof(clear->dirty));
@@ -1110,8 +1165,13 @@ void dc_hw_update_plane_clear(struct dc_hw *hw, u8 id, struct dc_hw_clear *clear
 
 void dc_hw_update_plane_3d_lut(struct dc_hw *hw, u8 id, struct dc_hw_block *lut_3d)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && lut_3d) {
 		memcpy(&plane->lut_3d, lut_3d, sizeof(*lut_3d) - sizeof(lut_3d->dirty));
@@ -1124,8 +1184,13 @@ void dc_hw_update_plane_3d_lut(struct dc_hw *hw, u8 id, struct dc_hw_block *lut_
 
 void dc_hw_update_plane_std_bld(struct dc_hw *hw, u8 id, struct dc_hw_std_bld *std_bld)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && std_bld) {
 		memcpy(&plane->std_bld, std_bld, sizeof(*std_bld) - sizeof(std_bld->dirty));
@@ -1139,8 +1204,13 @@ void dc_hw_update_plane_std_bld(struct dc_hw *hw, u8 id, struct dc_hw_std_bld *s
 
 void dc_hw_update_plane_rcd_mask(struct dc_hw *hw, u8 id, struct dc_hw_rcd_mask *rcd_mask)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
 	u8 hw_id = dc_hw_get_plane_id(id, hw);
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane && rcd_mask) {
 		memcpy(&plane->rcd_mask, rcd_mask, sizeof(*rcd_mask) - sizeof(rcd_mask->dirty));
@@ -1155,7 +1225,12 @@ void dc_hw_update_plane_rcd_mask(struct dc_hw *hw, u8 id, struct dc_hw_rcd_mask 
 void dc_hw_update_display_bld_size(struct dc_hw *hw, u8 id, bool user_conf,
 				   struct dc_hw_size *bld_size)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display) {
 		if (user_conf && bld_size) {
@@ -1178,7 +1253,12 @@ void dc_hw_update_display_bld_size(struct dc_hw *hw, u8 id, bool user_conf,
 void dc_hw_update_display_ltm_luma_get(struct dc_hw *hw, u8 id,
 				       struct dc_hw_ltm_luma_get *ltm_luma_get)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display && ltm_luma_get) {
 		memcpy(&display->ltm_luma_get, ltm_luma_get,
@@ -1192,7 +1272,12 @@ void dc_hw_update_display_ltm_luma_get(struct dc_hw *hw, u8 id,
 
 void dc_hw_update_display_ltm_cd_get(struct dc_hw *hw, u8 id, struct dc_hw_ltm_cd_get *ltm_cd_get)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display && ltm_cd_get) {
 		memcpy(&display->ltm_cd_get, ltm_cd_get,
@@ -1207,7 +1292,12 @@ void dc_hw_update_display_ltm_cd_get(struct dc_hw *hw, u8 id, struct dc_hw_ltm_c
 void dc_hw_update_display_ltm_hist_get(struct dc_hw *hw, u8 id,
 				       struct dc_hw_ltm_hist_get *ltm_hist_get)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display && ltm_hist_get) {
 		memcpy(&display->ltm_hist_get, ltm_hist_get,
@@ -1221,7 +1311,12 @@ void dc_hw_update_display_ltm_hist_get(struct dc_hw *hw, u8 id,
 
 void dc_hw_update_display_blur_mask(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display && fb) {
 		memcpy(&display->blur_mask, fb, sizeof(*fb) - sizeof(fb->dirty));
@@ -1235,7 +1330,12 @@ void dc_hw_update_display_blur_mask(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb
 
 void dc_hw_update_display_brightness_mask(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display && fb) {
 		memcpy(&display->brightness_mask, fb, sizeof(*fb) - sizeof(fb->dirty));
@@ -1249,14 +1349,16 @@ void dc_hw_update_display_brightness_mask(struct dc_hw *hw, u8 id, struct dc_hw_
 
 void dc_hw_update_r2y(struct dc_hw *hw, u8 id, struct dc_hw_r2y *r2y_conf)
 {
-	struct dc_hw_wb *wb = &hw->wb[id];
+	struct dc_hw_wb *wb = NULL;
 
-	if (memcmp(&wb->r2y, r2y_conf, sizeof(*r2y_conf) - sizeof(r2y_conf->dirty))) {
-		memcpy(&wb->r2y, r2y_conf, sizeof(*r2y_conf) - sizeof(r2y_conf->dirty));
+	if (!hw || !hw->info || id >= hw->info->wb_num)
+		return;
+
+	wb = &hw->wb[id];
+
+	if (wb && r2y_conf) {
+		memcpy(&wb->r2y, r2y_conf, sizeof(*r2y_conf));
 		wb->r2y.dirty = true;
-		wb->r2y.enable = r2y_conf->enable;
-	} else {
-		wb->r2y.dirty = false;
 	}
 
 	trace_update_hw_layer_feature_en_dirty("R2Y", id, wb->r2y.enable, wb->r2y.dirty);
@@ -1264,7 +1366,12 @@ void dc_hw_update_r2y(struct dc_hw *hw, u8 id, struct dc_hw_r2y *r2y_conf)
 
 void dc_hw_update_display_wb(struct dc_hw *hw, u8 id, struct dc_hw_display_wb *wb)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display && wb) {
 		memcpy(&display->wb, wb, sizeof(*wb) - sizeof(wb->dirty));
@@ -1277,8 +1384,13 @@ void dc_hw_update_display_wb(struct dc_hw *hw, u8 id, struct dc_hw_display_wb *w
 
 void dc_hw_setup_display_mode(struct dc_hw *hw, u8 id, struct dc_hw_display_mode *mode)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
 	u8 hw_id = 0, output_id = 0;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display && mode) {
 		if (!mode->enable)
@@ -1294,7 +1406,12 @@ void dc_hw_setup_display_mode(struct dc_hw *hw, u8 id, struct dc_hw_display_mode
 
 void dc_hw_update_wb_fb(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 {
-	struct dc_hw_wb *wb = &hw->wb[id];
+	struct dc_hw_wb *wb = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->wb_num)
+		return;
+
+	wb = &hw->wb[id];
 
 	if (wb && fb) {
 		if (!fb->enable)
@@ -1309,12 +1426,17 @@ void dc_hw_update_wb_fb(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb)
 
 void dc_hw_setup_wb(struct dc_hw *hw, u8 id)
 {
-	struct dc_hw_wb *wb = &hw->wb[id];
+	struct dc_hw_wb *wb = NULL;
 	u8 hw_id = 0;
+
+	if (!hw || !hw->info || id >= hw->info->wb_num)
+		return;
+
+	wb = &hw->wb[id];
 
 	if (wb) {
 		hw_id = hw->info->write_back[id].id;
-		hw->func->set_wb(hw, hw_id, wb);
+		hw->func->writeback(hw, hw_id);
 	}
 }
 
@@ -1384,7 +1506,12 @@ void dc_hw_set_wb_stall(struct dc_hw *hw, bool enable)
 
 void dc_hw_config_plane_status(struct dc_hw *hw, u8 id, bool config)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
+	struct dc_hw_plane *plane = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->plane_num)
+		return;
+
+	plane = &hw->plane[id];
 
 	if (plane)
 		plane->config_status = config;
@@ -1392,7 +1519,12 @@ void dc_hw_config_plane_status(struct dc_hw *hw, u8 id, bool config)
 
 void dc_hw_config_display_status(struct dc_hw *hw, u8 id, bool config)
 {
-	struct dc_hw_display *display = &hw->display[id];
+	struct dc_hw_display *display = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	display = &hw->display[id];
 
 	if (display)
 		display->config_status = config;
@@ -1400,10 +1532,26 @@ void dc_hw_config_display_status(struct dc_hw *hw, u8 id, bool config)
 
 void dc_hw_config_wb_status(struct dc_hw *hw, u8 id, bool config)
 {
-	struct dc_hw_wb *wb = &hw->wb[id];
+	struct dc_hw_wb *wb = NULL;
+
+	if (!hw || !hw->info || id >= hw->info->wb_num)
+		return;
+
+	wb = &hw->wb[id];
 
 	if (wb)
 		wb->config_status = config;
+}
+
+#define FORCE_BE_CSR_RD_CNT 30
+void dc_hw_force_be_csr_read(struct dc_hw *hw)
+{
+	/* see: b/459367742#comment11 */
+	static const u32 read_addr = DCREG_POST_PROCESS_OUT_Address;
+	int i;
+
+	for (i = 0; i < FORCE_BE_CSR_RD_CNT; ++i)
+		dc_read_immediate(hw, read_addr);
 }
 
 void dc_hw_enable_clock_domain_iso(struct dc_hw *hw, bool enable)
@@ -1420,9 +1568,14 @@ void dc_hw_enable_clock_domain_iso(struct dc_hw *hw, bool enable)
 
 void dc_hw_enable_frame_irqs(struct dc_hw *hw, u8 id, bool enable)
 {
-	u32 config = 0, output_id = hw->display[id].output_id;
+	u32 config = 0, output_id = 0;
 	u32 i = 0;
 	unsigned long flags;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	output_id = hw->display[id].output_id;
 
 	/* DCREG_BE_INTR_ENABLE/1 is accessed from multiple context */
 	spin_lock_irqsave(&hw->be_irq_slock, flags);
@@ -1481,11 +1634,18 @@ void dc_hw_enable_frame_irqs(struct dc_hw *hw, u8 id, bool enable)
 
 void dc_hw_enable_vblank_irqs(struct dc_hw *hw, u8 id, bool enable)
 {
-	u32 config = 0, output_id = hw->display[id].output_id;
-	struct dc_hw_display *display = &hw->display[id];
-	bool set_output_start = enable && is_display_cmd_sw_trigger(display);
+	u32 config = 0, output_id = 0;
+	struct dc_hw_display *display = NULL;
+	bool set_output_start = false;
 	u32 i = 0;
 	unsigned long flags;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	output_id = hw->display[id].output_id;
+	display = &hw->display[id];
+	set_output_start = enable && is_display_cmd_sw_trigger(display);
 
 	/* DCREG_BE_INTR_ENABLE/1 is accessed from multiple context */
 	spin_lock_irqsave(&hw->be_irq_slock, flags);
@@ -1591,9 +1751,14 @@ u32 dc_hw_get_vblank_count(struct dc_hw *hw, u8 id)
 void dc_hw_enable_underrun_interrupt(struct dc_hw *hw, u8 id, bool enable)
 {
 	u32 config = 0;
-	u32 output_id = hw->display[id].output_id;
+	u32 output_id = 0;
 	u32 i = 0;
 	unsigned long flags;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	output_id = hw->display[id].output_id;
 
 	/* DCREG_BE_INTR_ENABLE/1 is access from multiple context */
 	spin_lock_irqsave(&hw->be_irq_slock, flags);
@@ -1637,7 +1802,12 @@ void dc_hw_enable_underrun_interrupt(struct dc_hw *hw, u8 id, bool enable)
 void dc_hw_clear_underrun_interrupt(struct dc_hw *hw, u8 id)
 {
 	u32 config = 0, i = 0;
-	u8 output_id = hw->display[id].output_id;
+	u8 output_id = 0;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	output_id = hw->display[id].output_id;
 
 	for (i = 0; i < 4; i++) {
 		if (hw->intr_dest & BIT(i)) {
@@ -1672,7 +1842,12 @@ void dc_hw_clear_underrun_interrupt(struct dc_hw *hw, u8 id)
 static void dc_hw_clear_start_interrupt(struct dc_hw *hw, u8 id)
 {
 	u32 config = 0, i = 0;
-	u8 output_id = hw->display[id].output_id;
+	u8 output_id = 0;
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
+	output_id = hw->display[id].output_id;
 
 	for (i = 0; i < 4; i++) {
 		if (hw->intr_dest & BIT(i)) {
@@ -2111,102 +2286,20 @@ void dc_hw_set_plane_pattern(struct dc_hw *hw, u8 hw_id, struct dc_hw_pattern *p
 	}
 }
 
-void dc_hw_set_plane_crc(struct dc_hw *hw, u8 id, struct dc_hw_crc *crc)
+void dc_hw_clear_display_pattern(struct dc_hw *hw, u8 id, struct dc_hw_pattern *pattern)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
-	u8 hw_id = 0;
-	u32 config = 0;
+	u32 hw_id = hw->info->displays[id].id;
+	u32 output_id = hw->display[id].output_id;
+	u32 offset = _get_display_tp_offset(hw_id, output_id, pattern->pos);
 
-	hw_id = dc_hw_get_plane_id(id, hw);
-
-	memcpy(&plane->crc, crc, sizeof(*crc));
-
-	config = dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, CRC_START_Address));
-	config = VS_SET_FIELD(config, DCREG_LAYER0_CRC_START, START, crc->enable);
-
-	dc_write_immediate(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, CRC_START_Address), config);
-
-	if (!crc->enable)
-		return;
-
-	switch (crc->pos) {
-	case VS_PLANE_CRC_DFC:
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, DFC_ALPHA_CRC_SEED_Address),
-				   crc->seed.a);
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, DFC_RED_CRC_SEED_Address),
-				   crc->seed.r);
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, DFC_GREEN_CRC_SEED_Address),
-				   crc->seed.g);
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, DFC_BLUE_CRC_SEED_Address),
-				   crc->seed.b);
-		break;
-	case VS_PLANE_CRC_HDR:
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, HDR_ALPHA_CRC_SEED_Address),
-				   crc->seed.a);
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, HDR_RED_CRC_SEED_Address),
-				   crc->seed.r);
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, HDR_GREEN_CRC_SEED_Address),
-				   crc->seed.g);
-		dc_write_immediate(hw,
-				   VS_SET_FE_FIELD(DCREG_LAYER, hw_id, HDR_BLUE_CRC_SEED_Address),
-				   crc->seed.b);
-		break;
-	default:
-		break;
-	}
+	dc_write(hw, DCREG_SH_PANEL0_BLEND_TP_ENABLE_Address + offset, 0);
 }
 
-void dc_hw_get_plane_crc(struct dc_hw *hw, u8 id, struct dc_hw_crc *crc)
+void dc_hw_set_display_pattern(struct dc_hw *hw, u8 id, struct dc_hw_pattern *pattern)
 {
-	struct dc_hw_plane *plane = &hw->plane[id];
-	u8 hw_id = dc_hw_get_plane_id(id, hw);
-
-	switch (plane->crc.pos) {
-	case VS_PLANE_CRC_DFC:
-		plane->crc.result.a = dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id,
-								  DFC_ALPHA_CRC_VALUE_Address));
-		plane->crc.result.r =
-			dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, DFC_RED_CRC_VALUE_Address));
-		plane->crc.result.g = dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id,
-								  DFC_GREEN_CRC_VALUE_Address));
-		plane->crc.result.b = dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id,
-								  DFC_BLUE_CRC_VALUE_Address));
-		break;
-	case VS_PLANE_CRC_HDR:
-		plane->crc.result.a = dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id,
-								  HDR_ALPHA_CRC_VALUE_Address));
-		plane->crc.result.r =
-			dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, HDR_RED_CRC_VALUE_Address));
-		plane->crc.result.g = dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id,
-								  HDR_GREEN_CRC_VALUE_Address));
-		plane->crc.result.b = dc_read(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id,
-								  HDR_BLUE_CRC_VALUE_Address));
-		break;
-	default:
-		break;
-	}
-
-	memcpy(&crc->result, &plane->crc.result, sizeof(plane->crc.result));
-}
-
-void dc_hw_get_plane_crc_config(struct dc_hw *hw, u8 id, struct dc_hw_crc *crc)
-{
-	struct dc_hw_plane *plane = &hw->plane[id];
-
-	if (plane && crc)
-		memcpy(crc, &plane->crc, sizeof(plane->crc));
-}
-
-void dc_hw_set_display_pattern(struct dc_hw *hw, u8 hw_id, struct dc_hw_pattern *pattern)
-{
-	u32 offset = _get_display_tp_offset(hw_id, pattern->pos);
+	u32 hw_id = hw->info->displays[id].id;
+	u32 output_id = hw->display[id].output_id;
+	u32 offset = _get_display_tp_offset(hw_id, output_id, pattern->pos);
 
 	dc_write(hw, DCREG_SH_PANEL0_BLEND_TP_ENABLE_Address + offset, pattern->enable);
 
@@ -2265,511 +2358,6 @@ void dc_hw_set_display_pattern(struct dc_hw *hw, u8 hw_id, struct dc_hw_pattern 
 	default:
 		break;
 	}
-}
-
-void dc_hw_set_display_crc(struct dc_hw *hw, u8 hw_id, struct dc_hw_disp_crc *crc)
-{
-	struct dc_hw_display *display = &hw->display[hw_id];
-	u32 config = 0;
-
-	memcpy(&display->crc, crc, sizeof(*crc));
-
-	switch (hw_id) {
-	case HW_DISPLAY_0:
-	case HW_DISPLAY_1:
-	case HW_DISPLAY_2:
-	case HW_DISPLAY_3:
-		switch (crc->pos) {
-		case VS_DISP_CRC_BLD:
-		case VS_DISP_POST_PROC:
-			if (!hw->info->crc_roi) {
-				config = dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-									CRC_START_Address));
-				config = VS_SET_FIELD(config, DCREG_PANEL0_CRC_START, START,
-						      crc->enable);
-
-				dc_write_immediate(hw,
-						   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-								      CRC_START_Address),
-						   config);
-			} else {
-				config = dc_read(hw, VS_SET_PANEL_FIELD(DCREG_SH_PATH, hw_id,
-									CRC_ENABLE_Address));
-				config = VS_SET_FIELD(config, DCREG_SH_PATH0_CRC_ENABLE, ENABLE,
-						      crc->enable);
-
-				dc_write(hw,
-					 VS_SET_PANEL_FIELD(DCREG_SH_PATH, hw_id,
-							    CRC_ENABLE_Address),
-					 config);
-			}
-			break;
-		case VS_DISP_CRC_OFIFO_IN:
-		case VS_DISP_CRC_OFIFO_OUT:
-			config = dc_read(hw, DCREG_OFIFO_CRC_START_Address);
-			config = VS_SET_FIELD(config, DCREG_OFIFO_CRC_START, START, crc->enable);
-			dc_write_immediate(hw, DCREG_OFIFO_CRC_START_Address, config);
-			break;
-		case VS_DISP_CRC_WB:
-			config = dc_read(hw, DCREG_WRITE_BACK_CRC_START_Address);
-			config = VS_SET_FIELD(config, DCREG_WRITE_BACK_CRC_START, START,
-					      crc->enable);
-			dc_write_immediate(hw, DCREG_WRITE_BACK_CRC_START_Address, config);
-			break;
-		default:
-			break;
-		}
-		break;
-
-	case HW_DISPLAY_4:
-		config = dc_read(hw, DCREG_WRITE_BACK_CRC_START_Address);
-		config = VS_SET_FIELD(config, DCREG_WRITE_BACK_CRC_START, START, crc->enable);
-		dc_write_immediate(hw, DCREG_WRITE_BACK_CRC_START_Address, config);
-		break;
-
-	default:
-		break;
-	}
-
-	if (!crc->enable)
-		return;
-
-	switch (crc->pos) {
-	case VS_DISP_CRC_BLD:
-		if (!hw->info->crc_roi) {
-			switch (hw_id) {
-			case HW_DISPLAY_0:
-			case HW_DISPLAY_1:
-			case HW_DISPLAY_2:
-			case HW_DISPLAY_3:
-				dc_write_immediate(hw,
-						   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-								      BLEND_ALPHA_CRC_SEED_Address),
-						   crc->seed[0].a);
-				dc_write_immediate(hw,
-						   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-								      BLEND_RED_CRC_SEED_Address),
-						   crc->seed[0].r);
-				dc_write_immediate(hw,
-						   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-								      BLEND_GREEN_CRC_SEED_Address),
-						   crc->seed[0].g);
-				dc_write_immediate(hw,
-						   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-								      BLEND_BLUE_CRC_SEED_Address),
-						   crc->seed[0].b);
-				break;
-			case HW_DISPLAY_4:
-				dc_write_immediate(hw, DCREG_WB_BLEND_ALPHA_CRC_SEED_Address,
-						   crc->seed[0].a);
-				dc_write_immediate(hw, DCREG_WB_BLEND_RED_CRC_SEED_Address,
-						   crc->seed[0].r);
-				dc_write_immediate(hw, DCREG_WB_BLEND_GREEN_CRC_SEED_Address,
-						   crc->seed[0].g);
-				dc_write_immediate(hw, DCREG_WB_BLEND_BLUE_CRC_SEED_Address,
-						   crc->seed[0].b);
-				break;
-			default:
-				break;
-			}
-		} else {
-			switch (hw_id) {
-			case HW_DISPLAY_0:
-			case HW_DISPLAY_1:
-			case HW_DISPLAY_2:
-			case HW_DISPLAY_3:
-				dc_write_immediate(hw,
-						   VS_SET_PANEL_FIELD(DCREG_SH_BLEND, hw_id,
-								      PANEL_CRC_SEED_Address),
-						   crc->seed[0].a);
-				break;
-			case HW_DISPLAY_4:
-				dc_write_immediate(hw, DCREG_WB_BLEND_ALPHA_CRC_SEED_Address,
-						   crc->seed[0].a);
-				dc_write_immediate(hw, DCREG_WB_BLEND_RED_CRC_SEED_Address,
-						   crc->seed[0].r);
-				dc_write_immediate(hw, DCREG_WB_BLEND_GREEN_CRC_SEED_Address,
-						   crc->seed[0].g);
-				dc_write_immediate(hw, DCREG_WB_BLEND_BLUE_CRC_SEED_Address,
-						   crc->seed[0].b);
-				break;
-			default:
-				break;
-			}
-		}
-		break;
-
-	case VS_DISP_POST_PROC:
-		if (!hw->info->crc_roi) {
-			switch (hw_id) {
-			case HW_DISPLAY_0:
-			case HW_DISPLAY_1:
-				dc_write_immediate(hw,
-						   VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-									RCD_ALPHA_CRC_SEED_Address),
-						   crc->seed[0].a);
-				dc_write_immediate(hw,
-						   VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-									RCD_RED_CRC_SEED_Address),
-						   crc->seed[0].r);
-				dc_write_immediate(hw,
-						   VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-									RCD_GREEN_CRC_SEED_Address),
-						   crc->seed[0].g);
-				dc_write_immediate(hw,
-						   VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-									RCD_BLUE_CRC_SEED_Address),
-						   crc->seed[0].b);
-				break;
-			case HW_DISPLAY_2:
-			case HW_DISPLAY_3:
-				dc_write_immediate(
-					hw,
-					VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-							     MATRIX_ALPHA_CRC_SEED_Address),
-					crc->seed[0].a);
-				dc_write_immediate(
-					hw,
-					VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-							     MATRIX_RED_CRC_SEED_Address),
-					crc->seed[0].r);
-				dc_write_immediate(
-					hw,
-					VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-							     MATRIX_GREEN_CRC_SEED_Address),
-					crc->seed[0].g);
-				dc_write_immediate(
-					hw,
-					VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-							     MATRIX_BLUE_CRC_SEED_Address),
-					crc->seed[0].b);
-				break;
-			default:
-				break;
-			}
-		} else {
-			dc_write(hw,
-				 VS_SET_PANEL_FIELD(DCREG_SH_OUTCTRL, hw_id,
-						    PANEL_CRC_SEED_Address),
-				 crc->seed[0].a);
-		}
-		break;
-
-	case VS_DISP_CRC_OFIFO_IN:
-		switch (hw_id) {
-		case HW_DISPLAY_0:
-		case HW_DISPLAY_1:
-		case HW_DISPLAY_2:
-		case HW_DISPLAY_3:
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_INPUT_ALPHA_CRC_SEED_Address),
-					   crc->seed[0].a);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_INPUT_RED_CRC_SEED_Address),
-					   crc->seed[0].r);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_INPUT_GREEN_CRC_SEED_Address),
-					   crc->seed[0].g);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_INPUT_BLUE_CRC_SEED_Address),
-					   crc->seed[0].b);
-			break;
-		default:
-			break;
-		}
-		break;
-
-	case VS_DISP_CRC_OFIFO_OUT:
-		switch (hw_id) {
-		case HW_DISPLAY_0:
-		case HW_DISPLAY_1:
-		case HW_DISPLAY_2:
-		case HW_DISPLAY_3:
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_ALPHA0_CRC_SEED_Address),
-					   crc->seed[0].a);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_RED0_CRC_SEED_Address),
-					   crc->seed[0].r);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_GREEN0_CRC_SEED_Address),
-					   crc->seed[0].g);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_BLUE0_CRC_SEED_Address),
-					   crc->seed[0].b);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_ALPHA1_CRC_SEED_Address),
-					   crc->seed[1].a);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_RED1_CRC_SEED_Address),
-					   crc->seed[1].r);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_GREEN1_CRC_SEED_Address),
-					   crc->seed[1].g);
-			dc_write_immediate(hw,
-					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							      OFIFO_BLUE1_CRC_SEED_Address),
-					   crc->seed[1].b);
-			break;
-		default:
-			break;
-		}
-		break;
-
-	case VS_DISP_CRC_WB:
-		switch (hw_id) {
-		case HW_DISPLAY_0:
-		case HW_DISPLAY_1:
-		case HW_DISPLAY_2:
-		case HW_DISPLAY_3:
-			dc_write_immediate(hw,
-					   VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-							       DATA0_CRC_SEED_Address),
-					   crc->seed[0].a);
-			dc_write_immediate(hw,
-					   VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-							       DATA1_CRC_SEED_Address),
-					   crc->seed[0].r);
-			dc_write_immediate(hw,
-					   VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-							       DATA2_CRC_SEED_Address),
-					   crc->seed[0].g);
-			dc_write_immediate(hw,
-					   VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-							       DATA3_CRC_SEED_Address),
-					   crc->seed[0].b);
-			break;
-		case HW_DISPLAY_4:
-			dc_write_immediate(hw, DCREG_WB_BLEND_WDMA_DATA0_CRC_SEED_Address,
-					   crc->seed[0].a);
-			dc_write_immediate(hw, DCREG_WB_BLEND_WDMA_DATA1_CRC_SEED_Address,
-					   crc->seed[0].r);
-			dc_write_immediate(hw, DCREG_WB_BLEND_WDMA_DATA2_CRC_SEED_Address,
-					   crc->seed[0].g);
-			dc_write(hw, DCREG_WB_BLEND_WDMA_DATA3_CRC_SEED_Address, crc->seed[0].b);
-			break;
-		default:
-			break;
-		}
-		break;
-
-	default:
-		break;
-	}
-}
-
-void dc_hw_get_display_crc(struct dc_hw *hw, u8 hw_id, struct dc_hw_disp_crc *crc)
-{
-	switch (crc->pos) {
-	case VS_DISP_CRC_BLD:
-		if (!hw->info->crc_roi) {
-			switch (hw_id) {
-			case HW_DISPLAY_0:
-			case HW_DISPLAY_1:
-			case HW_DISPLAY_2:
-			case HW_DISPLAY_3:
-				crc->result[0].a = dc_read(
-					hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       BLEND_ALPHA_CRC_VALUE_Address));
-				crc->result[0].r = dc_read(
-					hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       BLEND_RED_CRC_VALUE_Address));
-				crc->result[0].g = dc_read(
-					hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       BLEND_GREEN_CRC_VALUE_Address));
-				crc->result[0].b = dc_read(
-					hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       BLEND_BLUE_CRC_VALUE_Address));
-				break;
-			case HW_DISPLAY_4:
-				crc->result[0].a =
-					dc_read(hw, DCREG_WB_BLEND_ALPHA_CRC_VALUE_Address);
-				crc->result[0].r =
-					dc_read(hw, DCREG_WB_BLEND_RED_CRC_VALUE_Address);
-				crc->result[0].g =
-					dc_read(hw, DCREG_WB_BLEND_GREEN_CRC_VALUE_Address);
-				crc->result[0].b =
-					dc_read(hw, DCREG_WB_BLEND_BLUE_CRC_VALUE_Address);
-				break;
-			default:
-				break;
-			}
-		} else {
-			switch (hw_id) {
-			case HW_DISPLAY_0:
-			case HW_DISPLAY_1:
-			case HW_DISPLAY_2:
-			case HW_DISPLAY_3:
-				crc->result[0].a =
-					dc_read(hw, VS_SET_PANEL_FIELD(DCREG_SH_BLEND, hw_id,
-								       PANEL_CRC_VALUE_Address));
-				break;
-			case HW_DISPLAY_4:
-				crc->result[0].a =
-					dc_read(hw, DCREG_WB_BLEND_ALPHA_CRC_VALUE_Address);
-				crc->result[0].r =
-					dc_read(hw, DCREG_WB_BLEND_RED_CRC_VALUE_Address);
-				crc->result[0].g =
-					dc_read(hw, DCREG_WB_BLEND_GREEN_CRC_VALUE_Address);
-				crc->result[0].b =
-					dc_read(hw, DCREG_WB_BLEND_BLUE_CRC_VALUE_Address);
-				break;
-			default:
-				break;
-			}
-		}
-		break;
-
-	case VS_DISP_POST_PROC:
-		if (!hw->info->crc_roi) {
-			switch (hw_id) {
-			case HW_DISPLAY_0:
-			case HW_DISPLAY_1:
-				crc->result[0].a = dc_read(
-					hw, VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-								 RCD_ALPHA_CRC_VALUE_Address));
-				crc->result[0].r = dc_read(
-					hw, VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-								 RCD_RED_CRC_VALUE_Address));
-				crc->result[0].g = dc_read(
-					hw, VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-								 RCD_GREEN_CRC_VALUE_Address));
-				crc->result[0].b = dc_read(
-					hw, VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
-								 RCD_BLUE_CRC_VALUE_Address));
-				break;
-			case HW_DISPLAY_2:
-			case HW_DISPLAY_3:
-				crc->result[0].a = dc_read(
-					hw, VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-								 MATRIX_ALPHA_CRC_VALUE_Address));
-				crc->result[0].r = dc_read(
-					hw, VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-								 MATRIX_RED_CRC_VALUE_Address));
-				crc->result[0].g = dc_read(
-					hw, VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-								 MATRIX_GREEN_CRC_VALUE_Address));
-				crc->result[0].b = dc_read(
-					hw, VS_SET_PANEL23_FIELD(DCREG_PANEL, hw_id,
-								 MATRIX_BLUE_CRC_VALUE_Address));
-				break;
-			default:
-				break;
-			}
-		} else {
-			crc->result[0].a = dc_read(hw, VS_SET_PANEL_FIELD(DCREG_SH_OUTCTRL, hw_id,
-									  PANEL_CRC_VALUE_Address));
-		}
-		break;
-
-	case VS_DISP_CRC_OFIFO_IN:
-		switch (hw_id) {
-		case HW_DISPLAY_0:
-		case HW_DISPLAY_1:
-		case HW_DISPLAY_2:
-		case HW_DISPLAY_3:
-			crc->result[0].a = dc_read(
-				hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-						       OFIFO_INPUT_ALPHA_CRC_VALUE_Address));
-			crc->result[0].r =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_INPUT_RED_CRC_VALUE_Address));
-			crc->result[0].g = dc_read(
-				hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-						       OFIFO_INPUT_GREEN_CRC_VALUE_Address));
-			crc->result[0].b =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_INPUT_BLUE_CRC_VALUE_Address));
-			break;
-		default:
-			break;
-		}
-		break;
-
-	case VS_DISP_CRC_OFIFO_OUT:
-		switch (hw_id) {
-		case HW_DISPLAY_0:
-		case HW_DISPLAY_1:
-		case HW_DISPLAY_2:
-		case HW_DISPLAY_3:
-			crc->result[0].a =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_ALPHA0_CRC_VALUE_Address));
-			crc->result[0].r =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_RED0_CRC_VALUE_Address));
-			crc->result[0].g =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_GREEN0_CRC_VALUE_Address));
-			crc->result[0].b =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_BLUE0_CRC_VALUE_Address));
-			crc->result[1].a =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_ALPHA1_CRC_VALUE_Address));
-			crc->result[1].r =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_RED1_CRC_VALUE_Address));
-			crc->result[1].g =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_GREEN1_CRC_VALUE_Address));
-			crc->result[1].b =
-				dc_read(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id,
-							       OFIFO_BLUE1_CRC_VALUE_Address));
-			break;
-		default:
-			break;
-		}
-		break;
-
-	case VS_DISP_CRC_WB:
-		switch (hw_id) {
-		case HW_DISPLAY_0:
-		case HW_DISPLAY_1:
-		case HW_DISPLAY_2:
-		case HW_DISPLAY_3:
-			crc->result[0].a =
-				dc_read(hw, VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-								DATA0_CRC_VALUE_Address));
-			crc->result[0].r = dc_read(hw, VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-									   DATA1_CRC_SEED_Address));
-			crc->result[0].g = dc_read(hw, VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-									   DATA2_CRC_SEED_Address));
-			crc->result[0].b = dc_read(hw, VS_SET_POSTWB_FIELD(DCREG_WB_WDMA, hw_id,
-									   DATA3_CRC_SEED_Address));
-			break;
-		case HW_DISPLAY_4:
-			crc->result[0].a = dc_read(hw, DCREG_WB_BLEND_WDMA_DATA0_CRC_VALUE_Address);
-			crc->result[0].r = dc_read(hw, DCREG_WB_BLEND_WDMA_DATA1_CRC_VALUE_Address);
-			crc->result[0].g = dc_read(hw, DCREG_WB_BLEND_WDMA_DATA2_CRC_VALUE_Address);
-			crc->result[0].b = dc_read(hw, DCREG_WB_BLEND_WDMA_DATA3_CRC_VALUE_Address);
-			break;
-		default:
-			break;
-		}
-		break;
-	default:
-		break;
-	}
-}
-
-void dc_hw_get_display_crc_config(struct dc_hw *hw, u8 id, struct dc_hw_disp_crc *crc)
-{
-	struct dc_hw_display *display = &hw->display[id];
-
-	if (display && crc)
-		memcpy(crc, &display->crc, sizeof(display->crc));
 }
 
 #endif /* CONFIG_DEBUG_FS */
@@ -2847,6 +2435,15 @@ void dc_hw_enable_shadow_register(struct dc_hw *hw, u8 display_id, bool enable)
 				   VS_SET_PANEL_FIELD(DCREG_OUTPUT, hw->display[i].output_id,
 						      CONFIG_Address),
 				   VS_SET_FIELD(config, DCREG_OUTPUT0_CONFIG, REG_SWITCH, enable));
+	}
+
+	/* for writeback interfaces */
+	for (i = 0; i < hw->info->wb_num; i++) {
+		if (!hw->wb[i].config_status || hw->wb[i].fb.display_id != display_id)
+			continue;
+
+		hw_id = hw->info->write_back[i].id;
+		hw->sub_func->wb_reg_switch(hw, hw_id, enable);
 	}
 }
 
@@ -3382,8 +2979,11 @@ void dc_hw_disable_trigger(struct dc_hw *hw, u8 id)
 {
 	u8 hw_id = 0, output_id = 0;
 
-	hw_id = hw->info->displays[id].id;
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
+
 	output_id = hw->display[id].output_id;
+	hw_id = hw->info->displays[id].id;
 
 	if (hw_id >= HW_DISPLAY_4)
 		dc_write_immediate(hw, DCREG_BLD_WB_START_Address, false);
@@ -3396,6 +2996,9 @@ void dc_hw_hard_reset_output_regs(struct dc_hw *hw, u8 id)
 	u8 output_id = 0;
 	u32 config;
 	u32 addr = VS_SET_OUTPUT_FIELD(DCREG_OUTPUT, output_id, CONFIG_Address);
+
+	if (!hw || !hw->info || id >= hw->info->display_num)
+		return;
 
 	output_id = hw->display[id].output_id;
 	config = dc_read_immediate(hw, addr);
@@ -3641,6 +3244,7 @@ static void toggle_secure(struct dc_hw *hw, u8 layer, bool secure)
 		set_bit(plane_info->id, hw->secured_layers_mask);
 	mutex_unlock(&hw->secure_lock);
 
+	trace_disp_trusty_protect_ip(layer, sid, hw->secured_layers_mask, secure);
 	ret = trusty_protect_ip(&(dc->tzprot_pdev->dev), sid, secure);
 	if (ret)
 		dev_err(dev,
@@ -5026,8 +4630,7 @@ static void display_set_ltm_hist_get(struct dc_hw *hw, u8 hw_id,
 
 static void display_set_blur_mask(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
 {
-	trace_config_hw_display_feature("BLUR", hw_id, "en:%d address:%#lx stride:%d", fb->enable,
-					fb->address, fb->stride);
+	trace_config_hw_display_fb_mask("BLUR_MASK", hw_id, fb);
 	/* commit blur Mask data address/stride */
 	dc_write(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, BLUR_MASK_DATA_ADDRESS_Address),
 		 (u32)(fb->address & 0xFFFFFFFF));
@@ -5044,8 +4647,7 @@ static void display_set_blur_mask(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *f
 
 static void display_set_brightness_mask(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
 {
-	trace_config_hw_display_feature("BRIGHTNESS", hw_id, "en:%d address:%#lx stride:%d",
-					fb->enable, fb->address, fb->stride);
+	trace_config_hw_display_fb_mask("BRIGHTNESS_MASK", hw_id, fb);
 	/* commit brightness Mask data address/stride */
 	dc_write(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, BRIGHT_MASK_DATA_ADDRESS_Address),
 		 (u32)(fb->address & 0xFFFFFFFF));
@@ -5321,10 +4923,9 @@ static void wb_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
 	}
 
 	if (hw_id < HW_BLEND_WB) {
-		if ((hw_id == HW_WB_1) && hw->wb[HW_WB_0].fb.enable)
-			dc_write_immediate(hw, DCREG_POST_PRO_WB_PATH_NUM_Address,
-					   DCREG_POST_PRO_WB_PATH_NUM_VALUE_WB_TWO_PATH);
-
+		/* TODO (b/436294486) Always program the WB in two path mode */
+		dc_write_immediate(hw, DCREG_POST_PRO_WB_PATH_NUM_Address,
+				   DCREG_POST_PRO_WB_PATH_NUM_VALUE_WB_TWO_PATH);
 		dc_write(hw, VS_SET_POSTWB_FIELD(DCREG_SH_POST_PRO_WB, hw_id, DEST_STRIDE_Address),
 			 fb->stride);
 		dc_write(hw, VS_SET_POSTWB_FIELD(DCREG_SH_POST_PRO_WB, hw_id, DEST_ADDRESS_Address),
@@ -5682,34 +5283,50 @@ static void display_commit(struct dc_hw *hw, u8 display_id)
 	}
 }
 
-static void wb_commit(struct dc_hw *hw, u8 hw_id, struct dc_hw_wb *wb)
+static void wb_commit(struct dc_hw *hw, u8 display_id)
 {
-	u32 j = 0;
+	struct dc_hw_wb *wb;
+	u8 hw_id, wb_num = hw->info->wb_num;
+	u32 i, j;
 
-	hw->sub_func->wb_reg_switch(hw, hw_id, false);
+	for (i = 0; i < wb_num; i++) {
+		wb = &hw->wb[i];
+		hw_id = hw->info->write_back[i].id;
 
-	if (wb->fb.dirty)
-		hw->sub_func->wb_fb(hw, hw_id, &wb->fb);
-	if (wb->r2y.dirty)
-		wb_set_r2y(hw, hw_id, &wb->r2y);
-
-	for (j = 0; j < wb->states.num; j++) {
-		struct vs_dc_property_state *state = &wb->states.items[j];
-
-		if (!state->dirty)
+		if (wb->fb.display_id != display_id)
 			continue;
-		if (!state->proto->config_hw)
+
+		if (!wb->config_status)
 			continue;
-		vs_dc_property_config_hw(hw, hw_id, state);
+
+		/* program dirty properties */
+		if (wb->fb.dirty)
+			hw->sub_func->wb_fb(hw, hw_id, &wb->fb);
+
+		if (wb->r2y.dirty)
+			wb_set_r2y(hw, hw_id, &wb->r2y);
+
+		/* program DC properties */
+		for (j = 0; j < wb->states.num; j++) {
+			struct vs_dc_property_state *state = &wb->states.items[j];
+
+			if (!state->dirty)
+				continue;
+			if (!state->proto->config_hw)
+				continue;
+
+			vs_dc_property_config_hw(hw, hw_id, state);
+		}
+
+		/* always set wb stall */
+		if (wb->info->wb_stall)
+			dc_hw_set_wb_stall(hw, true);
 	}
-	/* TBD */
-
-	hw->sub_func->wb_reg_switch(hw, hw_id, true);
 }
 
 static const struct dc_hw_funcs hw_func = {
 	.set_mode = display_set_mode,
-	.set_wb = wb_commit,
+	.writeback = wb_commit,
 	.plane = plane_commit,
 	.display = display_commit,
 };
@@ -5751,6 +5368,13 @@ void dc_hw_display_commit(struct dc_hw *hw, u8 display_id)
 
 	for (i = 0; i < SW_RESET_NUM; i++)
 		hw->reset_status[i] = false;
+}
+
+void dc_hw_wb_commit(struct dc_hw *hw, u8 display_id)
+{
+	DPU_ATRACE_BEGIN(__func__);
+	hw->func->writeback(hw, display_id);
+	DPU_ATRACE_END(__func__);
 }
 
 /*
@@ -5846,7 +5470,10 @@ const struct dc_hw_plane *vs_dc_hw_get_plane(const struct dc_hw *hw, u32 hw_id)
 {
 	u32 i;
 
-	for (i = 0; i < DC_PLANE_NUM; i++)
+	if (!hw || !hw->info)
+		return NULL;
+
+	for (i = 0; i < hw->info->plane_num; i++)
 		if (hw->plane[i].info->id == hw_id)
 			return &hw->plane[i];
 	return NULL;
@@ -5900,7 +5527,10 @@ const struct dc_hw_wb *vs_dc_hw_get_wb(const struct dc_hw *hw, u32 hw_id)
 {
 	u32 i;
 
-	for (i = 0; i < DC_WB_NUM; i++)
+	if (!hw || !hw->info)
+		return NULL;
+
+	for (i = 0; i < hw->info->wb_num; i++)
 		if (hw->wb[i].info->id == hw_id)
 			return &hw->wb[i];
 	return NULL;
@@ -6419,12 +6049,6 @@ void print_hw_display_hw_hist_rgb(struct seq_file *s, const struct dc_hw_hist_rg
 		   hw_hist_rgb->enable, hw_hist_rgb->dirty);
 }
 
-void print_hw_display_crc(struct seq_file *s, const struct dc_hw_disp_crc *crc, u8 indent)
-{
-	print_tab(s, indent);
-	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d\n", "crc", crc->enable);
-}
-
 void print_hw_display_sram_pool(struct seq_file *s, const struct dc_hw_sram_pool *sram_pool,
 				u8 indent)
 {
@@ -6476,12 +6100,6 @@ void print_hw_plane_lut_3d(struct seq_file *s, const struct dc_hw_block *lut_3d,
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "lut_3d", lut_3d->enable,
 		   lut_3d->dirty);
-}
-
-void print_hw_plane_crc(struct seq_file *s, const struct dc_hw_crc *crc, u8 indent)
-{
-	print_tab(s, indent);
-	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d\n", "crc", crc->enable);
 }
 
 void print_hw_plane_scale(struct seq_file *s, const struct dc_hw_scale *scale, u8 indent)
@@ -6547,7 +6165,6 @@ static void print_display_state(struct seq_file *s, const struct dc_hw_display *
 	print_hw_display_ltm_ds(s, &display->ltm_ds, indent);
 	print_hw_display_hw_hist_chan(s, display->hw_hist_chan, indent);
 	print_hw_display_hw_hist_rgb(s, &display->hw_hist_rgb, indent);
-	print_hw_display_crc(s, &display->crc, indent);
 	print_hw_states(s, &display->states, indent);
 	print_hw_display_sram_pool(s, &display->sram_pool, indent);
 
@@ -6572,7 +6189,6 @@ static void print_plane_state(struct seq_file *s, const struct dc_hw_plane *plan
 	print_hw_plane_std_bld(s, &plane->std_bld, indent);
 	print_hw_plane_y2r(s, &plane->y2r, indent);
 	print_hw_plane_lut_3d(s, &plane->lut_3d, indent);
-	print_hw_plane_crc(s, &plane->crc, indent);
 	print_hw_plane_scale(s, &plane->scale, indent);
 	print_hw_plane_roi(s, &plane->roi, indent);
 	print_hw_plane_clear(s, &plane->clear, indent);

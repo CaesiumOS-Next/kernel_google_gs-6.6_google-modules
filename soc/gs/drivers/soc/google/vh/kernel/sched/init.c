@@ -36,6 +36,8 @@ extern void rvh_set_iowait_pixel_mod(void *data, struct task_struct *p, struct r
 				     int *should_iowait_boost);
 extern void rvh_select_task_rq_rt_pixel_mod(void *data, struct task_struct *p, int prev_cpu,
 					    int sd_flag, int wake_flags, int *new_cpu);
+extern void vh_scheduler_tick_pixel_mod_locked(struct rq *rq);
+extern void vh_scheduler_tick_pixel_mod_nolock(struct rq *rq);
 extern void vh_scheduler_tick_pixel_mod(void *data, struct rq *rq);
 extern void vh_sched_switch_pixel_mod(void *data, bool preempt, struct task_struct *prev,
 				      struct task_struct *next, unsigned int prev_state);
@@ -215,11 +217,18 @@ static enum hrtimer_restart ptick(struct hrtimer *timer)
 	struct rq_flags rf;
 
 	rq_lock(rq, &rf);
+	/* Update stats first */
 	update_rq_clock(rq);
 	rq->curr->sched_class->task_tick(rq, rq->curr, 1);
+	vh_scheduler_tick_pixel_mod_locked(rq);
+
+	/* Then check if we need to push any tasks */
+	if (fair_policy(rq->curr->policy))
+		check_pushable_task(rq->curr, rq);
 	rq_unlock(rq, &rf);
 
-	vh_scheduler_tick_pixel_mod(NULL, rq);
+	/* TODO: maybe we better off raise a softirq and do the work there */
+	vh_scheduler_tick_pixel_mod_nolock(rq);
 
 	hrtimer_forward_now(timer, ns_to_ktime(PTICK_PERIOD_NS));
 
@@ -238,7 +247,7 @@ static void ptick_init(struct rq *rq)
 	vrq->ptick_timer->function = ptick;
 }
 
-static void init_vendor_rt_rq(void)
+static void init_vendor_rq(void)
 {
 	int i;
 	struct vendor_rq_struct *vrq;
@@ -250,6 +259,7 @@ static void init_vendor_rt_rq(void)
 		vrq->iowait_boost = 0;
 		atomic_set(&vrq->num_adpf_tasks, 0);
 		ptick_init(cpu_rq(i));
+		plist_head_init(&vrq->pushable_tasks);
 	}
 }
 
@@ -406,7 +416,7 @@ static int vh_sched_init(void)
 		return ret;
 	}
 
-	init_vendor_rt_rq();
+	init_vendor_rq();
 
 	init_vendor_group_data();
 

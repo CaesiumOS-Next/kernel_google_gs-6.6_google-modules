@@ -1082,8 +1082,16 @@ static int request_pcie_int(struct link_device *ld, struct platform_device *pdev
 	mld->intval_ap2cp_pcie_link_ack = DOORBELL_INT_MASK(modem->mbx->int_ap2cp_pcie_link_ack);
 
 	/* MSI */
+#if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_SOC_GOOGLE)
 	base_irq = s51xx_pcie_request_msi_int(mc->s51xx_pdev, int_num,
 					      mld->pktproc.use_exclusive_irq);
+#else
+	/*
+	 * Magic number 4 is used in earlier project, so we just keep
+	 * that as it is.
+	 */
+	base_irq = s51xx_pcie_request_msi_int(mc->s51xx_pdev, 4, false);
+#endif
 	if (base_irq <= 0) {
 		mc->irq_offset = -1;
 		mif_err("Can't get MSI IRQ!!!\n");
@@ -1117,18 +1125,24 @@ static int request_pcie_int(struct link_device *ld, struct platform_device *pdev
 
 		for (i = 0; i < ppa->num_queue; i++) {
 			struct pktproc_queue *q = ppa->q[i];
-
+#if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE_SOC_GOOGLE)
 			q->irq = base_irq + mc->irq_offset;
 			ret = pci_request_irq(mc->s51xx_pdev, mc->irq_offset, q->irq_handler, NULL,
 					      q, "google-pcie-msi%d", i + 1);
+			mc->irq_offset++;
 
 			if (ret) {
+				mc->irq_offset--;
+#else
+			ret = pcie_register_separated_msi_vector(mc->pcie_ch_num, q->irq_handler,
+								 q, &q->irq);
+			if (ret < 0) {
+#endif
 				mif_err("register_separated_msi_vector for pktproc q[%u] err:%d\n",
 					i, ret);
 				q->irq = 0;
 				return -EIO;
 			}
-			mc->irq_offset++;
 		}
 	}
 #endif

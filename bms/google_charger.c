@@ -97,6 +97,8 @@
 #define MAX_BD_TEMP	500
 #define MIN_BD_TEMP	0
 
+#define MAX_BD_PAUSE_SOC (95)
+
 #define FCC_OF_CDEV_NAME "google,charger"
 #define FCC_CDEV_NAME "fcc"
 #define WLC_OF_CDEV_NAME "google,wlc_charger"
@@ -217,6 +219,7 @@ struct bd_data {
 
 	long long temp_sum;
 	ktime_t time_sum;
+	bool bd_time_sum_paused; /* Pause timer when not charging but not in high soc*/
 
 	int last_voltage;
 	int last_temp;
@@ -1125,14 +1128,17 @@ static int chg_work_is_charging_disabled(struct chg_drv *chg_drv, int capacity)
 	if (!chg_is_custom_enabled(upperbd, lowerbd))
 		goto done;
 
+	/* bypass on disconnection */
+	if (!chg_drv->online && !chg_drv->present)
+		return disable_charging;
+
 	if (chg_drv->lowerbd_reached && upperbd <= capacity) {
 		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, lowerbd_reached=1->0, charging off\n",
 			lowerbd, upperbd, capacity);
 		disable_charging = 1;
 		chg_drv->lowerbd_reached = false;
 		/* ramp-up completion only matters if we are connected to power */
-		if (chg_drv->online || chg_drv->present)
-			chg_drv->first_ramp_done = true;
+		chg_drv->first_ramp_done = true;
 	} else if (!chg_drv->lowerbd_reached && lowerbd < capacity) {
 		pr_info("MSC_CHG lowerbd=%d, upperbd=%d, capacity=%d, charging off\n",
 			lowerbd, upperbd, capacity);
@@ -1630,8 +1636,11 @@ static void bd_reset(struct bd_data *bd_state)
 			    can_resume;
 
 	/* notify google_battery the time to aware reset */
-	if (bd_state->bat_psy)
+	if (bd_state->bat_psy) {
 		GPSY_SET_INT64_PROP(bd_state->bat_psy, GBMS_PROP_BD_TIME_SUM, bd_state->time_sum);
+		GPSY_SET_INT64_PROP(bd_state->bat_psy, GBMS_PROP_BD_TIME_TO_TEMPD,
+				    bd_state->bd_trigger_time - bd_state->time_sum);
+	}
 }
 
 /* Defender */
@@ -1887,6 +1896,53 @@ static int chg_bd_can_reset(struct chg_drv *chg_drv, const ktime_t now,
 	return BD_RESET_NONE;
 }
 
+static bool bd_check_timer_pause(struct chg_drv *chg_drv)
+{
+	const int chg_status = chg_drv->chg_state.f.chg_status;
+	const bool is_not_charging = (chg_status == POWER_SUPPLY_STATUS_NOT_CHARGING);
+	/* To cover Dwell, Retail, LotX_on */
+	const int upperbd = chg_drv->charge_stop_level;
+	const int lowerbd = chg_drv->charge_start_level;
+	const bool is_charge_limit = chg_is_custom_enabled(upperbd, lowerbd);
+
+	bool should_pause = false;
+	bool is_soc_safe = false;
+	bool is_ac_pause = false;
+	int csi_type = CSI_TYPE_UNKNOWN;
+	int soc_raw = 100;
+	int ret;
+
+	soc_raw = GPSY_GET_INT_PROP(chg_drv->bat_psy, GBMS_PROP_CAPACITY_RAW_GDF, &ret);
+	if (ret < 0)
+		return false;
+	is_soc_safe = (soc_raw < MAX_BD_PAUSE_SOC);
+
+	if (chg_drv->csi_type_votable) {
+		csi_type = gvotable_get_current_int_vote(chg_drv->csi_type_votable);
+		is_ac_pause = (is_not_charging && (csi_type == CSI_TYPE_Adaptive));
+	}
+
+	if (is_not_charging && is_soc_safe && (is_ac_pause || is_charge_limit))
+		should_pause = true;
+
+	/* Only print log when state changed */
+	if (should_pause != chg_drv->bd_state.bd_time_sum_paused) {
+		if (should_pause) {
+			chg_drv->bd_state.bd_time_sum_paused = true;
+			pr_info("MSC_BD: Elap timer Paused (%lld). Device not_charging & not in high Soc",
+				chg_drv->bd_state.time_sum);
+		} else {
+			chg_drv->bd_state.bd_time_sum_paused = false;
+			pr_info("MSC_BD: Rseume Elap Timer counting. Device %s %s",
+				chg_status != POWER_SUPPLY_STATUS_NOT_CHARGING
+					? "resume_charging" : " ",
+				soc_raw > MAX_BD_PAUSE_SOC ? "high_Soc" : " ");
+		}
+	}
+
+	return should_pause;
+}
+
 /* bd_state->triggered = 1 when charging needs to be disabled */
 static int bd_update_stats(struct chg_drv *chg_drv, const ktime_t now, bool online,
 			   bool from_bd_work)
@@ -1897,8 +1953,10 @@ static int bd_update_stats(struct chg_drv *chg_drv, const ktime_t now, bool onli
 	const char *log_prefix = (from_bd_work ? "MSC_BD_WORK" : "MSC_BD");
 
 	int ret, vbatt, reset_reason;
+	bool bd_timer_paused;
 	long long temp_avg;
 	unsigned long long elap;
+	ktime_t time_to_tempd;
 	struct bd_last_read_val rv;
 
 	if (!bd_state->enabled)
@@ -1922,12 +1980,14 @@ static int bd_update_stats(struct chg_drv *chg_drv, const ktime_t now, bool onli
 	if (bd_state->last_update == 0)
 		bd_state->last_update = now;
 
-	/*
-	 * b/294978951 time_sum is abnormally large and triggered the TEMP-DEFEND
-	 * add log here if elapse exceed 2 times of schedule time
-	 */
-	elap = now - bd_state->last_update;
-	if (rv.temp >= bd_state->bd_trigger_temp) {
+	bd_timer_paused = bd_check_timer_pause(chg_drv);
+
+	if (rv.temp >= bd_state->bd_trigger_temp && !bd_timer_paused) {
+		elap = now - bd_state->last_update;
+		/*
+		 * b/294978951 time_sum is abnormally large and triggered the TEMP-DEFEND
+		 * add log here if elapse exceed 2 times of schedule time
+		 */
 		if (elap > (CHG_WORK_BD_TRIGGERED_MS / 1000 * 2))
 			gbms_logbuffer_prlog(bd_state->bd_log, LOGLEVEL_INFO, 0, LOGLEVEL_INFO,
 				"%s: longer elap %llu (%llu - %llu), temp=%d, time_sum=%llu, temp_sum=%llu",
@@ -1940,6 +2000,12 @@ static int bd_update_stats(struct chg_drv *chg_drv, const ktime_t now, bool onli
 					  bd_state->time_sum);
 		if (ret < 0)
 			pr_warn("fail to notify time_sum:%lld, ret=%d\n", bd_state->time_sum, ret);
+
+		time_to_tempd = bd_state->bd_trigger_time - bd_state->time_sum;
+		ret = GPSY_SET_INT64_PROP(bd_state->bat_psy, GBMS_PROP_BD_TIME_TO_TEMPD,
+					  time_to_tempd);
+		if (ret < 0)
+			pr_warn("fail to notify time_to_tempd:%lld, ret=%d\n", time_to_tempd, ret);
 	}
 
 	bd_state->last_voltage = vbatt;

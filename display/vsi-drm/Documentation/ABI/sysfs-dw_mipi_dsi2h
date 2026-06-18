@@ -14,3 +14,17 @@ Description:
     value 1: override MIPI output to LP00 during pm_runtime_suspend,
              override MIPI output to generate ULPS exit sequence during
              initialization.
+
+What: /sys/devices/.../dw-dsi/error_irq
+Date: Mar 2026
+Contact: Tai-Hua Tseng <taihua@google.com>
+Description:
+    Fetch various DSI error interrupt events, including DSI MIPI protocol
+    violations, ECC error and SOT sync error.
+
+What: /sys/devices/.../dw-dsi/error_event
+Date: Mar 2026
+Contact: Tai-Hua Tseng <taihua@google.com>
+Description:
+    Fetch various DSI driver error events, including DSI ULPS transition failure,
+    CRI/PRI Busy and DCS read failure.

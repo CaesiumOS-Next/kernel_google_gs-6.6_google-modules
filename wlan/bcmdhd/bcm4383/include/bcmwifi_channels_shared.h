@@ -3,7 +3,7 @@
  * This header file housing the define and function prototype use by
  * both the wl driver, coex fw, tools & Apps.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -45,12 +45,12 @@
  * Returns center channel for a contiguous chanspec and
  * INVCHANNEL for non-contiguous chanspec.
  */
-uint8 wf_chspec_center_channel(chanspec_t chspec);
+uint8 wf_chspec_center_channel(chanspec_t chspec) BCMCONSTFN;
 #else /* BCMWIFI_BW320MHZ */
 #define wf_chspec_center_channel(chspec) CHSPEC_CHANNEL(chspec)
 #endif /* BCMWIFI_BW320MHZ */
 
-uint8 wf_chspec_6G_id320_to_ch(uint8 chan_320MHz_id);
-uint8 wf_chspec_320_id2cch(chanspec_t chanspec);
+uint8 wf_chspec_6G_id320_to_ch(uint8 chan_320MHz_id) BCMCONSTFN;
+uint8 wf_chspec_320_id2cch(chanspec_t chanspec) BCMCONSTFN;
 
 #endif	/* _bcmwifi_channels_shared_h_ */

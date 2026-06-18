@@ -16,11 +16,11 @@
 #include <linux/trusty/trusty_ipc.h>
 
 /* PowerVR */
-#include <pvrsrvkm/devicemem_utils.h>
-#include <pvrsrvkm/pmr.h>
-#include <pvrsrvkm/rgxfwimageutils.h>
-#include <pvrsrvkm/rgxfwutils.h>
-#include <pvrsrvkm/volcanic/rgxdevice.h>
+#include <pvrsrvkm/services/shared/include/devicemem_utils.h>
+#include <pvrsrvkm/services/server/include/pmr.h>
+#include <pvrsrvkm/services/server/devices/rgxfwimageutils.h>
+#include <pvrsrvkm/services/server/devices/rgxfwutils.h>
+#include <pvrsrvkm/services/server/devices/volcanic/rgxdevice.h>
 
 #include <trace/hooks/systrace.h>
 
@@ -656,6 +656,7 @@ PVRSRV_ERROR gpu_secure_send_firmware_image(IMG_HANDLE hSysData,
 	/* Start filling in the IPC request */
 	memset(&req, 0, sizeof(req));
 	req.base.command = GPU_SECURE_REQ_SEND_FIRMWARE_IMAGE;
+	req.base.version = GPU_SECURE_REQ_FIRMWARE_VERSION_25_2;
 	req.use_tf_a = GPU_SECURE_TF_A;
 	req.host_page_shift = PAGE_SHIFT;
 
@@ -690,6 +691,16 @@ PVRSRV_ERROR gpu_secure_send_firmware_image(IMG_HANDLE hSysData,
 				psDevInfo->psRGXFWDataMemDesc,
 				NULL,
 				&req.section[GPU_SECURE_SECTION_DATA]);
+		if (PVRSRV_OK != err)
+			goto done;
+	}
+
+	/* Prepare FW section: RODATA */
+	if (psDevInfo->psRGXFWRoDataMemDesc) {
+		err = gpu_secure_prepare_firmware_section(pixel_dev,
+				psDevInfo->psRGXFWRoDataMemDesc,
+				NULL,
+				&req.section[GPU_SECURE_SECTION_RODATA]);
 		if (PVRSRV_OK != err)
 			goto done;
 	}

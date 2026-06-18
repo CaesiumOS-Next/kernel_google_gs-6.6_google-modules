@@ -843,10 +843,8 @@ void max77779_usecase_work(struct work_struct *work)
 		node = bms_usecase_queue_next(bms_uc_data, &iter);
 
 		/* usecase entry data is invalid after this point */
-		mutex_lock(&bms_uc_data->queue_lock);
 		bms_usecase_free_node(bms_uc_data, entry,
 				      !_bms_usecase_meta_async_get(entry->value));
-		mutex_unlock(&bms_uc_data->queue_lock);
 
 		if (from_uc != to_uc)
 			bms_usecase_uc_changed_notify(bms_uc_data, from_uc, to_uc);

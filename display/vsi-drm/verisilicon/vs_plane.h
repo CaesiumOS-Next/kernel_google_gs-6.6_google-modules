@@ -27,7 +27,6 @@ struct vs_plane_funcs {
 	void (*update)(struct device *dev, struct vs_plane *plane);
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	void (*set_pattern)(struct device *dev, struct vs_plane *plane);
-	void (*set_crc)(struct device *dev, struct vs_plane *plane);
 #endif /* CONFIG_DEBUG_FS */
 	void (*disable)(struct device *dev, struct vs_plane *plane);
 	int (*check)(struct device *dev, struct vs_plane *plane, struct drm_plane_state *state);
@@ -46,13 +45,6 @@ struct vs_plane_pattern {
 	u8 mode;
 	u64 color;
 	struct drm_vs_rect rect;
-};
-
-struct vs_plane_crc {
-	bool enable;
-	u8 pos;
-	struct drm_vs_color seed;
-	struct drm_vs_color result;
 };
 
 struct vs_plane_sram_pool {
@@ -76,7 +68,6 @@ struct vs_plane_state {
 	struct drm_plane_state base;
 	struct vs_plane_status status; /* for debugfs */
 	struct vs_plane_pattern pattern; /* for pattern debugfs */
-	struct vs_plane_crc crc; /* for crc debugfs */
 
 	struct drm_property_blob *watermark;
 	struct drm_property_blob *y2r_coef;

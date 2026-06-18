@@ -59,6 +59,12 @@
  *                             &struct fwtp_msg_ring_subscribe.
  * @kFwtpMsgTypeGetRingInfo: Get tracepoint ring info message. Uses
  *                           &struct fwtp_msg_get_ring_info.
+ * @kFwtpMsgTypeGetFilterInfo: Get tracepoint filter info message. Uses
+ *                             &struct fwtp_msg_get_filter_info.
+ * @kFwtpMsgTypeSetFilterConfig: Set tracepoint filter configuration message.
+ *                               Uses &struct fwtp_msg_set_filter_config.
+ * @kFwtpMsgTypeAddTracepoint: Add tracepoint message. Uses
+ *                             &struct fwtp_msg_add_tracepoint.
  */
 enum fwtp_msg_type {
 	kFwtpMsgTypeInvalid = 0,
@@ -68,6 +74,9 @@ enum fwtp_msg_type {
 	kFwtpMsgTypeRingNotify = 4,
 	kFwtpMsgTypeRingSubscribe = 5,
 	kFwtpMsgTypeGetRingInfo = 6,
+	kFwtpMsgTypeGetFilterInfo = 7,
+	kFwtpMsgTypeSetFilterConfig = 8,
+	kFwtpMsgTypeAddTracepoint = 9,
 };
 
 /**
@@ -317,6 +326,109 @@ struct fwtp_msg_ring_subscribe {
 	uint8_t start;
 	uint8_t reserved;
 	uint32_t notify_byte_count;
+} __packed;
+
+/**
+ * DOC: FWTP filters
+ *
+ * FWTP filters may be used to block tracepoints or allow them to pass. In these
+ * messages, filters are referenced using a filter index.
+ *
+ * Information about the filters may be obtained using
+ * &struct fwtp_msg_get_filter_info messages of type
+ * &fwtp_msg_type.kFwtpMsgTypeGetFilterInfo. This information includes the
+ * number of filters and their names.
+ *
+ * Filters may be configured using &struct fwtp_msg_set_filter_config messages
+ * of type &fwtp_msg_type.kFwtpMsgTypeSetFilterConfig.
+ */
+
+/**
+ * struct fwtp_msg_get_filter_info - FWTP get tracepoint filter info message.
+ *
+ * This message may be used to obtain information about filters, including the
+ * total number of filters in @filter_count and the filter names in
+ * @filter_names. The first name returned will be for the filter with the index
+ * specified by @starting_filter_index.
+ *
+ * In the request message, the maximum size of the returned filter names list is
+ * specified by @filter_names_size. In the response, @filter_names_size
+ * specifies the actual size of the filter names list, and @filter_names_count
+ * specifies the number of returned filter names. The @filter_names field
+ * contains the null-terminated filter names concatenated in order.
+ *
+ * The response message also specifies the total size of all null-terminated
+ * filter names in @total_filter_names_size
+ *
+ * @base: Message base.
+ * @filter_count: Total number of filters.
+ * @total_filter_names_size: Total size of all filter names.
+ * @filter_names_size: Size of data in filter names.
+ * @filter_names_count: Number of returned filter names.
+ * @starting_filter_index: Index of first filter info to get.
+ * @filter_names: Table of filter names.
+ */
+struct fwtp_msg_get_filter_info {
+	struct fwtp_msg_base base;
+	uint16_t filter_count;
+	uint16_t total_filter_names_size;
+	uint16_t filter_names_size;
+	uint16_t filter_names_count;
+	uint16_t starting_filter_index;
+	uint8_t filter_names[];
+} __packed;
+
+/**
+ * struct fwtp_msg_filter_config_entry - FWTP tracepoint filter configuration
+ *                                       entry.
+ *
+ * @filter_index: Index of filter to configure.
+ * @blocking: If true, filter should block tracepoints; otherwise, it should not
+ *            block them.
+ */
+struct fwtp_msg_filter_config_entry {
+	uint16_t filter_index;
+	uint8_t blocking;
+} __packed;
+
+/**
+ * struct fwtp_msg_set_filter_config - FWTP set tracepoint filter configuration
+ *                                     message.
+ *
+ * @base: Message base.
+ * @config_count: Number of entries in the filter configuration list.
+ * @config_list: List of filter configuration entries.
+ */
+struct fwtp_msg_set_filter_config {
+	struct fwtp_msg_base base;
+	uint16_t config_count;
+	struct fwtp_msg_filter_config_entry config_list[];
+} __packed;
+
+/**
+ * DOC: FWTP add tracepoint
+ *
+ * FWTP clients may request firmware to generate a tracepoint. This is useful
+ * for verification of other FWTP services.
+ *
+ * Message &struct fwtp_msg_add_tracepoint of type
+ * &fwtp_msg_type.kFwtpMsgTypeAddTracepoint can be used to add tracepoint to
+ * a particular ring specified in &fwtp_msg_add_tracepoint.ring_num. Field
+ * &fwtp_msg_add_tracepoint.payload provides value that firmware can use in
+ * generated tracepoint.
+ */
+
+/**
+ * struct fwtp_msg_add_tracepoint - FWTP add tracepoint message.
+ *
+ * @base: Message base.
+ * @ring_num: Ring number to add tracepoint to.
+ * @payload: Payload for tracepoint.
+ */
+struct fwtp_msg_add_tracepoint {
+	struct fwtp_msg_base base;
+	uint16_t ring_num;
+	uint32_t payload;
 } __packed;
 
 #endif /* __FWTP_PROTOCOL_H */

@@ -7,7 +7,7 @@
 #include <linux/of.h>
 #include <linux/timekeeping.h>
 
-#include <pvrsrvkm/rgxpower.h>
+#include <pvrsrvkm/services/server/devices/rgxpower.h>
 #include <customer/volcanic/customer_dvfs.h>
 
 #include "sysconfig.h"
@@ -42,8 +42,7 @@ static int set_mba(void *data, u64 val)
 	PPVRSRV_DEVICE_NODE dev_node = pixel_dev->dev_config->psDevNode;
 	int err;
 
-	err = PVRSRVPowerLock(dev_node);
-	PVR_LOG_GOTO_IF_ERROR(err, "failed to lock", exit);
+	PVRSRVPowerLockWrite(dev_node);
 
 	/* wake up the GPU */
 	err = PVRSRVSetDevicePowerStateKM(dev_node, PVRSRV_DEV_POWER_STATE_ON,
@@ -53,8 +52,7 @@ static int set_mba(void *data, u64 val)
 	mba_signal(pixel_dev, (u32)val);
 
 exit_unlock:
-	PVRSRVPowerUnlock(dev_node);
-exit:
+	PVRSRVPowerUnlockWrite(dev_node);
 	return err;
 }
 DEFINE_DEBUGFS_ATTRIBUTE_SIGNED(fops_mba, NULL, set_mba, "%llu\n");
@@ -66,8 +64,7 @@ static int set_fw_dvfs(void *data, u64 freq)
 	PVRSRV_RGXDEV_INFO *info = dev_node->pvDevice;
 	int err;
 
-	err = PVRSRVPowerLock(dev_node);
-	PVR_LOG_GOTO_IF_ERROR(err, "failed to lock", exit);
+	PVRSRVPowerLockWrite(dev_node);
 
 	/* wake up the GPU */
 	err = PVRSRVSetDevicePowerStateKM(dev_node, PVRSRV_DEV_POWER_STATE_ON,
@@ -78,8 +75,7 @@ static int set_fw_dvfs(void *data, u64 freq)
 	PVR_LOG_IF_ERROR(err, "failed to submit FW command");
 
 exit_unlock:
-	PVRSRVPowerUnlock(dev_node);
-exit:
+	PVRSRVPowerUnlockWrite(dev_node);
 	return err;
 }
 DEFINE_DEBUGFS_ATTRIBUTE_SIGNED(fops_fw_dvfs, NULL, set_fw_dvfs, "%llu\n");

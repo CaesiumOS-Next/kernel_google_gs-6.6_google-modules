@@ -583,28 +583,36 @@ void vs_qos_clear_qos_configs(struct vs_dc *dc)
 	DPU_ATRACE_END(__func__);
 }
 
-void vs_qos_set_fabrt_boost(struct drm_crtc *crtc)
+void vs_qos_set_freq_boost(struct drm_crtc *crtc)
 {
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct device *dev = vs_crtc->dev;
 	struct vs_dc *dc = dev_get_drvdata(dev);
 
-	trace_disp_qos_boost_fabrt_clk(vs_crtc->id, dc->boost_fabrt_freq);
-	DPU_ATRACE_BEGIN("%s to %u", __func__, dc->boost_fabrt_freq);
-	dev_pm_qos_update_request(&vs_crtc->fabrt_devfreq_req, dc->boost_fabrt_freq);
-	DPU_ATRACE_END("%s to %u", __func__, dc->boost_fabrt_freq);
+	trace_disp_qos_boost_fab_clk(vs_crtc->id, dc->boost_fab_freq, dc->boost_core_freq);
+	DPU_ATRACE_BEGIN("%s to %u,%u", __func__, dc->boost_fab_freq, dc->boost_core_freq);
+	if (dc->boost_fab_freq && dc->boost_fab_devfreq)
+		dev_pm_qos_update_request(&vs_crtc->boost_fab_devfreq_req, dc->boost_fab_freq);
+	if (dc->boost_core_freq && dc->boost_core_devfreq)
+		dev_pm_qos_update_request(&vs_crtc->boost_core_devfreq_req, dc->boost_core_freq);
+	DPU_ATRACE_END("%s to %u,%u", __func__, dc->boost_fab_freq, dc->boost_core_freq);
 }
 
-void vs_qos_clear_fabrt_boost(struct drm_crtc *crtc)
+void vs_qos_clear_freq_boost(struct drm_crtc *crtc)
 {
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct device *dev = vs_crtc->dev;
 	struct vs_dc *dc = dev_get_drvdata(dev);
 
-	trace_disp_qos_boost_fabrt_clk(vs_crtc->id, 0);
+	trace_disp_qos_boost_fab_clk(vs_crtc->id, 0, 0);
 	DPU_ATRACE_BEGIN(__func__);
-	dev_pm_qos_update_request(&vs_crtc->fabrt_devfreq_req,
-				  dc->fabrt_devfreq->scaling_min_freq / HZ_PER_KHZ);
+	if (dc->boost_fab_freq && dc->boost_fab_devfreq)
+		dev_pm_qos_update_request(&vs_crtc->boost_fab_devfreq_req,
+					  dc->boost_fab_devfreq->scaling_min_freq / HZ_PER_KHZ);
+	if (dc->boost_core_freq && dc->boost_core_devfreq)
+		dev_pm_qos_update_request(&vs_crtc->boost_core_devfreq_req,
+					  dc->boost_core_devfreq->scaling_min_freq / HZ_PER_KHZ);
+
 	DPU_ATRACE_END(__func__);
 }
 
@@ -642,25 +650,27 @@ int vs_qos_remove_devfreq_request(struct drm_crtc *crtc)
 	return ret;
 }
 
-int vs_qos_add_fabrt_devfreq_request(struct vs_dc *dc, struct drm_crtc *crtc,
-				     enum dev_pm_qos_req_type type, s32 value)
+int vs_qos_add_boost_fab_devfreq_request(struct vs_dc *dc, struct drm_crtc *crtc,
+					 enum dev_pm_qos_req_type type, s32 value)
 {
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	int ret;
 
 #if IS_ENABLED(CONFIG_GOOGLE_PM_QOS)
-	ret = google_pm_qos_add_devfreq_request(dc->fabrt_devfreq, &vs_crtc->fabrt_devfreq_req,
+	ret = google_pm_qos_add_devfreq_request(dc->boost_fab_devfreq,
+						&vs_crtc->boost_fab_devfreq_req,
 						DEV_PM_QOS_MIN_FREQUENCY,
 						PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE);
 #else
-	ret = dev_pm_qos_add_request(dc->fabrt_devfreq->dev.parent, &vs_crtc->fabrt_devfreq_req,
-				     DEV_PM_QOS_MIN_FREQUENCY, PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE);
+	ret = dev_pm_qos_add_request(dc->boost_fab_devfreq->dev.parent,
+				     &vs_crtc->boost_fab_devfreq_req, DEV_PM_QOS_MIN_FREQUENCY,
+				     PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE);
 #endif
 
 	return ret;
 }
 
-int vs_qos_remove_fabrt_devfreq_request(struct drm_crtc *crtc)
+int vs_qos_remove_boost_fab_devfreq_request(struct drm_crtc *crtc)
 {
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 #if IS_ENABLED(CONFIG_GOOGLE_PM_QOS)
@@ -668,9 +678,47 @@ int vs_qos_remove_fabrt_devfreq_request(struct drm_crtc *crtc)
 	struct vs_dc *dc = dev_get_drvdata(dev);
 	int ret;
 
-	ret = google_pm_qos_remove_devfreq_request(dc->fabrt_devfreq, &vs_crtc->fabrt_devfreq_req);
+	ret = google_pm_qos_remove_devfreq_request(dc->boost_fab_devfreq,
+						   &vs_crtc->boost_fab_devfreq_req);
 #else
-	ret = dev_pm_qos_remove_request(&vs_crtc->fabrt_devfreq_req);
+	ret = dev_pm_qos_remove_request(&vs_crtc->boost_fab_devfreq_req);
+#endif
+
+	return ret;
+}
+
+int vs_qos_add_boost_core_devfreq_request(struct vs_dc *dc, struct drm_crtc *crtc,
+					  enum dev_pm_qos_req_type type, s32 value)
+{
+	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
+	int ret;
+
+#if IS_ENABLED(CONFIG_GOOGLE_PM_QOS)
+	ret = google_pm_qos_add_devfreq_request(dc->boost_core_devfreq,
+						&vs_crtc->boost_core_devfreq_req,
+						DEV_PM_QOS_MIN_FREQUENCY,
+						PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE);
+#else
+	ret = dev_pm_qos_add_request(dc->boost_core_devfreq->dev.parent,
+				     &vs_crtc->boost_core_devfreq_req, DEV_PM_QOS_MIN_FREQUENCY,
+				     PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE);
+#endif
+
+	return ret;
+}
+
+int vs_qos_remove_boost_core_devfreq_request(struct drm_crtc *crtc)
+{
+	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
+#if IS_ENABLED(CONFIG_GOOGLE_PM_QOS)
+	struct device *dev = vs_crtc->dev;
+	struct vs_dc *dc = dev_get_drvdata(dev);
+	int ret;
+
+	ret = google_pm_qos_remove_devfreq_request(dc->boost_core_devfreq,
+						   &vs_crtc->boost_core_devfreq_req);
+#else
+	ret = dev_pm_qos_remove_request(&vs_crtc->boost_core_devfreq_req);
 #endif
 
 	return ret;

@@ -1,7 +1,7 @@
 /*
  * DHD Linux platform header file
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -28,7 +28,7 @@
 
 #include <linuxver.h>
 
-#if !defined(CONFIG_WIFI_CONTROL_FUNC) && !defined(CUSTOMER_HW4)
+#if !defined(CONFIG_WIFI_CONTROL_FUNC)
 #define WLAN_PLAT_NODFS_FLAG	0x01
 #define WLAN_PLAT_AP_FLAG	0x02
 struct wifi_platform_data {
@@ -49,7 +49,7 @@ struct wifi_platform_data {
 	void *(*get_country_code)(char *ccode);
 #endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 58)) */
 };
-#endif /* CONFIG_WIFI_CONTROL_FUNC  || CUSTOMER_HW4 */
+#endif /* CONFIG_WIFI_CONTROL_FUNC */
 
 #include <linux/pci.h>
 
@@ -83,6 +83,11 @@ extern void dhd_plat_get_rc_port_dev_details(void *plat_info, void *ep_pdev);
 extern void dhd_plat_bus_post_init_quirks(void *plat_info, void *dhd_bus);
 extern void dhd_plat_tx_pktcount(void *plat_info, uint cnt);
 extern void dhd_plat_rx_pktcount(void *plat_info, uint cnt);
+extern void dhd_plat_pm_runtime_init(void *plat_info, struct pci_dev *pdev);
+extern void dhd_plat_pm_runtime_exit(void *plat_info);
+
+extern int dhd_plat_pcie_suspend_nosave(void *plat_info);
+extern int dhd_plat_pcie_savestate(void *plat_info);
 
 extern uint32 dhd_plat_get_info_size(void);
 extern void dhd_plat_l1ss_ctrl(bool ctrl);
@@ -98,14 +103,21 @@ extern uint32 dhd_plat_get_rc_device_id(void);
 
 extern int dhd_plat_check_pcie_state(void);
 extern void dhd_plat_check_msi(void);
+extern void dhd_plat_pcie_dump_debug(void);
 
 extern uint16 dhd_plat_align_rxbuf_size(uint16 rxbufpost_sz);
 extern void dhd_plat_pcie_skip_config_set(bool val);
 extern bool dhd_plat_pcie_enable_big_core(void);
+int dhd_plat_get_wlan_reg_on_gpio(void);
+int dhd_plat_get_wlan_host_wake_up_gpio(void);
 #ifdef DHD_COREDUMP
 void dhd_plat_register_coredump(void);
 void dhd_plat_unregister_coredump(void);
 #endif /* DHD_COREDUMP */
-extern void dhd_plat_pcie_dump_debug(void);
+
+#ifdef GOOGLE_DAL_CORE
+#include "google_plat.h"
+#endif /* GOOGLE_DAL_CORE */
+
 #endif /* __linux__ */
 #endif /* __DHD_PLAT_H__ */

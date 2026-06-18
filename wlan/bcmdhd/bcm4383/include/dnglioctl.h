@@ -1,7 +1,7 @@
 /*
  * HND Run Time Environment ioctl.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -41,7 +41,7 @@
 #define RTESALLMULTI		0x8906
 #define RTEGPROMISC		0x8907
 #define RTESPROMISC		0x8908
-#define RTESMULTILIST	0x8909
+#define RTESMULTILIST		0x8909
 #define RTEGUP			0x890A
 #define RTEGPERMADDR		0x890B
 #define RTEDEVPWRSTCHG		0x890C	/* Device pwr state change for PCIedev */
@@ -63,8 +63,13 @@
 #define RTEPTMENABLE		0x891C	/* Start/stop PTM time stamping in TX/RX status */
 #define RTEMACSUSPEND		0x891D	/* Suspend MAC cores */
 #define RTEPTMHOFFSET		0x891E	/* PTM offsets */
+#define RTE_REAL_D3_D0		0x891F	/* Transition from real D3/D0. */
+#define RTERXCMPLCHAINENABLE	0x8920	/* Chained RxCompletion Enable */
+#define RTEGRADIO_STAT		0x8921	/* Radio Stat */
+#define RTEDEVGETSTATSTYPE	0x8922	/* Get flowring stats type from WL */
+#define RTEDEVGETSTATSBITMAP	0x8923	/* Get flowring stats bitmap from WL */
 /* Ensure last RTE IOCTL define val is assigned to RTEIOCTLEND */
-#define RTEIOCTLEND		0x891E  /* LAST RTE IOCTL value */
+#define RTEIOCTLEND		0x8923  /* LAST RTE IOCTL value */
 
 #define RTE_IOCTL_QUERY		0x00
 #define RTE_IOCTL_SET		0x01
@@ -95,7 +100,12 @@ enum hnd_ioctl_cmd {
 	BUS_SET_BUS_CSO_CAP = 17,	/* Update the CSO cap from wl layer to bus layer */
 	BUS_DUMP_RX_DMA_STALL_RELATED_INFO = 18,
 	BUS_UPDATE_RESVPOOL_STATE = 19,	/* Update resvpool state */
-	BUS_GET_MAX_RING_NUM = 20 /* Get the Max num of the Tx rings */
+	BUS_GET_MAX_RING_NUM = 20, /* Get the Max num of the Tx rings */
+	BUS_M2M_LOW_PRIO_DESCR = 21, /* enable/disable m2m low prio descriptor */
+	BUS_SET_DEV_TRAP_FATAL = 22, /* communicate to host to perform big-hammer */
+	BUS_UPDATE_RX_PKTFETCH_CNT = 23, /* Num of Rx packets fetched from host */
+	BUS_UPDATE_RX_PKTFETCH_FW_CNSMD = 24, /* Num of Rx packets fetched and consumed in FW */
+	BUS_UPDATE_GEN = 25 /* Configure gen */
 };
 
 #define SDPCMDEV_SET_MAXTXPKTGLOM	1
@@ -177,6 +187,11 @@ typedef struct pooluse_info {
 	uint32 urb_main_sz;			/* URB memory used for main core. */
 	uint32 urb_aux_sz;			/* URB memory used for aux core. */
 	uint32 inuse_sz_bm;			/* Total Bootmem size used. */
+
+	uint32 alfragmdata_count;               /* pktpool_shared_alfrag_mdata pkt count */
+	uint32 alfragmdata_available;           /* pktpool_shared_alfrag_mdata pkt left */
+	uint32 alfragmdata_max_pkt_bytes;       /* pktpool_shared_alfrag_mdata max pkt size */
+	uint32 alfragmdata_overhead;            /* pktpool_shared_alfrag_mdata with overhead */
 } pooluse_info_t;
 
 typedef struct memuse_ext_info {
@@ -361,4 +376,226 @@ enum dsec_sboot_xtlv_id {
 	DSEC_OTP_XTLV_SBOOT_LOT_NUM_MS		= 29u,	/* Chip lot num high bits [17:47] 31 bits */
 	DSEC_OTP_XTLV_SBOOT_OTP_WR_LOCK_ENAB	= 30u,	/* OTP write lock enable bit */
 };
+
+/* SMBM (Shared Memory Bank Manager) IOVAR sub-command IDs for IOVAR "smbm" */
+typedef enum {
+	SMBM_SUBCMD_GETVER = 0,   /* Get SMBM IOVAR version */
+	SMBM_SUBCMD_DUMP = 1u,   /* Dump SMBM diagnostic information */
+	SMBM_SUBCMD_MODE = 2u,   /* SMBM mode - who can use SMB - WLAN/BT/'via arbitration' */
+	SMBM_SUBCMD_POLICY = 3u, /* SMBM policy - The list of SW features that use SMB Memory. */
+	SMBM_SUBCMD_STATUS = 4u, /* SMBM's current Status - if SMB Memory is with WLAN or BT */
+	SMBM_SUBCMD_TEST = 5u	/* For testing only. This will have sub IDs */
+
+} smbm_subcmd_id_t;
+
+#define SMBM_IOVAR_CMD_VER_0    0  /* Version 0 of the SMBM IOVAR SMBM_SUBCMD_VER */
+#define SMBM_IOVAR_CMD_VER      SMBM_IOVAR_CMD_VER_0
+
+#define SMBM_DUMP_VER_0 0
+#define SMBM_DUMP_VER	SMBM_DUMP_VER_0
+/**
+ * @brief Structure for the payload of the 'dump' subcommand response XTLV.
+ */
+typedef struct smbm_dump_info {
+	uint16 ver;		/**< Version of this dump structure (SMBM_DUMP_VER_0) */
+	uint16 len;		/**< Total length of this smbm_dump_info_t structure itself */
+	uint32 total_mem;	/**< Total SMB memory size in bytes */
+	uint32 smb_start_addr;	/**< Start address of SMB memory */
+	uint32 smb_end_addr;	/**< End address of SMB memory */
+	uint8 smb_status;	/**< returns smbm_status_t */
+	uint8 smbm_usr_hndl_cnt; /**< MAX Number of SMBM users. */
+	uint16 reserved;
+	char   val[BCM_FLEX_ARRAY]; /**< For formatted text output */
+} smbm_dump_resp_info_v0_t;
+
+
+/* SMBM Mode */
+typedef enum {
+	SMBM_MODE_BT = 0,			/**<  SMB will not be used by WLAN. */
+	SMBM_MODE_WLAN_BT_ARBITRATION = 1u,	/**< SMB will be used by WLAN when available.
+						  * Via SMBM GCI protocol arbitration.
+						  */
+	SMBM_MODE_WLAN = 2u			/**< SMB will be used by WLAN only. */
+} smbm_mode_value_t;
+
+#define SMBM_MODE_VER_0 0
+#define SMBM_MODE_VER	SMBM_MODE_VER_0
+
+typedef struct smbm_mode {
+	uint16 ver;		/**< Version of smbm_mode_t */
+	uint16 len;		/**< Total length of this smbm_mode_t structure itself */
+	uint8 mode;		/**< smbm_mode_value_t */
+	uint8 reserved;
+	uint16 reserved1;
+} smbm_mode_t;
+
+/* SMBM Policy bitmap. Each set bit from below enable that particular feature. */
+typedef enum {
+	SMBM_POLICY_NONE = 0,				/* No features use SMB Memory. */
+	SMBM_POLICY_ANY_ASSOC = (1u << 0),		/* Use SMB for any association. */
+	SMBM_POLICY_320MHZ_ASSOC_ONLY = (1u << 1u),	/* Use SMB only when 320Mhz assoc */
+	SMBM_POLICY_LOGGING = (1u << 2u)		/* Use SMB for logging */
+} smbm_policy_map_t;
+
+/* SMBM policy operation to set. SET/ADD/REMOVE */
+typedef enum {
+	SMBM_POLICY_SET = 0,	/**< Setting new policy bitmap value. */
+	SMBM_POLICY_ADD = 1u,	/**<  Adds to existing policy bitmap value. */
+	SMBM_POLICY_REMOVE = 2u	/**<  Removes from existing policy bitmap value. */
+} smbm_policy_op_t;
+
+#define SMBM_POLICY_VER_0 0
+#define SMBM_POLICY_VER	SMBM_POLICY_VER_0
+
+/* Structure to set/get SMBM policy. */
+typedef struct {
+	uint16 ver;		/**< Version of smbm_policy_t */
+	uint16 len;		/**< Total length of this smbm_policy_t structure itself */
+	uint32 policy;		/**< Value of smbm_policy_map_t */
+	uint8  policy_op;	/**< Policy operation smbm_policy_op_t. Valid only for set. */
+	uint8  reserved;
+	uint16 reserved1;
+} smbm_policy_t;
+
+/* SMBM Status */
+typedef enum smbm_status_e {
+	SMBM_STATUS_UNKNOWN = 0,	/**< Invalid value. */
+	SMBM_STATUS_BT = 1u,		/**< SMB Memory is with BT */
+	SMBM_STATUS_WLAN = 2u,		/**< SMB Memory is with WLAN */
+} smbm_status_type_t;
+
+#define SMBM_STATUS_VER_0 0
+#define SMBM_STATUS_VER	SMBM_STATUS_VER_0
+
+/* SMBM Status */
+typedef struct smbm_status {
+	uint16 ver;		/**< Version. */
+	uint16 len;		/**< Total length of this structure. */
+	uint8 status;		/* smbm_status_type_t */
+	uint8 reserved;
+	uint16 reserved1;
+} smbm_status_t;
+
+
+typedef smbm_dump_resp_info_v0_t smbm_dump_resp_info_t;
+
+typedef enum {
+	SMBM_TEST_SMBM_USER_REGISTER	= 0, /** Register new SMB memory user. Returns handle */
+	SMBM_TEST_SMBM_MALLOC		= 1u,	/** SMB Malloc using handle from user_register */
+	SMBM_TEST_SMBM_MFREE		= 2u,	/** free SMB Memory using address */
+	SMBM_TEST_SWITCH_TO_WLAN	= 3u,	/** Switch SMB to WLAN */
+	SMBM_TEST_SWITCH_TO_BT		= 4u	/** Switch SMB to BT */
+} smbm_subcmd_test_id_t;
+
+#define SMBM_TEST_VER_0 0
+#define SMBM_TEST_VER	SMBM_TEST_VER_0
+
+typedef struct smbm_test_params {
+	uint16 ver;		/**< Version of this test structure */
+	uint16 len;		/**< Total length structure itself */
+	uint16 test_id;		/**< smbm_subcmd_test_id_t */
+	uint16 reserved;
+	union {
+		struct {
+			uint32 smbm_user_handle;
+			uint32 malloc_size;
+		} smbm_malloc;
+
+		struct {
+			uint32 allocated_address;
+		} smbm_free;
+	} u;
+} smbm_test_params_t;
+
+typedef struct smbm_test_results {
+	uint16 ver;		/**< Version of this test results structure */
+	uint16 len;		/**< Total length structure itself */
+	uint16 test_id;		/**< smbm_subcmd_test_id_t */
+	uint16 reserved;
+	int32  status;		/**< BCME_ error code of test status. */
+	union {
+		struct {
+			uint32 allocated_address;
+		} smbm_malloc;
+
+		struct {
+			uint32 smbm_user_handle;
+		} smbm_user_register;
+	} u;
+} smbm_test_results_t;
+
+/*
+ * sub-cmd ids shared between FW and wl. Required to qualify sub-cmd data
+ */
+typedef enum {
+	HNDEPMU_ver_SUBCMD = 0u,		/* FW returns IOVAR version */
+	HNDEPMU_reg0_SUBCMD = 1u,	/* reg0 read/write */
+	HNDEPMU_dvfs_SUBCMD = 2u,	/* dvfs registers read/write */
+	HNDEPMU_vreg_SUBCMD = 3u,	/* vreg registers read/write */
+	HNDEPMU_sws_SUBCMD = 4u,	/* sws registers read/write */
+	HNDEPMU_chip_SUBCMD = 5u,	/* chip registers read/write */
+	HNDEPMU_otp_SUBCMD = 6u,	/* otp registers read/write */
+	HNDEPMU_wsl_SUBCMD = 7u,	/* wsl registers read/write */
+	HNDEPMU_revinfo_SUBCMD = 8u,	/* FW returns chip revinfo */
+	HNDEPMU_dump_SUBCMD = 9u,	/* provides dump of epmu region or other context */
+	HNDEPMU_reg_SUBCMD = 0xFEu	/* epmu(all) registers read/write */
+} epmu_subcmd_id_t;
+
+#define HNDEPMU_SUBCMD(r) HNDEPMU_## r ##_SUBCMD
+
+#define HNDEPMU_SUBCMD_CNT	10u
+
+#define EPMU_IOVAR_CMD_VER_0	0u
+#define EPMU_IOVAR_CMD_VER	EPMU_IOVAR_CMD_VER_0
+
+/*
+ * Used in register read/write sub-commands
+ */
+typedef struct epmu_reg_rw {
+	uint16 addr; /* epmu register address */
+	uint16 val;  /* value read or to be written */
+} epmu_reg_rw_t;
+
+/*
+ * used in 'revinfo' subcmd
+ */
+typedef struct epmu_rev_info {
+	uint16 ver;
+	uint16 len;
+	uint16 chipid;	/* chip id */
+	uint16 revid;	/* revision id */
+} epmu_rev_info_t;
+
+/*
+ * wl epmu dump - defines
+ */
+
+#define EPMU_DVFS_REGN_STR	"dvfs"
+#define EPMU_VREG_REGN_STR	"vreg"
+#define EPMU_SWS_REGN_STR	"sws"
+#define EPMU_CHIP_REGN_STR	"chip"
+#define EPMU_OTP_REGN_STR	"otp"
+#define EPMU_WSL_REGN_STR	"wsl"
+
+/*
+ * 'dump' sub-cmd response struct
+ * 'ver' - version of the implementaton
+ * 'len' - strlen(val) + 1;
+ * 'val' - string of register 'addr: val' pairs
+ */
+typedef struct epmu_dump_resp {
+	uint16 ver;
+	uint16 len;
+	char val[];		/* preformated string of register 'addr: val' pairs */
+} epmu_dump_resp_t;
+
+typedef struct flowring_stats_cfg {
+	uint8 ifindex;
+	uint8 tid;
+	uint8 peer_mac[6]; /* Peer MAC address */
+} flowring_stats_cfg_t;
+
+#define EPMU_DUMP_VER_0		0u
+#define EPMU_DUMP_VER		EPMU_DUMP_VER_0
+
 #endif /* _dngl_ioctl_h_ */

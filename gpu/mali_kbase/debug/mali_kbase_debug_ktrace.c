@@ -132,7 +132,7 @@ static void kbasep_ktrace_dump_msg(struct kbase_device *kbdev, struct kbase_ktra
 	lockdep_assert_held(&kbdev->ktrace.lock);
 
 	kbasep_ktrace_format_msg(trace_msg, buffer, sizeof(buffer));
-	dev_info(kbdev->dev, "%s\n", buffer);
+	dev_err(kbdev->dev, "%s", buffer);
 }
 
 struct kbase_ktrace_msg *kbasep_ktrace_reserve(struct kbase_ktrace *ktrace)
@@ -228,12 +228,10 @@ void kbasep_ktrace_dump(struct kbase_device *kbdev)
 	u32 end;
 	u32 i = 0;
 	u32 distance = 0;
-	char buffer[KTRACE_DUMP_MESSAGE_SIZE] = "DEBUG KTRACE: Dumping trace: TRACE_START\n";
+	char buffer[KTRACE_DUMP_MESSAGE_SIZE] = "Dumping trace:\n";
 
-	dev_info(kbdev->dev,
-		 "=======================================================================\n");
 	kbasep_ktrace_format_header(buffer, sizeof(buffer), strlen(buffer));
-	dev_info(kbdev->dev, "%s", buffer);
+	dev_err(kbdev->dev, "%s", buffer);
 
 	spin_lock_irqsave(&kbdev->ktrace.lock, flags);
 	start = kbdev->ktrace.first_out;
@@ -245,9 +243,7 @@ void kbasep_ktrace_dump(struct kbase_device *kbdev)
 
 		end = (end + 1) & KBASE_KTRACE_MASK;
 	}
-	dev_info(kbdev->dev,"TRACE_END: (%i entries)", i);
-	dev_info(kbdev->dev,
-		 "=======================================================================\n");
+	dev_err(kbdev->dev, "TRACE_END: (%i entries)", i);
 
 	kbasep_ktrace_clear_locked(kbdev);
 

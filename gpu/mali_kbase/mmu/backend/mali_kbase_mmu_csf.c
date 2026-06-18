@@ -245,13 +245,6 @@ void kbase_mmu_report_fault_and_kill(struct kbase_context *kctx, struct kbase_as
 		unsigned int source_id = AS_FAULTSTATUS_SOURCE_ID_GET(status);
 		unsigned int as_no = as->number;
 
-		/*midcet-6247 dump the ktrace when below fault code occurs */
-		if (status == 0x662002C3) {
-			dev_info(
-				kbdev->dev,
-				"============= MIDCET-6247 KTRACE DUMP ===============================\n");
-			KBASE_KTRACE_DUMP(kbdev);
-		}
 		/* terminal fault, print info about the fault */
 		if (kbdev->gpu_props.gpu_id.product_model < GPU_ID_MODEL_MAKE(14, 0)) {
 			dev_err(kbdev->dev,

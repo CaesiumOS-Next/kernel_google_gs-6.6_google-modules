@@ -346,7 +346,7 @@ static void gs_panel_update_connector_state(const struct gs_drm_connector *gs_co
 	state->early_exit = (ctx->refresh_ctrl & GS_PANEL_REFRESH_CTRL_EARLY_EXIT);
 	state->pwm_mode = ctx->pwm_mode;
 	state->frame_interval_us = ctx->frame_interval_us;
-	state->panel_power_state =  ctx->panel_power_state;
+	state->trigger_dumps_for_gram_collision = ctx->trigger_dumps_for_gram_collision;
 	bitmap_copy(state->panel_errors, ctx->panel_errors, GS_PANEL_ERR_MAX);
 	mutex_unlock(&ctx->mode_lock);
 }
@@ -745,7 +745,7 @@ static int gs_panel_run_detect_fault(struct gs_panel *ctx)
 	/* Check elapsed interval against minimum */
 	now = ktime_get();
 	delta_ms = ktime_ms_delta(now, ctx->timestamps.last_panel_fault_check_ts);
-	if (delta_ms < fault_detect_interval_ms) {
+	if (delta_ms < fault_detect_interval_ms && ctx->ddic_read_fail_cnt == 0) {
 		dev_dbg(dev, "skip fault detection (%lldms since last check, <%ums)\n", delta_ms,
 			fault_detect_interval_ms);
 		return 0;
@@ -753,6 +753,11 @@ static int gs_panel_run_detect_fault(struct gs_panel *ctx)
 
 	/* Read fault registers */
 	ret = ctx->desc->gs_panel_func->detect_fault(ctx);
+
+	/* Count raw panel errors (unmasked) for statistics */
+	for_each_set_bit(bit, ctx->panel_errors, GS_PANEL_ERR_MAX) {
+		ctx->panel_errors_cnt[bit]++;
+	}
 
 	if (unlikely(GS_PANEL_ERR_MAX > 64)) {
 		dev_warn(ctx->dev, "panel_errors size (%u) > 64, skip mask\n", GS_PANEL_ERR_MAX);
@@ -763,11 +768,6 @@ static int gs_panel_run_detect_fault(struct gs_panel *ctx)
 		bitmap_and(ctx->panel_errors, ctx->panel_errors, mask, GS_PANEL_ERR_MAX);
 	}
 	trace_panel_errors(ctx->gs_connector->panel_index, ctx->panel_errors);
-
-	/* Count panel errors */
-	for_each_set_bit(bit, ctx->panel_errors, GS_PANEL_ERR_MAX) {
-		ctx->panel_errors_cnt[bit]++;
-	}
 
 	if (!bitmap_empty(ctx->panel_errors, GS_PANEL_ERR_MAX))
 		gs_fault_event_emit(ctx->dev, GS_FAULT_EVENT_TYPE_PANEL_ERROR,

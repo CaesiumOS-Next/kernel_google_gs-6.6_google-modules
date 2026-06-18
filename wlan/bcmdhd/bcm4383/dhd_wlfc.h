@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -498,7 +498,7 @@ typedef struct dhd_pkttag {
 #define DHD_PKTTAG_IF_SHIFT			0
 #define DHD_PKTTAG_SETIF(tag, if)	((dhd_pkttag_t *)(tag))->if_flags = \
 	(((dhd_pkttag_t *)(tag))->if_flags & ~(DHD_PKTTAG_IF_MASK << DHD_PKTTAG_IF_SHIFT)) | \
-	(((if) & DHD_PKTTAG_IF_MASK) << DHD_PKTTAG_IF_SHIFT)
+	(((if)&DHD_PKTTAG_IF_MASK) << DHD_PKTTAG_IF_SHIFT)
 #define DHD_PKTTAG_IF(tag)		((((dhd_pkttag_t *)(tag))->if_flags >> \
 	DHD_PKTTAG_IF_SHIFT) & DHD_PKTTAG_IF_MASK)
 

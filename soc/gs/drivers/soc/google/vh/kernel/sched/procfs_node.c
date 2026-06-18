@@ -21,7 +21,6 @@
 #include <trace/events/power.h>
 
 #include "sched_priv.h"
-#include "sched_events.h"
 
 #if IS_ENABLED(CONFIG_UCLAMP_STATS)
 extern void reset_uclamp_stats(void);
@@ -89,8 +88,9 @@ extern spinlock_t prefer_idle_task_name_lock;
 
 #define MAX_PROC_SIZE 128
 
-static const char *GRP_NAME[VG_MAX] = {"sys", "ta", "fg", "cam", "cam_power", "bg", "sys_bg",
-				       "nnapi", "rt", "dex2oat", "ota", "sf", "fg_wi"};
+const char *GRP_NAME[VG_MAX] = {"sys", "ta", "fg", "cam", "cam_power", "bg", "sys_bg",
+				"nnapi", "rt", "dex2oat", "ota", "sf", "fg_wi"};
+unsigned int sched_group_tracker_rate_limit = 10;
 
 static const unsigned int SCHED_QOS_PROFILES[SCHED_QOS_MAX] = {
 	/* SCHED_QOS_NONE */
@@ -166,7 +166,6 @@ enum vendor_procfs_type {
 #define __PROC_GROUP_ENTRIES(__group_name, __vg)	\
 		__PROC_GROUP_ENTRY(prefer_idle, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(prefer_high_cap, __group_name, __vg),	\
-		__PROC_GROUP_ENTRY(task_spreading, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(auto_prefer_fit, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(group_cfs_skip_mask, __group_name, __vg),	\
 		__PROC_GROUP_ENTRY(preferred_idle_mask_low, __group_name, __vg),	\
@@ -522,7 +521,6 @@ static inline bool reset_group_batch_policy(enum vendor_group group);
 #define CREATE_VENDOR_GROUP_ATTRIBUTES(__grp, __vg)					\
 	VENDOR_GROUP_BOOL_ATTRIBUTE(__grp, prefer_idle, __vg);				\
 	VENDOR_GROUP_BOOL_ATTRIBUTE(__grp, prefer_high_cap, __vg);			\
-	VENDOR_GROUP_BOOL_ATTRIBUTE(__grp, task_spreading, __vg);			\
 	VENDOR_GROUP_BOOL_ATTRIBUTE(__grp, auto_prefer_fit, __vg);			\
 	VENDOR_GROUP_CPUMASK_ATTRIBUTE(__grp, group_cfs_skip_mask, __vg);		\
 	VENDOR_GROUP_CPUMASK_ATTRIBUTE(__grp, preferred_idle_mask_low, __vg);		\
@@ -1457,6 +1455,8 @@ static inline void update_vendor_group_attribute(struct task_struct *p, int new)
 
 	for (clamp_id = 0; clamp_id < UCLAMP_CNT; clamp_id++)
 		uclamp_update_active(p, clamp_id);
+
+	send_trace_sched_group_tracker(p, false);
 }
 
 static int update_vendor_group(const char *buf, enum vendor_group_attribute vta,
@@ -3537,56 +3537,6 @@ ssize_t prefer_idle_task_name_store(struct file *filp, const char __user *ubuf, 
 PROC_OPS_RW(prefer_idle_task_name);
 
 /*
- * TODO(guibing): remove "is_tgid_system_ui" procfs node once the powerhal
- * switch to use the new "check_tgid_type" procfs node.
- */
-static ssize_t is_tgid_system_ui_store(struct file *filp,
-						const char __user *ubuf,
-						size_t count, loff_t *pos)
-{
-	unsigned int val;
-	char buf[MAX_PROC_SIZE];
-	struct task_struct *p;
-	char tgid_comm[TASK_COMM_LEN] = {0};
-
-	if (count >= sizeof(buf))
-		return -EINVAL;
-
-	if (copy_from_user(buf, ubuf, count))
-		return -EFAULT;
-
-	buf[count] = '\0';
-
-	if (kstrtouint(buf, 0, &val) || val > PID_MAX_LIMIT)
-		return -EINVAL;
-
-	rcu_read_lock();
-	p = find_task_by_vpid(val);
-	if (!p) {
-		rcu_read_unlock();
-		return -ESRCH;
-	}
-
-	get_task_struct(p);
-	if (!check_cred(p)) {
-		put_task_struct(p);
-		rcu_read_unlock();
-		return -EACCES;
-	}
-
-	strlcpy(tgid_comm, p->comm, TASK_COMM_LEN);
-	put_task_struct(p);
-	rcu_read_unlock();
-
-	if (strstr(tgid_comm, "systemui") || strstr(tgid_comm, "nexuslauncher")) {
-		return count;
-	}  else {
-		return -ENOMSG;
-	}
-}
-PROC_OPS_WO(is_tgid_system_ui);
-
-/*
  * Check the type of applications to which the tgid belongs.
  * normal return values:
  *   1 : systemui or nexuslauncher related
@@ -3787,6 +3737,38 @@ static ssize_t suspend_resume_boost_store(struct file *filp, const char __user *
 }
 PROC_OPS_RW(suspend_resume_boost);
 
+static int sched_group_tracker_rate_limit_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%u\n", sched_group_tracker_rate_limit);
+	return 0;
+}
+static ssize_t sched_group_tracker_rate_limit_store(struct file *filp,
+						    const char __user *ubuf,
+						    size_t count, loff_t *pos)
+{
+	unsigned int val;
+	char buf[MAX_PROC_SIZE];
+
+	if (count >= sizeof(buf))
+		return -EINVAL;
+
+	if (copy_from_user(buf, ubuf, count))
+		return -EFAULT;
+
+	buf[count] = '\0';
+
+	if (kstrtouint(buf, 0, &val))
+		return -EINVAL;
+
+	if (!val)
+		return -EINVAL;
+
+	sched_group_tracker_rate_limit = val;
+
+	return count;
+}
+PROC_OPS_RW(sched_group_tracker_rate_limit);
+
 struct pentry {
 	const char *name;
 	enum vendor_procfs_type type;
@@ -3929,8 +3911,6 @@ static struct pentry entries[] = {
 	PROC_ENTRY(priority_task_boost_value),
 	// names for the prefer_idle task
 	PROC_ENTRY(prefer_idle_task_name),
-	// check whether tgid belongs to systemui/nexuslauncher
-	PROC_ENTRY(is_tgid_system_ui),
 	/* boost at fork */
 	PROC_ENTRY(boost_at_fork_task_name),
 	PROC_ENTRY(boost_at_fork_value),
@@ -3940,6 +3920,8 @@ static struct pentry entries[] = {
 	PROC_ENTRY(suspend_resume_boost),
 	// per-task memory aware
 	PROC_ENTRY(per_task_memory_aware_enable),
+	// sched group tracker
+	PROC_ENTRY(sched_group_tracker_rate_limit),
 };
 
 

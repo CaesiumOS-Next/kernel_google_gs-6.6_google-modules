@@ -103,6 +103,11 @@ Contact:	Chintan Pandya <chintanpandya@google.com>
 Description:
 		Shows total S2 page tables in use at the moment
 
+What:		/sys/kernel/iommu/stage2-idmap/s2_atomic_pool_max_pages_used
+Contact:	Chintan Pandya <chintanpandya@google.com>
+Description:
+		Shows maximum S2 page tables in use from the pool since boot
+
 What:		/sys/kernel/iommu/domains/<domain_id>/num_4K_mapping
 What:		/sys/kernel/iommu/domains/<domain_id>/num_16K_mapping
 What:		/sys/kernel/iommu/domains/<domain_id>/num_64K_mapping

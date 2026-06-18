@@ -2,7 +2,7 @@
  * Broadcom Dongle Host Driver (DHD),
  * Linux-specific network interface for transmit(tx) path
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -62,7 +62,11 @@
 #include <linux/rtc.h>
 #include <linux/namei.h>
 #include <asm/uaccess.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#include <linux/unaligned.h>
+#else
 #include <asm/unaligned.h>
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0) */
 #include <dhd_linux_priv.h>
 
 #include <epivers.h>
@@ -248,6 +252,19 @@ BCMFASTPATH(__dhd_sendpkt)(dhd_pub_t *dhdp, int ifidx, void *pktbuf)
 		return NETDEV_TX_BUSY;
 	}
 #endif /* PCIE_FULL_DONGLE */
+
+#ifdef DHD_VALIDATE_PKT_ADDRESS
+	{
+		struct sk_buff *skb = PKTTONATIVE(dhdp->osh, pktbuf);
+		skb = (struct sk_buff *)dhd_validate_packet_address(dhdp, skb);
+		/* if NULL, pkt is already dropped, return OK */
+		if (skb == NULL) {
+			dhdp->tx_dropped++;
+			return NETDEV_TX_OK;
+		}
+		pktbuf = PKTFRMNATIVE(dhdp->osh, skb);
+	}
+#endif /* DHD_VALIDATE_PKT_ADDRESS */
 
 	/* Reject if pktlen > MAX_MTU_SZ */
 	if (PKTLEN(dhdp->osh, pktbuf) > MAX_MTU_SZ) {
@@ -542,42 +559,6 @@ exit:
 	DHD_GENERAL_UNLOCK(dhdp, flags);
 	return ret;
 }
-
-#ifdef DHD_MQ
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
-static uint16
-BCMFASTPATH(dhd_select_queue)(struct net_device *net, struct sk_buff *skb,
-       void *accel_priv, select_queue_fallback_t fallback)
-#else
-static uint16
-BCMFASTPATH(dhd_select_queue)(struct net_device *net, struct sk_buff *skb)
-#endif /* LINUX_VERSION_CODE */
-{
-	dhd_info_t *dhd_info = DHD_DEV_INFO(net);
-	dhd_pub_t *dhdp = &dhd_info->pub;
-	uint16 prio = 0;
-
-	BCM_REFERENCE(dhd_info);
-	BCM_REFERENCE(dhdp);
-	BCM_REFERENCE(prio);
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
-	if (mq_select_disable) {
-		/* if driver side queue selection is disabled via sysfs, call the kernel
-		* supplied fallback function to select the queue, which is usually
-		* '__netdev_pick_tx()' in net/core/dev.c
-		*/
-		return fallback(net, skb);
-	}
-#endif /* LINUX_VERSION */
-
-	prio = dhdp->flow_prio_map[skb->priority];
-	if (prio < AC_COUNT)
-		return prio;
-	else
-		return AC_BK;
-}
-#endif /* DHD_MQ */
 
 netdev_tx_t
 BCMFASTPATH(dhd_start_xmit)(struct sk_buff *skb, struct net_device *net)
@@ -1000,7 +981,7 @@ dhd_txflowcontrol(dhd_pub_t *dhdp, int ifidx, bool state)
 		/* Flow control on all active interfaces */
 		dhdp->txoff = state;
 		for (i = 0; i < DHD_MAX_IFS; i++) {
-			if (dhd->iflist[i]) {
+			if (dhd->iflist[i] && !dhd->iflist[i]->mgmt_if) {
 				net = dhd->iflist[i]->net;
 				if (state == ON)
 					dhd_tx_stop_queues(net);
@@ -1009,7 +990,7 @@ dhd_txflowcontrol(dhd_pub_t *dhdp, int ifidx, bool state)
 			}
 		}
 	} else {
-		if (dhd->iflist[ifidx]) {
+		if (dhd->iflist[ifidx] && !dhd->iflist[ifidx]->mgmt_if) {
 			net = dhd->iflist[ifidx]->net;
 			if (state == ON)
 				dhd_tx_stop_queues(net);
@@ -1025,6 +1006,9 @@ dhd_txcomplete(dhd_pub_t *dhdp, void *txp, bool success)
 	dhd_info_t *dhd = (dhd_info_t *)(dhdp->info);
 	struct ether_header *eh;
 	uint16 type;
+	uint pkt_len = 0;
+
+	BCM_REFERENCE(pkt_len);
 
 	if (dhdp->tput_data.tput_test_running) {
 
@@ -1082,7 +1066,17 @@ dhd_txcomplete(dhd_pub_t *dhdp, void *txp, bool success)
 			dhdp->art_counters.tot_txcpl++;
 		}
 #endif /* DHD_ART */
+	} else {
+		dhd->pub.tx_errors++;
+#ifdef DHD_ART
+		if (dhd_is_art_skb(txp)) {
+			dhdp->art_counters.tx_errors++;
+		}
+#endif /* DHD_ART */
 	}
+
+	pkt_len = PKTLEN(dhd->pub.osh, txp);
+	DHD_LOG_PKT(dhdp->logger, LOG_TYPE_DATA_PKT, txp, pkt_len);
 }
 
 void
@@ -1351,6 +1345,7 @@ dhd_handle_pktdata(dhd_pub_t *dhdp, int ifidx, void *pkt, uint8 *pktdata, uint32
 	bool verbose_logging = FALSE;
 	dhd_dbg_ring_t *ring;
 	ring = &dhdp->dbg->dbg_rings[PACKET_LOG_RING_ID];
+	BCM_REFERENCE(verbose_logging);
 #endif /* DHD_PKT_LOGGING_DBGRING */
 
 	if (!pktdata || pktlen < ETHER_HDR_LEN) {
@@ -1523,3 +1518,39 @@ dhd_clear_if_stats(dhd_pub_t *dhdp)
 	}
 	dhd_net_if_unlock_local(dhd);
 }
+
+#ifdef DHD_MQ
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+static uint16
+BCMFASTPATH(dhd_select_queue)(struct net_device *net, struct sk_buff *skb,
+       void *accel_priv, select_queue_fallback_t fallback)
+#else
+static uint16
+BCMFASTPATH(dhd_select_queue)(struct net_device *net, struct sk_buff *skb)
+#endif /* LINUX_VERSION_CODE */
+{
+	dhd_info_t *dhd_info = DHD_DEV_INFO(net);
+	dhd_pub_t *dhdp = &dhd_info->pub;
+	uint16 prio = 0;
+
+	BCM_REFERENCE(dhd_info);
+	BCM_REFERENCE(dhdp);
+	BCM_REFERENCE(prio);
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
+	if (mq_select_disable) {
+		/* if driver side queue selection is disabled via sysfs, call the kernel
+		* supplied fallback function to select the queue, which is usually
+		* '__netdev_pick_tx()' in net/core/dev.c
+		*/
+		return fallback(net, skb);
+	}
+#endif /* LINUX_VERSION */
+
+	prio = dhdp->flow_prio_map[skb->priority];
+	if (prio < AC_COUNT)
+		return prio;
+	else
+		return AC_BK;
+}
+#endif /* DHD_MQ */

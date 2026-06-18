@@ -94,6 +94,7 @@ TRACE_EVENT(disp_frame_done_timeout,
 		__field(int, display_id)
 		__field(u32, output_id)
 		__field(int, frames_pending)
+		__field(bool, frame_transfer_pending)
 		__field(int, te_count)
 		__field(bool, during_disable)
 	),
@@ -101,12 +102,14 @@ TRACE_EVENT(disp_frame_done_timeout,
 		__entry->display_id = display_id;
 		__entry->output_id = output_id;
 		__entry->frames_pending = atomic_read(&vs_crtc->frames_pending);
+		__entry->frame_transfer_pending = vs_crtc->frame_transfer_pending;
 		__entry->te_count = atomic_read(&vs_crtc->te_count);
 		__entry->during_disable = !vs_crtc->base.state->active;
 	),
-	TP_printk("display_id: %d output_id: %d frames_pending: %d te_count: %d%s",
+	TP_printk("display_id: %d output_id: %d frames_pending: %d frame_transfer_pending: %d te_count: %d%s",
 		__entry->display_id, __entry->output_id, __entry->frames_pending,
-		__entry->te_count, __entry->during_disable ? " during disable" : "")
+		__entry->frame_transfer_pending, __entry->te_count,
+		__entry->during_disable ? " during disable" : "")
 );
 
 DECLARE_EVENT_CLASS(disp_be_intr,
@@ -400,19 +403,21 @@ TRACE_EVENT(disp_qos_set_core_clk,
 	TP_printk("display_id: %d core_clk_khz: %u", __entry->display_id, __entry->core_clk_khz)
 );
 
-TRACE_EVENT(disp_qos_boost_fabrt_clk,
-	TP_PROTO(int display_id, u32 fabrt_khz),
-	TP_ARGS(display_id, fabrt_khz),
+TRACE_EVENT(disp_qos_boost_fab_clk,
+	TP_PROTO(int display_id, u32 fab_khz, u32 core_khz),
+	TP_ARGS(display_id, fab_khz, core_khz),
 	TP_STRUCT__entry(
 		__field(int, display_id)
-		__field(u32, fabrt_khz)
+		__field(u32, fab_khz)
+		__field(u32, core_khz)
 	),
 	TP_fast_assign(
 		__entry->display_id = display_id;
-		__entry->fabrt_khz = fabrt_khz;
+		__entry->fab_khz = fab_khz;
+		__entry->core_khz = core_khz;
 	),
-	TP_printk("display_id: %d fabrt_khz: %u", __entry->display_id, __entry->fabrt_khz)
-);
+	TP_printk("display_id: %d fab_khz: %u core_khz: %u",
+		__entry->display_id, __entry->fab_khz, __entry->core_khz));
 
 /* Specific HW Programming Traces */
 
@@ -518,14 +523,8 @@ DEFINE_EVENT(disp_hw_wb_feature, disp_config_wb_feature,
 
 /* General-Purpose HW Programming Traces (use these signatures) */
 
-/**
- * trace_update_hw_layer_feature() - logs updating layer feature
- * @prop: name of property
- * @hw_id: id of layer being updated
- * @...: format string and args for string printing
- */
-static inline void trace_update_hw_layer_feature(const char *prop, u32 hw_id,
-						 const char *fmt, ...)
+static inline void _trace_update_hw_layer_feature(const char *prop, u32 hw_id,
+						  const char *fmt, ...)
 {
 	va_list args;
 
@@ -535,13 +534,20 @@ static inline void trace_update_hw_layer_feature(const char *prop, u32 hw_id,
 }
 
 /**
- * trace_config_hw_layer_feature() - logs configuring layer feature
+ * trace_update_hw_layer_feature() - logs updating layer feature
  * @prop: name of property
  * @hw_id: id of layer being updated
  * @...: format string and args for string printing
  */
-static inline void trace_config_hw_layer_feature(const char *prop, u32 hw_id,
-						 const char *fmt, ...)
+#define trace_update_hw_layer_feature(prop, hw_id, fmt, ...) \
+	do { \
+		if (trace_disp_update_layer_feature_enabled()) \
+			_trace_update_hw_layer_feature(prop, hw_id, fmt, ##__VA_ARGS__); \
+	} while (0)
+
+
+static inline void _trace_config_hw_layer_feature(const char *prop, u32 hw_id,
+						  const char *fmt, ...)
 {
 	va_list args;
 
@@ -551,13 +557,20 @@ static inline void trace_config_hw_layer_feature(const char *prop, u32 hw_id,
 }
 
 /**
- * trace_update_hw_display_feature() - logs updating display feature
+ * trace_config_hw_layer_feature() - logs configuring layer feature
  * @prop: name of property
- * @hw_id: id of hw component being updated
+ * @hw_id: id of layer being updated
  * @...: format string and args for string printing
  */
-static inline void trace_update_hw_display_feature(const char *prop, u32 hw_id,
-						   const char *fmt, ...)
+#define trace_config_hw_layer_feature(prop, hw_id, fmt, ...) \
+	do { \
+		if (trace_disp_config_layer_feature_enabled()) \
+			_trace_config_hw_layer_feature(prop, hw_id, fmt, ##__VA_ARGS__); \
+	} while (0)
+
+
+static inline void _trace_update_hw_display_feature(const char *prop, u32 hw_id,
+						    const char *fmt, ...)
 {
 	va_list args;
 
@@ -566,15 +579,21 @@ static inline void trace_update_hw_display_feature(const char *prop, u32 hw_id,
 	va_end(args);
 }
 
-
 /**
- * trace_config_hw_display_feature() - logs configuring display feature
+ * trace_update_hw_display_feature() - logs updating display feature
  * @prop: name of property
  * @hw_id: id of hw component being updated
  * @...: format string and args for string printing
  */
-static inline void trace_config_hw_display_feature(const char *prop, u32 hw_id,
-						   const char *fmt, ...)
+#define trace_update_hw_display_feature(prop, hw_id, fmt, ...) \
+	do { \
+		if (trace_disp_update_out_ctrl_feature_enabled()) \
+			_trace_update_hw_display_feature(prop, hw_id, fmt, ##__VA_ARGS__); \
+	} while (0)
+
+
+static inline void _trace_config_hw_display_feature(const char *prop, u32 hw_id,
+						    const char *fmt, ...)
 {
 	va_list args;
 
@@ -583,15 +602,21 @@ static inline void trace_config_hw_display_feature(const char *prop, u32 hw_id,
 	va_end(args);
 }
 
-
 /**
- * trace_update_hw_wb_feature() - logs updating writeback feature
+ * trace_config_hw_display_feature() - logs configuring display feature
  * @prop: name of property
  * @hw_id: id of hw component being updated
  * @...: format string and args for string printing
  */
-static inline void trace_update_hw_wb_feature(const char *prop, u32 hw_id,
-					      const char *fmt, ...)
+#define trace_config_hw_display_feature(prop, hw_id, fmt, ...) \
+	do { \
+		if (trace_disp_config_out_ctrl_feature_enabled()) \
+			_trace_config_hw_display_feature(prop, hw_id, fmt, ##__VA_ARGS__); \
+	} while (0)
+
+
+static inline void _trace_update_hw_wb_feature(const char *prop, u32 hw_id,
+					       const char *fmt, ...)
 {
 	va_list args;
 
@@ -600,15 +625,21 @@ static inline void trace_update_hw_wb_feature(const char *prop, u32 hw_id,
 	va_end(args);
 }
 
-
 /**
- * trace_config_hw_wb_feature() - logs configuring writeback feature
+ * trace_update_hw_wb_feature() - logs updating writeback feature
  * @prop: name of property
  * @hw_id: id of hw component being updated
  * @...: format string and args for string printing
  */
-static inline void trace_config_hw_wb_feature(const char *prop, u32 hw_id,
-					      const char *fmt, ...)
+#define trace_update_hw_wb_feature(prop, hw_id, fmt, ...) \
+	do { \
+		if (trace_disp_update_wb_feature_enabled()) \
+			_trace_update_hw_wb_feature(prop, hw_id, fmt, ##__VA_ARGS__); \
+	} while (0)
+
+
+static inline void _trace_config_hw_wb_feature(const char *prop, u32 hw_id,
+					       const char *fmt, ...)
 {
 	va_list args;
 
@@ -616,6 +647,18 @@ static inline void trace_config_hw_wb_feature(const char *prop, u32 hw_id,
 	trace_disp_config_wb_feature(prop, hw_id, fmt, &args);
 	va_end(args);
 }
+
+/**
+ * trace_config_hw_wb_feature() - logs configuring writeback feature
+ * @prop: name of property
+ * @hw_id: id of hw component being updated
+ * @...: format string and args for string printing
+ */
+#define trace_config_hw_wb_feature(prop, hw_id, fmt, ...) \
+	do { \
+		if (trace_disp_config_wb_feature_enabled()) \
+			_trace_config_hw_wb_feature(prop, hw_id, fmt, ##__VA_ARGS__); \
+	} while (0)
 
 /*
  * Use enum to reduce some degree of function complexity explosion,

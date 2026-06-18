@@ -275,6 +275,8 @@ int32_t vs_dpu_sram_free(enum vs_dpu_sram_pool_type type, u32 node_handle, u8 pl
 	acquired = 1;
 
 	status = get_sram_node_in_list(sram_pools[type], node_handle, &curr, remove_node);
+	if (status)
+		goto OnError;
 
 	sram_pools[type]->free += curr->size;
 

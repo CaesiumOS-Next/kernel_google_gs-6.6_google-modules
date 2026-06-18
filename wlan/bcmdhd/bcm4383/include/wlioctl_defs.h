@@ -4,7 +4,7 @@
  *
  * Definitions subject to change without notice.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -295,6 +295,7 @@ typedef uint32 ratespec_t;
 						 * enable LISTEN along with PASSIVE flag
 						 */
 
+/* Use lower 16 bit for scan flags, the upper 16 bits are for internal use */
 /* WL_SCANFLAGS_EXT_ flags */
 #define WL_SCANFLAGS_EXT_LOWPOWER_PARALLEL_2G_SCAN	0x1U	/* Lowpower parallel 2G scan */
 #define WL_SCANFLAGS_EXT_NOMLOFOLLOWUP			0x2U	/* No 2G or 5G band active
@@ -468,13 +469,15 @@ typedef uint32 ratespec_t;
 #define WL_BSS2_FLAGS_RNR_MATCH		0x10	/* To report original BSS that has RNR match */
 #define WL_BSS2_FLAGS_HE_BCN_PRBRSP	0x20	/* BSS update to indiacte HE bcn or prb rsp. */
 #define WL_BSS2_FLAGS_HE_6G_DUP		0x40	/* non-HT dup'ed beacon indicator */
-#define WL_BSS2_FLAGS_FROM_SS		0x80	/* bss_info from results on slim scan */
+#define WL_BSS2_FLAGS_FROM_SS		0x80	/* obsoleted. to be removed */
+#define WL_BSS2_FLAGS_FROM_MS		0x80	/* bss_info from results on multi scan */
 
 /* bit definitions for bcnflags in wl_bss_info */
 #define WL_BSS_BCNFLAGS_INTERWORK_PRESENT	0x01 /* beacon had IE, accessnet valid */
 #define WL_BSS_BCNFLAGS_INTERWORK_PRESENT_VALID 0x02 /* on indicates support for this API */
-#define WL_BSS_BCNFLAGS_MULTIPLE_BSSID_SET 0x4 /* this AP belongs to a multiple BSSID set */
-#define WL_BSS_BCNFLAGS_NONTRANSMITTED_BSSID 0x8 /* this AP is the transmitted BSSID */
+#define WL_BSS_BCNFLAGS_MULTIPLE_BSSID_SET	0x04 /* this AP belongs to a multiple BSSID set */
+#define WL_BSS_BCNFLAGS_NONTRANSMITTED_BSSID	0x08 /* this AP is the transmitted BSSID */
+#define WL_BSS_BCNFLAGS_BSSCOLOR_PRESENT	0x10 /* this AP has BSS color info */
 
 /* bssinfo flag for nbss_cap */
 #define VHT_BI_SGI_80MHZ		0x00000100
@@ -572,6 +575,9 @@ typedef uint32 ratespec_t;
 #define FIPS_ENABLED	0x0080
 #endif /* WLFIPS */
 
+#ifdef BCMWAPI_WPI
+#define SMS4_ENABLED		0x0100
+#endif /* BCMWAPI_WPI */
 
 /* wsec macros for operating on the above definitions */
 #ifdef WLWSEC
@@ -596,6 +602,11 @@ typedef uint32 ratespec_t;
 #define WSEC_CKIP_MIC_ENABLED(wsec)	((wsec) & CKIP_MIC_ENABLED)
 #define WSEC_CKIP_ENABLED(wsec)	((wsec) & (CKIP_KP_ENABLED|CKIP_MIC_ENABLED))
 
+#ifdef BCMWAPI_WPI
+#define WSEC_ENABLED(wsec) \
+	((wsec) & (WEP_ENABLED | TKIP_ENABLED | AES_ENABLED | CKIP_KP_ENABLED |	\
+	  CKIP_MIC_ENABLED | SMS4_ENABLED))
+#endif /* BCMWAPI_WPI */
 
 #ifndef BCMWAPI_WPI /* BCMWAPI_WPI */
 #define WSEC_ENABLED(wsec) \
@@ -604,6 +615,9 @@ typedef uint32 ratespec_t;
 #endif /* BCMWAPI_WPI */
 #else /* defined BCMCCX */
 
+#ifdef BCMWAPI_WPI
+#define WSEC_ENABLED(wsec)	((wsec) & (WEP_ENABLED | TKIP_ENABLED | AES_ENABLED | SMS4_ENABLED))
+#endif /* BCMWAPI_WPI */
 
 #ifndef BCMWAPI_WPI /* BCMWAPI_WPI */
 #define WSEC_ENABLED(wsec)	((wsec) & (WEP_ENABLED | TKIP_ENABLED | AES_ENABLED))
@@ -615,6 +629,9 @@ typedef uint32 ratespec_t;
 
 #define WSEC_SES_OW_ENABLED(wsec)	((wsec) & SES_OW_ENABLED)
 
+#ifdef BCMWAPI_WAI
+#define WSEC_SMS4_ENABLED(wsec)	((wsec) & SMS4_ENABLED)
+#endif /* BCMWAPI_WAI */
 
 /* Following macros are not used any more. Just kept here to
  * avoid build issue in BISON/CARIBOU branch
@@ -667,7 +684,7 @@ typedef uint32 ratespec_t;
 
 #ifdef MACOSX
 /* Macos limits ioctl maxlen for TX to 1864 and for RX to 2004 */
-#define WLC_IOCTL_MAXLEN            2000    /* "max" length ioctl buffer */
+#define WLC_IOCTL_MAXLEN            2000u    /* "max" length ioctl buffer */
 #else
 #define WLC_IOCTL_MAXLEN            8192u   /* "max" length ioctl buffer */
 #endif /* MACOSX */
@@ -1461,8 +1478,8 @@ typedef uint32 ratespec_t;
 #define WL_OCE_VAL		0x20000000 /* reuse */
 #define WL_PCIE_VAL		0x40000000
 #define WL_PMDUR_VAL		0x80000000
-/* use top-bit for WL_TIME_STAMP_VAL because this is a modifier
- * rather than a message-type of its own
+/* Use top-bit for WL_TIME_STAMP_VAL because this is a modifier
+ * rather than a message-type of its own.
  */
 #define WL_TIMESTAMP_VAL        0x80000000
 
@@ -1477,6 +1494,7 @@ typedef uint32 ratespec_t;
 #define WL_DYNBW_DBG_VAL	0x00000020
 #define WL_RATE_INFO_VAL	0x00000040
 #define WL_RATE_TRACE_VAL	0x00000080
+#define WL_KM_INFO_VAL		0x00000100
 
 /* number of bytes needed to define a proper bit mask for MAC event reporting */
 #define BCMIO_ROUNDUP(x, y)	((((x) + ((y) - 1)) / (y)) * (y))
@@ -1867,28 +1885,37 @@ typedef uint32 ratespec_t;
 #define CHANIM_ACS_RECORD			10
 
 /* CHANIM */
-#define CCASTATS_TXDUR  0
-#define CCASTATS_INBSS  1
-#define CCASTATS_OBSS   2
-#define CCASTATS_NOCTG  3
-#define CCASTATS_NOPKT  4
-#define CCASTATS_DOZE   5
-#define CCASTATS_TXOP	6
-#define CCASTATS_GDTXDUR        7
-#define CCASTATS_BDTXDUR        8
+#define CCASTATS_TXDUR  0u
+#define CCASTATS_INBSS  1u
+#define CCASTATS_OBSS   2u
+#define CCASTATS_NOCTG  3u
+#define CCASTATS_NOPKT  4u
+#define CCASTATS_DOZE   5u
+#define CCASTATS_TXOP	6u
+#define CCASTATS_GDTXDUR        7u
+#define CCASTATS_BDTXDUR        8u
+#define CCASTATS_MYRX      9u
+#define CCASTATS_TXMUTE      10u
+#define CCASTATS_RXBLNK      11u
 
 /* FIXME: CCASTATS_MAX is 9 for existing chips and 10 for new ones.
  * This is to avoid rom invalidation of existing chips.
  */
+#define CCASTATS_V3_MAX    10
 #ifndef WLCHANIM_V2
 #define CCASTATS_MAX    9
 #else /* WLCHANIM_V2 */
-#define CCASTATS_MYRX      9
 #define CCASTATS_MAX    10
 #endif /* WLCHANIM_V2 */
+#define	CCASTATS_V4_MAX	12
 
 #define WL_CHANIM_COUNT_ALL	0xff
 #define WL_CHANIM_COUNT_ONE	0x1
+#define WL_CHANIM_US_DUR               0xfa
+#define WL_CHANIM_US_DUR_GET           0xfb
+#define WL_CHANIM_COUNT_US_ONE         0xfc
+#define WL_CHANIM_COUNT_US_ALL         0xfd
+#define WL_CHANIM_COUNT_US_RESET       0xfe
 
 /* flags used in scandb, indicates bss attributes of interest */
 #define WLC_SCANDB_CACHE_FLAG_NONE	(0u)		/* None */
@@ -1902,6 +1929,7 @@ typedef uint32 ratespec_t;
 #define SC_CHANIM_ID_NULL	0u
 #define SC_CHANIM_ID_SCAN	1u	/* Module Id of scan, used to report scqs */
 #define SC_CHANIM_ID_STA	2u	/* Module Id of STA, used tp report scqs */
+#define SC_CHANIM_ID_SBI	3u	/* Module Id of SBI, used to report scqs */
 
 /* ap tpc modes */
 #define	AP_TPC_OFF		0
@@ -2320,9 +2348,11 @@ typedef uint32 ratespec_t;
 #define BCM_DCS_IOVAR		0x1
 #define BCM_DCS_UNKNOWN		0xFF
 
-#define WL_CHAN_CC_INDOOR_EXT	(1u << 0u)	/* policy to extend sta indoor chan to peer role */
-#define WL_CHAN_CC_DFS_EXT	(1u << 1u)	/* policy to extend sta DFS chan to peer role */
-#define WL_CHAN_CC_POLICY_MASK	0x3u		/* supported chan concurrency policy mask */
+/* Definition of policies to extend STA DFS/Indoor to Peer-to-Peer roles */
+#define WL_CHAN_CC_INDOOR_EXT		(1u << 0u)	/* To extend sta indoor chan to P2P role */
+#define WL_CHAN_CC_DFS_EXT		(1u << 1u)	/* To extend sta DFS chan to P2P role */
+#define WL_CHAN_CC_AWARE_DFS_EXT	(1u << 2u)	/* To extend sta DFS chan to NAN role */
+#define WL_CHAN_CC_POLICY_MASK		0x7u		/* Supported chan concurrency policy mask */
 
 #ifdef EXT_STA
 #define IHV_OID_BCM 0x00181000	/* based on BRCM_OUI value */
@@ -2383,12 +2413,6 @@ typedef uint32 ratespec_t;
 #define WL_DFRTS_LOGIC_OFF	0	/* Feature is disabled */
 #define WL_DFRTS_LOGIC_OR	1	/* OR all non-zero threshold conditions */
 #define WL_DFRTS_LOGIC_AND	2	/* AND all non-zero threshold conditions */
-
-/* Definitions for Reliable Multicast */
-#define WL_RELMCAST_MAX_CLIENT		32
-#define WL_RELMCAST_FLAG_INBLACKLIST	1
-#define WL_RELMCAST_FLAG_ACTIVEACKER	2
-#define WL_RELMCAST_FLAG_RELMCAST	4
 
 /* structures for proximity detection device role */
 #define WL_PROXD_MODE_DISABLE	0
@@ -2451,6 +2475,8 @@ typedef uint32 ratespec_t;
 #define PM_MAX	1
 #define PM_FAST 2
 #define PM_FORCE_OFF 3		/* use this bit to force PM off even bt is active */
+
+#define WL_WME_CNT_VERSION	WL_WME_CNT_VER_1	/* current version of wl_wme_cnt_t */
 
 /* fbt_cap: FBT assoc / reassoc modes. */
 #define WLC_FBT_CAP_DRV_4WAY_AND_REASSOC  1 /* Driver 4-way handshake & reassoc (WLFBT). */
@@ -2649,6 +2675,13 @@ enum {
 	WL_REINIT_RC_LAST,	/* DONOT use this any more, kept for legacy reasons */
 	WL_REINIT_RC_RADIO_CRASH	  = 55,
 	WL_REINIT_RC_BM_IDLE_FAIL_TO	  = 56, /* BM idle fail timeout */
+	WL_REINIT_RC_URB_CBM_ERROR	  = 57, /* URB CBM error */
+	WL_REINIT_RC_TXE_SHARED_ERR	  = 58, /* TXE shared error */
+	WL_REINIT_RC_TXDMA_ERR		  = 59, /* Tx DMA errors */
+	WL_REINIT_RC_RX_HW_ERR		  = 60, /* Rx HW error */
+	WL_REINIT_RC_URB_LEN_ERROR	  = 61, /* URB LEN error */
+	WL_REINIT_RC_PHY_BAD_ERROR	  = 62, /* PHY badness detected */
+	WL_REINIT_RC_DYNSAR_ERROR	  = 63, /* Error detected in dynsar */
 	WL_REINIT_RC_SUPPORTED_LAST	/* Use for app ONLY, DONOT use this in wlc code.
 					 * For wlc, use WL_REINIT_RC_VERSIONED_LAST
 					 */
@@ -2686,7 +2719,7 @@ enum {
 #define WLC_WITH_XTLV_CNT
 
 /* Number of xtlv info as required to calculate subcounter offsets */
-#define WL_CNT_XTLV_ID_NUM	14
+#define WL_CNT_XTLV_ID_NUM	15
 #define WL_TLV_IOV_VERSION_1	1u
 #define WL_TLV_IOV_VERSION_2	2u
 
@@ -2750,6 +2783,8 @@ enum wl_cnt_xtlv_id {
 	WL_CNT_XTLV_SLIM_SCAN_STATS = 0x100d,		/* Slim Scan stats */
 	WL_CNT_XTLV_DATA_BW_STATS = 0x100e,		/* corerev >= 89 DataBW stats */
 	WL_CNT_XTLV_MACST_TX_V4 = 0x100f,		/* corerev >= 88 ucode macstats V4 - tx */
+	WL_CNT_XTLV_MULTI_SCAN_STATS = 0x1010,		/* Multi Scan stats */
+	WL_CNT_XTLV_PHY_RX_STATS = 0x1011,		/* PHY RX stats */
 	/* XLTVs in this gap are available for use */
 	/* scan aux core related additional counters */
 	WL_CNT_XTLV_SCANAUX_UCODE_V1 = 0x1012,
@@ -2795,6 +2830,9 @@ enum wl_cnt_xtlv_id {
 #define WL_CLM_HAS_OFDM_EIRP       0x2000u /**< Flag for HAS_OFDM_EIRP */
 #define WL_CLM_NO_160MHZ           0x4000u /**< Flag for NO_160MHZ */
 #define WL_CLM_NO_80_80MHZ         0x8000u /**< Flag for NO_80_80MHZ */
+#define WL_CLM_EHT                 0x10000u /**< Flag for EHT */
+#define WL_CLM_MRU                 0x20000u /**< Flag for MRU */
+#define WL_CLM_VLP_TPC_FCC         0x40000u /**< Flag for VLP_TPC_FCC */
 #define WL_CLM_NO_320MHZ           0x200000u /**< Flag for NO_320MHZ */
 #define WL_CLM_NO_160_160MHZ       0x400000u /**< Flag for NO_160_160MHZ */
 #define WL_CLM_CBP_FCC             0x800000u /**< Flag for CBP_FCC */
@@ -2808,6 +2846,7 @@ enum wl_cnt_xtlv_id {
 #define WL_CLM_DFS_FCC             WL_CLM_DFS_TPC /**< Flag for DFS FCC */
 #define WL_CLM_DFS_EU              (WL_CLM_DFS_TPC | WL_CLM_RADAR_TYPE_EU) /**< Flag for DFS EU */
 #define WL_CLM_PP                  0x8000000u /**< Flag for Punctured bandwidth allowed */
+#define WL_CLM_NO_FDSS		   0x10000000u /**< Flag for FDSS disabled for given country */
 
 typedef enum sup_auth_status {
 	/* Basic supplicant authentication states */
@@ -2832,83 +2871,6 @@ typedef enum sup_auth_status {
 	WLC_SUP_KEYXCHANGE_WAIT_G1,	/**< Waiting to receive handshake msg G1 */
 	WLC_SUP_KEYXCHANGE_PREP_G2	/**< Preparing to send handshake msg G2 */
 } sup_auth_status_t;
-
-#ifndef BCMUTILS_ERR_CODES
-
-/* SAE (Simultaneous Authentication of Equals) error codes.
- * These error codes are local.
- */
-
-/*  SAE status codes are reserved from -3072 to -4095 (1K) */
-
-enum wl_sae_status {
-	WL_SAE_E_AUTH_FAILURE			= -3072,
-	/* Discard silently */
-	WL_SAE_E_AUTH_DISCARD			= -3073,
-	/* Authentication in progress */
-	WL_SAE_E_AUTH_CONTINUE			= -3074,
-	/* Invalid scalar/elt */
-	WL_SAE_E_AUTH_COMMIT_INVALID		= -3075,
-	/* Invalid confirm token */
-	WL_SAE_E_AUTH_CONFIRM_INVALID		= -3076,
-	/* Peer scalar validation failure */
-	WL_SAE_E_CRYPTO_SCALAR_VALIDATION	= -3077,
-	/* Peer element prime validation failure */
-	WL_SAE_E_CRYPTO_ELE_PRIME_VALIDATION	= -3078,
-	/* Peer element is not on the curve */
-	WL_SAE_E_CRYPTO_ELE_NOT_ON_CURVE	= -3079,
-	/* Generic EC error (eliptic curve related) */
-	WL_SAE_E_CRYPTO_EC_ERROR		= -3080,
-	/* Both local and peer mac addrs are same */
-	WL_SAE_E_CRYPTO_EQUAL_MACADDRS		= -3081,
-	/* Loop exceeded in deriving the scalar */
-	WL_SAE_E_CRYPTO_SCALAR_ITER_EXCEEDED	= -3082,
-	/* ECC group is unsupported */
-	WL_SAE_E_CRYPTO_UNSUPPORTED_GROUP	= -3083,
-	/* Exceeded the hunting-and-pecking counter */
-	WL_SAE_E_CRYPTO_PWE_COUNTER_EXCEEDED	= -3084,
-	/* SAE crypto component is not initialized */
-	WL_SAE_E_CRYPTO_NOT_INITED		= -3085,
-	/* bn_get has failed */
-	WL_SAE_E_CRYPTO_BN_GET_ERROR		= -3086,
-	/* bn_set has failed */
-	WL_SAE_E_CRYPTO_BN_SET_ERROR		= -3087,
-	/* PMK is not computed yet */
-	WL_SAE_E_CRYPTO_PMK_UNAVAILABLE		= -3088,
-	/* Peer confirm did not match */
-	WL_SAE_E_CRYPTO_CONFIRM_MISMATCH	= -3089,
-	/* Element K is at infinity no the curve */
-	WL_SAE_E_CRYPTO_KEY_AT_INFINITY		= -3090,
-	/* SAE Crypto private data magic number mismatch */
-	WL_SAE_E_CRYPTO_PRIV_MAGIC_MISMATCH	= -3091,
-	/* Max retry exhausted */
-	WL_SAE_E_MAX_RETRY_LIMIT_REACHED	= -3092,
-	/* peer sent password ID mismatch to local */
-	WL_SAE_E_AUTH_PEER_PWDID_MISMATCH	= -3093,
-	/* user not configured password */
-	WL_SAE_E_AUTH_PASSWORD_NOT_CONFIGURED	= -3094,
-	/* user not configured password ID */
-	WL_SAE_E_AUTH_PWDID_NOT_CONFIGURED	= -3095,
-	/* Anti-clogging token mismatch */
-	WL_SAE_E_AUTH_ANTI_CLOG_MISMATCH	= -3096,
-	/* SAE PWE method mismatch */
-	WL_SAE_E_AUTH_PWE_MISMATCH		= -3097,
-	/* SAE-PK validation failed */
-	WL_SAE_E_AUTH_PK_VALIDATION		= -3098
-};
-
-/* PMK manager block. Event codes from -5120 to -6143 */
-
-/* PSK hashing event codes */
-typedef enum wlc_pmk_psk_hash_status {
-	WL_PMK_E_PSK_HASH_FAILED =  -5120,
-	WL_PMK_E_PSK_HASH_DONE =    -5121,
-	WL_PMK_E_PSK_HASH_RUNNING = -5122,
-	WL_PMK_E_PSK_INVALID = -5123,
-	WL_PMK_E_PSK_NOMEM = -5124
-} wlc_pmk_psk_hash_status_t;
-
-#endif	/* BCMUTILS_ERR_CODES */
 
 /* Per-interface reportable stats types */
 enum wl_ifstats_xtlv_id {
@@ -3134,7 +3096,13 @@ enum wlc_capext_coex_subfeature_bitpos {
 	WLC_CAPEXT_COEX_BITPOS_LTECX_LBT	= 1,
 	WLC_CAPEXT_COEX_BITPOS_BTC_WIFI_PROT	= 2,
 	WLC_CAPEXT_COEX_BITPOS_RC1		= 3,
+#if defined(WL_RC2COEX) || defined(RC2CX)
+	WLC_CAPEXT_COEX_BITPOS_RC2		= 4,
+#endif /* WL_RC2COEX */
 	WLC_CAPEXT_COEX_BITPOS_SIB		= 5,
+#ifdef LR154CX
+	WLC_CAPEXT_COEX_BITPOS_154		= 6,
+#endif /* LR154CX */
 	WLC_CAPEXT_COEX_BITPOS_BT2G		= 7,
 	WLC_CAPEXT_COEX_BITPOS_BT5G		= 8,
 	WLC_CAPEXT_COEX_BITPOS_MAX
@@ -3347,8 +3315,77 @@ enum wlc_capext_feature_bitpos {
 	WLC_CAPEXT_FEATURE_BITPOS_MONITOR_MULTI		= 137,
 	WLC_CAPEXT_FEATURE_BITPOS_MPF_SCAN		= 138,
 	WLC_CAPEXT_FEATURE_BITPOS_MRSNO			= 139,
+	WLC_CAPEXT_FEATURE_BITPOS_AOP_SCAN		= 140,
+	WLC_CAPEXT_FEATURE_BITPOS_MRSNO_AP              = 141,
+	WLC_CAPEXT_FEATURE_BITPOS_CSI_DMA		= 142,
+	WLC_CAPEXT_FEATURE_BITPOS_LPCAP			= 143,
 
 	WLC_CAPEXT_FEATURE_BITPOS_MAX
 };
+
+/* Debug Crash types */
+#define WL_DBG_CRSH_TYPE_RD_RANDOM			0x00u
+#define WL_DBG_CRSH_TYPE_RD_INV_CORE			0x01u
+#define WL_DBG_CRSH_TYPE_WR_INV_CORE			0x02u
+#define WL_DBG_CRSH_TYPE_RD_INV_WRAP			0x03u
+#define WL_DBG_CRSH_TYPE_WR_INV_WRAP			0x04u
+#define WL_DBG_CRSH_TYPE_RD_RES_CORE			0x05u
+#define WL_DBG_CRSH_TYPE_WR_RES_CORE			0x06u
+#define WL_DBG_CRSH_TYPE_RD_RES_WRAP			0x07u
+#define WL_DBG_CRSH_TYPE_WR_RES_WRAP			0x08u
+#define WL_DBG_CRSH_TYPE_RD_CORE_NO_CLK			0x09u
+#define WL_DBG_CRSH_TYPE_WR_CORE_NO_CLK			0x0Au
+#define WL_DBG_CRSH_TYPE_RD_CORE_NO_PWR			0x0Bu
+#define WL_DBG_CRSH_TYPE_WR_CORE_NO_PWR			0x0Cu
+#define WL_DBG_CRSH_TYPE_PCIe_AER			0x0Du
+#define WL_DBG_CRSH_TYPE_POWERCYCLE			0x0Eu
+#define WL_DBG_CRSH_TYPE_TRAP				0x0Eu
+#define WL_DBG_CRSH_TYPE_HANG				0x0Fu
+#define WL_DBG_CRSH_TYPE_PHYTXERR			0x10u
+
+#define WL_DBG_CRSH_TYPE_PHYREAD			0x11u
+#define WL_DBG_CRSH_TYPE_PHYWRITE			0x12u
+#define WL_DBG_CRSH_TYPE_INV_PHYREAD			0x13u
+#define WL_DBG_CRSH_TYPE_INV_PHYWRITE			0x14u
+#define WL_DBG_CRSH_TYPE_DUMP_STATE			0x15u
+
+/* Radio/PHY health check crash scenarios - reserved 0x16 to 0x30 */
+#define WL_DBG_CRSH_TYPE_RADIO_HEALTHCHECK_START	0x16u
+#define WL_DBG_CRSH_TYPE_DESENSE_LIMITS			0x17u
+#define WL_DBG_CRSH_TYPE_BASEINDEX_LIMITS		0x18u
+#define WL_DBG_CRSH_TYPE_TXCHAIN_INVALID		0x19u
+#define WL_DBG_CRSH_TYPE_CRITICAL_MALLOC_FAIL		0x1au
+#define WL_DBG_CRSH_TYPE_TEMPSENSE_LIMITS		0x20u
+#define WL_DBG_CRSH_TYPE_TXPOWER_LIMITS			0x21u
+#define WL_DBG_CRSH_TYPE_VCOCAL_FAILED			0x22u
+#define WL_DBG_CRSH_TYPE_PLL_NOTLOCKED			0x23u
+#define WL_DBG_CRSH_TYPE_RADIO_HEALTHCHECK_LAST		0x30u
+#define WL_DBG_CRSH_TYPE_BTCOEX_RFACTIVE		0x31u
+#define WL_DBG_CRSH_TYPE_BTCOEX_TXCONF_DELAY		0x32u
+#define WL_DBG_CRSH_TYPE_BTCOEX_ANT_DELAY		0x33u
+#define WL_DBG_CRSH_TYPE_BTCOEX_INVLD_TASKID		0x34u
+#define WL_DBG_CRSH_TYPE_STACK_OVERRUN			0x35u
+#define WL_DBG_CRSH_TYPE_MPU_HCHK			0x36u
+#define WL_DBG_CRSH_TYPE_STACK_CORRUPTION		0x38u
+/* To maintain uniformity with other branches, leaving 0x37 & 0x38 unused */
+#define WL_DBG_CRSH_TYPE_ARM_DBG_REG_ACCESS		0x39u
+#define WL_DBG_CRSH_TYPE_WLREGON			0x3au
+
+#define WL_DBG_CRSH_TYPE_SR_DCCAL0			0x40u
+#define WL_DBG_CRSH_TYPE_SR_DCCAL1			0x41u
+#define WL_DBG_CRSH_TYPE_SR_RXIQCAL0			0x50u
+#define WL_DBG_CRSH_TYPE_SR_RXIQCAL1			0x51u
+#define WL_DBG_CRSH_TYPE_SR_TEMP0			0x60u
+#define WL_DBG_CRSH_TYPE_SR_TEMP1			0x61u
+#define WL_DBG_CRSH_TYPE_SR_TEMP2			0x62u
+#define WL_DBG_CRSH_TYPE_SR_FULLCAL0			0x70u
+#define WL_DBG_CRSH_TYPE_SR_FULLCAL1			0x71u
+#define WL_DBG_CRSH_TYPE_SR_MPCAL0			0x80u
+#define WL_DBG_CRSH_TYPE_SR_MPCAL1			0x81u
+#define WL_DBG_CRSH_TYPE_SR_SEM				0x90u
+#define WL_DBG_CRSH_TYPE_SR_AXI				0x91u
+#define WL_DBG_CRSH_TYPE_SR_TEMPREQ_NORSP		0xa0u
+#define WL_DBG_CRSH_TYPE_SR_CALREQ_NORSP		0xa1u
+#define WL_DBG_CRSH_TYPE_LAST				0xa2u
 
 #endif /* wlioctl_defs_h */

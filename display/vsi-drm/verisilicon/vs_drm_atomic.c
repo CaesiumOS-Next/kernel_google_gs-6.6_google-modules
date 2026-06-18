@@ -195,6 +195,7 @@ static void vs_drm_commit_tail(struct drm_atomic_state *old_state)
 static void vs_drm_commit_work_struct(struct work_struct *work)
 {
 	struct drm_atomic_state *state = container_of(work, struct drm_atomic_state, commit_work);
+
 	vs_drm_commit_tail(state);
 }
 
@@ -663,13 +664,16 @@ static void _check_panel_gram_errors(bool *coredump_executed, struct vs_crtc_sta
 				     struct gs_drm_connector_state *gs_conn_state)
 {
 	struct drm_crtc *crtc = vs_crtc_state->base.crtc;
-	bool err_triggered = (!gs_conn_state->coredump_for_gram_collision_triggered &&
-			      test_bit(GS_PANEL_ERR_GRAM_COLLISION, gs_conn_state->panel_errors));
+	bool err_triggered = (gs_conn_state->trigger_dumps_for_gram_collision &&
+			      !gs_conn_state->coredump_for_gram_collision_triggered);
 
 	if (err_triggered) {
 		dev_err(crtc->dev->dev, "GRAM collision detected on %s\n", crtc->name);
 		_execute_recovery_or_coredump_if_needed(coredump_executed, vs_crtc_state,
 							gs_conn_state, SSCD_SRC_GRAM_COLLISION);
+		gs_conn_state->trigger_dumps_for_gram_collision = false;
+		/* won't trigger coredump again until the next reboot */
+		gs_conn_state->coredump_for_gram_collision_triggered = true;
 	}
 }
 

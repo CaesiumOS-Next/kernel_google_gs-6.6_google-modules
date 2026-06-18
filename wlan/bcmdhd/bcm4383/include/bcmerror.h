@@ -1,7 +1,7 @@
 /*
  * Common header file for all error codes.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -140,8 +140,14 @@ typedef int bcmerror_t;
 #define BCME_PLL_RCCAL_FAIL		-81	/* RCCAL failed: SCAN_LPF / PLL */
 #define BCME_BT_RCCAL_FAIL		-82	/* RCCAL failed: BT caps */
 #define BCME_PHYMUTE			-83	/* PHY MUTED */
+#define BCME_ECC_REJECT			-84	/* OTP Program Reject on ECC enabled row */
+#define BCME_OTP_PROG_LOCK		-85	/* OTP Program Locked */
+#define BCME_RETRY			-86	/* Ask caller to retry */
+#define BCME_NOTINFRASTA		-87	/* Not Infra STA */
+#define BCME_BADSCANCHAN		-88	/* Bad scan channel list */
 
-#define BCME_LAST			BCME_PHYMUTE /* add new one above and update this */
+/* Add new one above and update BCME_LAST!! */
+#define BCME_LAST			BCME_BADSCANCHAN
 
 /* This error code is *internal* to the driver, and is not propogated to users. It should
  * only be used by IOCTL patch handlers as an indication that it did not handle the IOCTL.
@@ -234,16 +240,22 @@ typedef int bcmerror_t;
 	"Command/context already active", \
 	"Command/context is in progress", \
 	"No action taken i.e. NOP",	\
-	"6G Not permitted", \
+	"6G Not permitted",		\
 	"tpe for 6g channel(s) does not exist", \
 	"PLL RC Cal failed",		\
 	"BT RC Cal failure",		\
 	"Phy muted",			\
+	"OTP Program Reject on ECC enabled row", \
+	"Programming failed due to OTP Locked - need a reset", \
+	"retry indication",		\
+	"Not Infra STA",		\
+	"Bad scan channel list",		\
 }
 
 /* FTM error codes [-1024, -2047] */
 enum {
-	WL_FTM_E_LAST			= -1094,
+	WL_FTM_E_LAST			= -1095,
+	WL_FTM_E_INVALID_BSSCFG		= -1095,
 	WL_FTM_E_SUPPRESS		= -1094,
 	WL_FTM_E_NO_CSI_DATA		= -1093,
 	WL_FTM_E_PHY_CSI_FATAL_ERR	= -1092,
@@ -279,7 +291,7 @@ enum {
 	WL_FTM_E_NO_SCB			= -1062,
 	WL_FTM_E_NOT_READY		= -1061,
 	WL_FTM_E_DELETED		= -1060,
-	WL_FTM_E_TX_PENDING		= -1059,
+	WL_FTM_E_CHANSW			= -1059,
 	WL_FTM_E_BAD_CONFIG		= -1058,
 	WL_FTM_E_ASSOC_INPROG		= -1057,
 	WL_FTM_E_NOAVAIL		= -1056,
@@ -315,54 +327,58 @@ enum {
 	WL_FTM_E_CANCELED		= -1026,	/**< local */
 	WL_FTM_E_INVALID_SESSION	= -1025,
 	WL_FTM_E_BAD_STATE		= -1024,
+	WL_FTM_E_ERROR			= -1,
 	WL_FTM_E_OK			= 0
 };
 typedef int32 wl_ftm_status_t;
 
-/* TODO: remove another copy in wlioctl.h */
-#ifdef BCMUTILS_ERR_CODES
 /* begin proxd codes compatible w/ ftm above - obsolete  DO NOT extend */
 enum {
-	WL_PROXD_E_LAST			= -1059,
-	WL_PROXD_E_CHANSW		= -1059,
-	WL_PROXD_E_PKTFREED		= -1058,
-	WL_PROXD_E_ASSOC_INPROG		= -1057,
-	WL_PROXD_E_NOAVAIL		= -1056,
-	WL_PROXD_E_EXT_SCHED		= -1055,
-	WL_PROXD_E_NOT_BCM		= -1054,
-	WL_PROXD_E_FRAME_TYPE		= -1053,
-	WL_PROXD_E_VERNOSUPPORT		= -1052,
-	WL_PROXD_E_SEC_NOKEY		= -1051,
-	WL_PROXD_E_SEC_POLICY		= -1050,
-	WL_PROXD_E_SCAN_INPROCESS	= -1049,
-	WL_PROXD_E_BAD_PARTIAL_TSF	= -1048,
-	WL_PROXD_E_SCANFAIL		= -1047,
-	WL_PROXD_E_NOTSF		= -1046,
-	WL_PROXD_E_POLICY		= -1045,
-	WL_PROXD_E_INCOMPLETE		= -1044,
-	WL_PROXD_E_OVERRIDDEN		= -1043,
-	WL_PROXD_E_ASAP_FAILED		= -1042,
-	WL_PROXD_E_NOTSTARTED		= -1041,
-	WL_PROXD_E_INVALIDMEAS		= -1040,
-	WL_PROXD_E_INCAPABLE		= -1039,
-	WL_PROXD_E_MISMATCH		= -1038,
-	WL_PROXD_E_DUP_SESSION		= -1037,
-	WL_PROXD_E_REMOTE_FAIL		= -1036,
-	WL_PROXD_E_REMOTE_INCAPABLE	= -1035,
-	WL_PROXD_E_SCHED_FAIL		= -1034,
-	WL_PROXD_E_PROTO		= -1033,
-	WL_PROXD_E_EXPIRED		= -1032,
-	WL_PROXD_E_TIMEOUT		= -1031,
-	WL_PROXD_E_NOACK		= -1030,
-	WL_PROXD_E_DEFERRED		= -1029,
-	WL_PROXD_E_INVALID_SID		= -1028,
-	WL_PROXD_E_REMOTE_CANCEL	= -1027,
-	WL_PROXD_E_CANCELED		= -1026,	/**< local */
-	WL_PROXD_E_INVALID_SESSION	= -1025,
-	WL_PROXD_E_BAD_STATE		= -1024,
-	WL_PROXD_E_START		= -1024,
-	WL_PROXD_E_ERROR		= -1,
-	WL_PROXD_E_OK			= 0
+	/* Warning:
+	 * WL_FTM_E status code already inherited all of WL_PROXD_E
+	 * DO NOT use liternal integers as value of WL_PROXD_E
+	 * DO NOT extend WL_PROXD_E any more
+	 */
+	WL_PROXD_E_LAST			= WL_FTM_E_CHANSW,
+	WL_PROXD_E_CHANSW		= WL_FTM_E_CHANSW,
+	WL_PROXD_E_PKTFREED		= WL_FTM_E_BAD_CONFIG,		/* mismatch in proxd */
+	WL_PROXD_E_ASSOC_INPROG		= WL_FTM_E_ASSOC_INPROG,
+	WL_PROXD_E_NOAVAIL		= WL_FTM_E_NOAVAIL,
+	WL_PROXD_E_EXT_SCHED		= WL_FTM_E_EXT_SCHED,
+	WL_PROXD_E_NOT_BCM		= WL_FTM_E_NOT_BCM,
+	WL_PROXD_E_FRAME_TYPE		= WL_FTM_E_FRAME_TYPE,
+	WL_PROXD_E_VERNOSUPPORT		= WL_FTM_E_VERNOSUPPORT,
+	WL_PROXD_E_SEC_NOKEY		= WL_FTM_E_SEC_NOKEY,
+	WL_PROXD_E_SEC_POLICY		= WL_FTM_E_SEC_POLICY,
+	WL_PROXD_E_SCAN_INPROCESS	= WL_FTM_E_SCAN_INPROCESS,
+	WL_PROXD_E_BAD_PARTIAL_TSF	= WL_FTM_E_BAD_PARTIAL_TSF,
+	WL_PROXD_E_SCANFAIL		= WL_FTM_E_SCANFAIL,
+	WL_PROXD_E_NOTSF		= WL_FTM_E_NOTSF,
+	WL_PROXD_E_POLICY		= WL_FTM_E_POLICY,
+	WL_PROXD_E_INCOMPLETE		= WL_FTM_E_INCOMPLETE,
+	WL_PROXD_E_OVERRIDDEN		= WL_FTM_E_OVERRIDDEN,
+	WL_PROXD_E_ASAP_FAILED		= WL_FTM_E_ASAP_FAILED,
+	WL_PROXD_E_NOTSTARTED		= WL_FTM_E_NOTSTARTED,
+	WL_PROXD_E_INVALIDMEAS		= WL_FTM_E_INVALIDMEAS,
+	WL_PROXD_E_INCAPABLE		= WL_FTM_E_INCAPABLE,
+	WL_PROXD_E_MISMATCH		= WL_FTM_E_MISMATCH,
+	WL_PROXD_E_DUP_SESSION		= WL_FTM_E_DUP_SESSION,
+	WL_PROXD_E_REMOTE_FAIL		= WL_FTM_E_REMOTE_FAIL,
+	WL_PROXD_E_REMOTE_INCAPABLE	= WL_FTM_E_REMOTE_INCAPABLE,
+	WL_PROXD_E_SCHED_FAIL		= WL_FTM_E_SCHED_FAIL,
+	WL_PROXD_E_PROTO		= WL_FTM_E_PROTO,
+	WL_PROXD_E_EXPIRED		= WL_FTM_E_EXPIRED,
+	WL_PROXD_E_TIMEOUT		= WL_FTM_E_TIMEOUT,
+	WL_PROXD_E_NOACK		= WL_FTM_E_NOACK,
+	WL_PROXD_E_DEFERRED		= WL_FTM_E_DEFERRED,
+	WL_PROXD_E_INVALID_SID		= WL_FTM_E_INVALID_SID,
+	WL_PROXD_E_REMOTE_CANCEL	= WL_FTM_E_REMOTE_CANCEL,
+	WL_PROXD_E_CANCELED		= WL_FTM_E_CANCELED,
+	WL_PROXD_E_INVALID_SESSION	= WL_FTM_E_INVALID_SESSION,
+	WL_PROXD_E_BAD_STATE		= WL_FTM_E_BAD_STATE,
+	WL_PROXD_E_START		= WL_FTM_E_BAD_STATE,
+	WL_PROXD_E_ERROR		= WL_FTM_E_ERROR,
+	WL_PROXD_E_OK			= WL_FTM_E_OK
 };
 typedef int32 wl_proxd_status_t;
 /* end proxd codes - obsolete  DO NOT extend */
@@ -528,7 +544,6 @@ enum {
 	/* SAE-PK validation failed */
 	WL_SAE_E_AUTH_PK_VALIDATION		= -3098
 };
-#endif /* BCMUTILS_ERR_CODES */
 
 /*
  * Bootloader error code range: -4096...-5119
@@ -704,14 +719,15 @@ enum {
 	/* bmpu configuration error */
 	BL_E_BUS_MPU_CONFIG_FAIL	= -4151,
 
+	/* Hash below supported minimum */
+	BL_E_SIG_SHA_BELOW_MIN		= -4152,
+
 	/* last error */
 	BL_E_LAST			= -5119
 };
 
 typedef int32 bl_status_t;
 
-/* TODO: remove another copy in wlioctl.h */
-#ifdef BCMUTILS_ERR_CODES
 /* PMK manager block. Event codes from -5120 to -6143 */
 /* PSK hashing event codes */
 enum {
@@ -739,7 +755,6 @@ enum {
 	/* Failure to get NAF3 params */
 	WL_SOE_E_NAF3_PARAMS_GET_ERROR		= -6147
 };
-#endif /* BCMUTILS_ERR_CODES */
 
 /* BCM crypto ASN.1 status codes. */
 /* Reserved range is from -7168 to -8191 */
@@ -847,7 +862,9 @@ enum {
 	/* PTKSA lifetime expired */
 	WL_PASN_E_AUTH_PTKSA_EXPIRED		= -8231,
 	/* Local to deauth peer. */
-	WL_PASN_E_DEAUTH_PEER			= -8232
+	WL_PASN_E_DEAUTH_PEER			= -8232,
+	/* WLC down */
+	WL_PASN_E_WLC_DOWN			= -8233
 };
 
 /* bcm fsm status codes. [-9216, -10239] */
@@ -903,28 +920,30 @@ enum {
 
 /* bcmsm error code [-12288 .. -13311] (1K) */
 typedef enum {
-	BCMSM_IN_RTC			= -12288,	/**< In Run to completion loop */
-	BCMSM_TRANS_NOT_FOUND		= -12289,	/**< Transition was not found */
-	BCMSM_TRANS_GUARD_FAILED	= -12290,	/**< guard for a transition failed */
-	BCMSM_TRANS_EFFECT_FAILED	= -12291,	/**< transition effect returned err */
-	BCMSM_TRANS_ERROR		= -12292,	/**< Error while taking transition */
-	BCMSM_STATE_ENTRY_FAILED	= -12293,	/**< Entry to state failed */
-	BCMSM_STATE_EXIT_FAILED		= -12294,	/**< Failure while executing a state */
-	BCMSM_STATE_ID_EXISTS		= -12295,	/**< Same ID exists */
-	BCMSM_STATE_CONFIG_ERROR	= -12296,	/**< SM configuration has error */
-	BCMSM_Q_FULL			= -12297,	/**< Event queue is full */
-	BCMSM_Q_EMPTY			= -12298,	/**< Event queue is empty */
-	BCMSM_Q_NO_DEQUEUE		= -12299,	/**< Dequeue attempted was unsuccessful */
-	BCMSM_CHOICE_STATE_NO_TRANS	= -12300,	/**< Choice has no valid out transition */
-	BCMSM_EVENT_ALLOC_FAILED	= -12301,	/**< Event allocation failed */
-	BCMSM_EVENT_EXPIRED		= -12302,	/**< Event expired */
-	BCMSM_EVENT_NOT_POSTED		= -12303,	/**< Event was not posted */
-	BCMSM_HALTED			= -12304,	/**< State machine is in final state */
-	BCMSM_TMR_NOT_STOPPED		= -12305,	/**< Error in stopping a timer */
-	BCMSM_TMR_NOT_STARTED		= -12306,	/**< Error in starting a timer */
-	BCMSM_TMR_NOT_FOUND		= -12307,	/**< No timer available to be scheduled */
-	BCMSM_TMR_ERROR			= -12308,	/**< Error in starting a timer */
-
-	BCMSM_MAX			= -13311
+	BCMSM_E_IN_RTC			= -12288,	/**< In Run to completion loop */
+	BCMSM_E_TRANS_NOT_FOUND		= -12289,	/**< Transition was not found */
+	BCMSM_E_TRANS_GUARD_FAILED	= -12290,	/**< guard for a transition failed */
+	BCMSM_E_TRANS_EFFECT_FAILED	= -12291,	/**< transition effect returned err */
+	BCMSM_E_TRANS_ERROR		= -12292,	/**< Error while taking transition */
+	BCMSM_E_STATE_ENTRY_FAILED	= -12293,	/**< Entry to state failed */
+	BCMSM_E_STATE_EXIT_FAILED	= -12294,	/**< Failure while executing a state */
+	BCMSM_E_STATE_ID_EXISTS		= -12295,	/**< Same ID exists */
+	BCMSM_E_STATE_CONFIG_ERROR	= -12296,	/**< SM configuration has error */
+	BCMSM_E_Q_FULL			= -12297,	/**< Event queue is full */
+	BCMSM_E_Q_EMPTY			= -12298,	/**< Event queue is empty */
+	BCMSM_E_Q_NO_DEQUEUE		= -12299,	/**< Dequeue attempted was unsuccessful */
+	BCMSM_E_CHOICE_STATE_NO_TRANS	= -12300,	/**< Choice has no valid out transition */
+	BCMSM_E_EVENT_ALLOC_FAILED	= -12301,	/**< Event allocation failed */
+	BCMSM_E_EVENT_EXPIRED		= -12302,	/**< Event expired */
+	BCMSM_E_EVENT_NOT_POSTED	= -12303,	/**< Event was not posted */
+	BCMSM_E_HALTED			= -12304,	/**< State machine is in final state */
+	BCMSM_E_TMR_NOT_STOPPED		= -12305,	/**< Error in stopping a timer */
+	BCMSM_E_TMR_NOT_STARTED		= -12306,	/**< Error in starting a timer */
+	BCMSM_E_TMR_NOT_FOUND		= -12307,	/**< No timer available to be scheduled */
+	BCMSM_E_TMR_ERROR		= -12308,	/**< Error in starting a timer */
+	BCMSM_E_NO_INSTANCE		= -12309,	/**< SM is not instantiated */
+	BCMSM_E_EVT_HANDLED		= -12310,	/**< EVT is consumed without transition */
+	BCMSM_E_MAX			= -13311
 } bcmsm_status_t;
+
 #endif	/* _bcmerror_h_ */

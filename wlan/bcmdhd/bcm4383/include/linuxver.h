@@ -2,7 +2,7 @@
  * Linux-specific abstractions to gain some independence from linux kernel versions.
  * Pave over some 2.2 versus 2.4 versus 2.6 kernel differences.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -622,21 +622,26 @@ typedef struct {
 	int		up_cnt;
 } tsk_ctl_t;
 
+/* Temporary change till CUSTOM_PREFIX is removed from all src */
+#if defined(CUSTOM_PREFIX) && !defined(LOG_CUSTOM_PREFIX_AND_RTC)
+#define LOG_CUSTOM_PREFIX_AND_RTC
+#endif /* CUSTOM_PREFIX && !LOG_CUSTOM_PREFIX_AND_RTC */
+
 /* ANDREY: new MACROs to start stop threads(OLD kthread API STYLE) */
 /* requires  tsk_ctl_t tsk  argument, the caller's priv data is passed in owner ptr */
 /* note this macro assumes there may be only one context waiting on thread's completion */
 #ifdef DHD_DEBUG
-#ifndef CUSTOM_PREFIX
+#ifndef LOG_CUSTOM_PREFIX_AND_RTC
 #define DBG_THR(x) printk x
 #else
 extern char* osl_get_rtctime(void);
-#define DBG_THR_PREFIX "[%s]"CUSTOM_PREFIX, osl_get_rtctime()
+#define DBG_THR_PREFIX "[%s]"LOG_CUSTOM_PREFIX_AND_RTC, osl_get_rtctime()
 #define DBG_THR(x)	\
 do {	\
 	pr_cont(DBG_THR_PREFIX);	\
 	pr_cont x;			\
 } while (0)
-#endif /* !CUSTOM_PREFIX */
+#endif /* !LOG_CUSTOM_PREFIX_AND_RTC */
 #else
 #define DBG_THR(x)
 #endif /* DHD_DEBUG */
@@ -716,6 +721,29 @@ static inline bool binary_sema_up(tsk_ctl_t *tsk)
 	}; \
 }
 
+#define PROC_START_ON(thread_func, owner, tsk_ctl, flags, name, cpu_on) \
+{ \
+	sema_init(&((tsk_ctl)->sema), 0); \
+	init_completion(&((tsk_ctl)->completed)); \
+	init_completion(&((tsk_ctl)->flushed)); \
+	(tsk_ctl)->parent = owner; \
+	(tsk_ctl)->proc_name = name;  \
+	(tsk_ctl)->terminated = FALSE; \
+	(tsk_ctl)->flush_ind = FALSE; \
+	(tsk_ctl)->up_cnt = 0; \
+	(tsk_ctl)->p_task  = kthread_create_on_cpu(thread_func, tsk_ctl, cpu_on, (char *)name); \
+	if (IS_ERR((tsk_ctl)->p_task)) { \
+		(tsk_ctl)->thr_pid = -1; \
+		DBG_THR(("%s(): thread:%s create failed\n", __FUNCTION__, \
+			(tsk_ctl)->proc_name)); \
+	} else { \
+		(tsk_ctl)->thr_pid = (tsk_ctl)->p_task->pid; \
+		spin_lock_init(&((tsk_ctl)->spinlock)); \
+		wake_up_process((tsk_ctl)->p_task); \
+		DBG_THR(("%s(): thread:%s:%lx started on cpu %d\n", __FUNCTION__, \
+			(tsk_ctl)->proc_name, (tsk_ctl)->thr_pid, cpu_on)); \
+	}; \
+}
 #define PROC_WAIT_TIMEOUT_MSEC	5000 /* 5 seconds */
 
 #define PROC_STOP(tsk_ctl) \

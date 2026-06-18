@@ -2,6 +2,4 @@ source "$(KCONFIG_EXT_MODULES_PREFIX)private/google-modules/powervr/pvrsrvkm/Kco
 
 source "$(KCONFIG_EXT_MODULES_PREFIX)private/google-modules/powervr/tc/Kconfig"
 
-source "$(KCONFIG_EXT_MODULES_PREFIX)private/google-modules/powervr/mt8173/Kconfig"
-
 source "$(KCONFIG_EXT_MODULES_PREFIX)private/google-modules/powervr/pixel/Kconfig"

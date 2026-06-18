@@ -29,7 +29,8 @@
 
 static int wb_connector_get_modes(struct drm_connector *connector)
 {
-	struct drm_device *dev = connector->dev;
+	struct drm_device *drm_dev = connector->dev;
+	struct device *dev = drm_dev->dev;
 
 	struct drm_display_mode *mode = NULL;
 	unsigned int i;
@@ -47,8 +48,15 @@ static int wb_connector_get_modes(struct drm_connector *connector)
 	};
 
 	for (i = 0; i < ARRAY_SIZE(cvt_mode); i++) {
-		mode = drm_cvt_mode(dev, cvt_mode[i].w, cvt_mode[i].h, cvt_mode[i].refresh, false,
-				    false, false);
+		mode = drm_cvt_mode(drm_dev, cvt_mode[i].w, cvt_mode[i].h, cvt_mode[i].refresh,
+				    false, false, false);
+		if (!mode) {
+			DRM_DEV_ERROR(dev,
+				      "[CONNECTOR:%u:%s]: no mode %dx%dx%d could be allocated\n",
+				      connector->base.id, connector->name, cvt_mode[i].w,
+				      cvt_mode[i].h, cvt_mode[i].refresh);
+			return -ENOMEM;
+		}
 
 		mode->hdisplay = cvt_mode[i].w;
 		mode->vdisplay = cvt_mode[i].h;
@@ -122,7 +130,7 @@ static void wb_connector_atomic_commit(struct drm_connector *connector,
 	struct drm_writeback_connector *wb_connector = drm_connector_to_writeback(connector);
 	struct vs_writeback_connector *vs_wb_connector = to_vs_writeback_connector(wb_connector);
 
-	if (WARN_ON(!state->writeback_job))
+	if (WARN_ON(!state || !state->writeback_job))
 		return;
 
 	fb = state->writeback_job->fb;

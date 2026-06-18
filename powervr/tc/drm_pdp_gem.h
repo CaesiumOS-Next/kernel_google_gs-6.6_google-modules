@@ -75,7 +75,7 @@ struct pdp_gem_object {
 	phys_addr_t cpu_addr;
 	dma_addr_t dev_addr;
 
-	/* Used with CMA allocator*/
+	/* Used with CMA allocator */
 	size_t size;
 	void *vaddr;
 	bool cma_alloc;

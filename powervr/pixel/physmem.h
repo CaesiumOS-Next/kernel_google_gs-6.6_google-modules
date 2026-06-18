@@ -1,8 +1,8 @@
 #pragma once
 
-#include <pvrsrvkm/devicemem_utils.h>
-#include <pvrsrvkm/physmem_extmem.h>
-#include <pvrsrvkm/pmr.h>
+#include <pvrsrvkm/services/shared/include/devicemem_utils.h>
+#include <pvrsrvkm/services/server/include/physmem_extmem.h>
+#include <pvrsrvkm/services/server/include/pmr.h>
 
 struct pixel_devmap_phys_range {
 	u64 pa;

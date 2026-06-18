@@ -112,6 +112,7 @@ struct ufs_google_host {
 	struct reset_control *a_rst;
 	struct reset_control *phy_rst;
 	struct notifier_block top_nb;
+	struct notifier_block restart_nb;
 	struct gpio_desc *resetb;
 	struct gpio_desc *pwr_en;
 	struct device *ufs_prep_pd;

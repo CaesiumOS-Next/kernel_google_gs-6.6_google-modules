@@ -271,19 +271,6 @@ enum drm_vs_disp_tp_pos {
 	VS_DISP_TP_OFIFO = 2,
 };
 
-enum drm_vs_plane_crc_pos {
-	VS_PLANE_CRC_DFC = 0,
-	VS_PLANE_CRC_HDR = 1,
-};
-
-enum drm_vs_disp_crc_pos {
-	VS_DISP_CRC_BLD = 0,
-	VS_DISP_POST_PROC = 1,
-	VS_DISP_CRC_OFIFO_IN = 2,
-	VS_DISP_CRC_OFIFO_OUT = 3,
-	VS_DISP_CRC_WB = 4,
-};
-
 enum drm_vs_feature_cap_type {
 	VS_FEATURE_CAP_FBC = 0,
 	VS_FEATURE_CAP_MAX_BLEND_LAYER,
@@ -1031,6 +1018,11 @@ struct drm_vs_blender_dither {
 	struct drm_vs_random_dither_seed seed;
 };
 
+struct drm_vs_llv_degamma {
+	bool enable;
+	struct drm_vs_ltm_xgamma data;
+};
+
 struct drm_vs_llv_dither {
 	enum drm_vs_dth_frm_idx index_type;
 	__u8 sw_index;
@@ -1040,6 +1032,7 @@ struct drm_vs_llv_dither {
 	__u16 threshold;
 	__u16 linear_threshold;
 	struct drm_vs_random_dither_seed seed;
+	struct drm_vs_llv_degamma degamma;
 };
 
 struct drm_vs_wb_dither {

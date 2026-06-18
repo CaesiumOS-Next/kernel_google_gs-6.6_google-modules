@@ -13,7 +13,6 @@
 #endif
 
 #include "sched_priv.h"
-#include "sched_events.h"
 
 #define LOAD_AVG_MAX 47742
 

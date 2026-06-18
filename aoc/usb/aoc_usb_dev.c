@@ -24,6 +24,8 @@
 #define COMPLETION_TIMEOUT_MS 1000
 #define GVOTABLE_POLLING_MS 100
 #define WORK_MAX_RETRIES 3
+#define AOC_USB_WAKELOCK_PREFIX "aoc_"
+#define AOC_USB_WAKELOCK_NAME_LENGTH (AOC_SERVICE_NAME_LENGTH + sizeof(AOC_USB_WAKELOCK_PREFIX))
 
 enum { NONBLOCKING = 0, BLOCKING = 1 };
 
@@ -277,6 +279,7 @@ static int aoc_usb_probe(struct aoc_service_dev *adev)
 {
 	struct device *dev = &adev->dev;
 	struct aoc_usb_drvdata *drvdata;
+	char ws_name[AOC_USB_WAKELOCK_NAME_LENGTH];
 
 	drvdata = kzalloc(sizeof(*drvdata), GFP_KERNEL);
 	if (!drvdata) {
@@ -288,9 +291,11 @@ static int aoc_usb_probe(struct aoc_service_dev *adev)
 	mutex_init(&drvdata->lock);
 	INIT_DEFERRABLE_WORK(&drvdata->aoc_ready_work, usb_host_aoc_ready_work);
 
-	drvdata->ws = wakeup_source_register(dev, dev_name(dev));
+	scnprintf(ws_name, sizeof(ws_name), "%s%s", AOC_USB_WAKELOCK_PREFIX, dev_name(dev));
+	drvdata->ws = wakeup_source_register(dev, ws_name);
 	if (!drvdata->ws) {
 		dev_err(&drvdata->adev->dev, "wakeup_source_register failed!\n");
+		kfree(drvdata);
 		return -ENOMEM;
 	}
 

@@ -1,7 +1,7 @@
 /*
  * DHD Bus Module for PCIE
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -14884,24 +14884,6 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 	dhdpci_bus_rte_log_time_sync_poll(bus);
 #endif /* DHD_H2D_LOG_TIME_SYNC */
 
-#if defined(DHD_WAKE_STATUS)
-	/* Check if host was woken up by any packets */
-	if (dhd_bus_get_bus_wake(bus->dhd) > 0) {
-		/*
-		 * If wake is due to Rx packets,
-		 * pktwake info will be printed and cleared from dhd_rx_frame()
-		 */
-		DHD_PRINT(("#### dhdpcie_host_wake: rxcpl:%d ctrlcpl:%d txcpl:%d evtlog:%d ####\n",
-			rxcpl_items, ctrlcpl_items, txcpl_items, evtlog_items));
-
-		dhd_bus_set_get_bus_wake(bus->dhd, 0);
-
-		if (rxcpl_items > 0) {
-			/* Request packet dump for first Rx packet */
-			dhd_bus_set_get_bus_wake_pkt_dump(bus->dhd, 1);
-		}
-	}
-#endif /* DHD_WAKE_STATUS */
 	return more;
 }
 

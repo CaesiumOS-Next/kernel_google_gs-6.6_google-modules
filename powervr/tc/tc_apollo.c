@@ -491,7 +491,7 @@ static int apollo_hard_reset(struct tc_device *tc,
 	int err = 0;
 
 	/* This is required for SPI reset which is not yet implemented. */
-	/*u32 aux_reset_n;*/
+	/* u32 aux_reset_n; */
 
 	if (tc->version == APOLLO_VERSION_TCF_2) {
 		/* Power down */
@@ -823,7 +823,7 @@ static int apollo_enable_irq(struct tc_device *tc)
 static void apollo_disable_irq(struct tc_device *tc)
 {
 #if defined(TC_FAKE_INTERRUPTS)
-	del_timer_sync(&tc->timer);
+	timer_delete_sync(&tc->timer);
 #else
 	iowrite32(0, tc->tcf.registers +
 		TCF_CLK_CTRL_INTERRUPT_ENABLE);

@@ -593,7 +593,7 @@ static int gxp_ioctl_get_specs(struct gxp_client *client, struct gxp_specs_ioctl
 			     GXP_CORE_TELEMETRY_BUFFER_UNIT_SIZE),
 		.max_vd_allocation = GXP_NUM_SHARED_SLICES,
 		.max_vd_activation = gxp_iommu_get_max_vd_activation(gxp),
-		.total_iova_size = gcip_iommu_domain_pool_get_size(gxp->domain_pool) / SZ_1M,
+		.total_iova_size = gxp->iommu_space_size / SZ_1M,
 	};
 
 	if (!IS_ERR_OR_NULL(gxp->core_telemetry_mgr)) {
@@ -1940,6 +1940,10 @@ static int gxp_common_platform_probe(struct platform_device *pdev, struct gxp_de
 
 	dev_notice(dev, "Probing gxp driver with commit %s\n", get_driver_commit());
 
+	ret = gcip_iommu_get_space_size(dev, &gxp->iommu_space_size);
+	if (ret)
+		return ret;
+
 	gxp->dev = dev;
 	gxp_create_debugdir(gxp);
 
@@ -2038,7 +2042,7 @@ static int gxp_common_platform_probe(struct platform_device *pdev, struct gxp_de
 	if (ret)
 		dev_warn(dev, "Failed to init thermal driver: %d\n", ret);
 
-	gxp->gfence_mgr = gcip_dma_fence_manager_create(gxp->dev);
+	gxp->gfence_mgr = gcip_dma_fence_manager_create(gxp->dev, GXP_NAME);
 	if (IS_ERR(gxp->gfence_mgr)) {
 		ret = PTR_ERR(gxp->gfence_mgr);
 		dev_err(dev, "Failed to init DMA fence manager: %d\n", ret);

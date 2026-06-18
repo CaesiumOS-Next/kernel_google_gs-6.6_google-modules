@@ -59,8 +59,7 @@
 #define THERMAL_HEAVY_MITIGATION_DIV_RATIO_DEFAULT	0xdeadfeed
 #define MITIGATION_FLL_STEP_DOWN_DEFAULT		0xdeadfeed
 
+#include "config-csrs.h"
 #include "config-mailbox.h"
-#include "config-tpu-cpu.h"
-#include "csrs.h"
 
 #endif /* __BUENOS_CONFIG_H__ */

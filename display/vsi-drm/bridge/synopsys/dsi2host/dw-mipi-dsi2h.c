@@ -61,6 +61,11 @@
 #define DW_PRI_BTA_REQUEST		6
 #define DW_PRI_TRIGGERS_READ		7
 
+#define DW_DSI2H_CRI_DATA_AVAIL_INTERVAL_US 500
+#define DW_DSI2H_CRI_DATA_AVAIL_TIMEOUT_US 50000
+#define DW_DSI2H_CORE_STATUS_INTERVAL_US 500
+#define DW_DSI2H_CORE_STATUS_TIMEOUT_US 25000
+
 #define INIT_FIELD(f) INIT_FIELD_CFG(field_##f, cfg_##f)
 #define INIT_FIELD_CFG(f, conf) ({						\
 		dsi2h->f = devm_regmap_field_alloc(dsi2h->dev, dsi2h->regs,	\
@@ -70,23 +75,19 @@
 			return PTR_ERR(dsi2h->f);				\
 		}})
 
-#define INT_BIT_CHECK(_dsi2h, _val, _int, _bit, _rstn, _err_str) \
-	INT_BIT_CHECK_CFG(_dsi2h, _val, dsi2h->int_cntrs.cntr_##_int, _bit, _rstn, _err_str)
+#define INT_BIT_CHECK(_dsi2h, _level, _val, _int, _bit, _rstn, _err_str) \
+	INT_BIT_CHECK_CFG(_dsi2h, _level, _val, dsi2h->int_cntrs.cntr_##_int, _bit, _rstn, _err_str)
 
-#define INT_BIT_CHECK_CFG(_dsi2h, _val, _int_ctr, _bit, _rstn, _err_str) \
-	do {                                                             \
-		if ((_val) & BIT(_bit)) {                                \
-			dev_err(dev, _err_str);                          \
-			INC_INT_CNT(_int_ctr);                           \
-			(_dsi2h)->rstn |= (_rstn);                       \
-		}                                                        \
+#define INT_BIT_CHECK_CFG(_dsi2h, _level, _val, _int_ctr, _bit, _rstn, _err_str) \
+	do {                                                                     \
+		if ((_val) & BIT(_bit)) {                                        \
+			dev_##_level(dev, _err_str);                             \
+			INC_INT_CNT(_int_ctr);                                   \
+			(_dsi2h)->rstn |= (_rstn);                               \
+		}                                                                \
 	} while (0)
 
-#if IS_ENABLED(CONFIG_DEBUG_FS)
 #define INC_INT_CNT(int_cntr) (++(int_cntr))
-#else
-#define INC_INT_CNT(int_cntr)
-#endif
 
 static u32 pm_runtime_suspend_version = 1;
 /*
@@ -390,16 +391,42 @@ static inline struct dw_mipi_dsi2h *bridge_to_dsi(struct drm_bridge *bridge)
 	return container_of(bridge, struct dw_mipi_dsi2h, bridge);
 }
 
+/**
+ * dw_dsi2h_wait_core_idle() - Wait for the DSI2H core to be idle.
+ * @dsi2h: The DSI2H device structure.
+ *
+ * This function polls the DW_DSI2H_CORE_STATUS register until all status
+ * bits are clear, indicating that the core and its sub-modules (IPI, CRI, PRI)
+ * are idle and all FIFOs are empty.
+ *
+ * Return: 0 if the core becomes idle within the timeout, or the CORE_STATUS register content.
+ */
+static int dw_dsi2h_wait_core_idle(struct dw_mipi_dsi2h *dsi2h)
+{
+	u32 val = 0;
+
+	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val, !val,
+				 DW_DSI2H_CORE_STATUS_INTERVAL_US, DW_DSI2H_CORE_STATUS_TIMEOUT_US);
+
+	return val;
+}
+
 /* PRI functions */
 static int dw_dsi2h_wait_pri_not_busy(struct dw_mipi_dsi2h *dsi2h)
 {
 	u32 val = 0;
+	u32 is_busy;
 
 	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
 				 !(val & PRI_BUSY), 50, 25000);
-	return val & PRI_BUSY;
+	is_busy = val & PRI_BUSY;
+	if (unlikely(is_busy && dsi2h->stat_data))
+		dsi2h->stat_data[ST_PRI_BUSY]++;
+
+	return is_busy;
 }
 
+#if IS_ENABLED(CONFIG_DEBUG_FS)
 static int dw_dsi2h_pri_trigger_request(struct dw_mipi_dsi2h *dsi2h, u8 request)
 {
 	if (request != PHY_TX_TRIGGER_0 && request != PHY_TX_TRIGGER_1 &&
@@ -453,6 +480,7 @@ static int dw_dsi2h_pri_calibration(struct dw_mipi_dsi2h *dsi2h,
 
 	return 0;
 }
+#endif /* CONFIG_DEBUG_FS */
 
 static __maybe_unused int dw_dsi2h_pri_ulps_entry_request(struct dw_mipi_dsi2h *dsi2h,
 							  u8 clk, u8 mode)
@@ -552,6 +580,8 @@ static int dw_mipi_dsi2h_enter_ulps(struct dw_mipi_dsi2h *dsi2h)
 	if (unlikely(ret)) {
 		dev_err(dsi2h->dev, "%s: PHY ULPS state enter fail, ret = %d\n", __func__, ret);
 		DPU_ATRACE_END("%s +", __func__);
+		if (dsi2h->stat_data)
+			dsi2h->stat_data[ST_ULPS_ENTER_ERR]++;
 		return ret;
 	}
 
@@ -560,6 +590,8 @@ static int dw_mipi_dsi2h_enter_ulps(struct dw_mipi_dsi2h *dsi2h)
 	if (unlikely(ret < 0)) {
 		dev_err(dsi2h->dev, "%s dsi2h ULPS enter fail, ret = %d\n", __func__, ret);
 		DPU_ATRACE_END("%s +", __func__);
+		if (dsi2h->stat_data)
+			dsi2h->stat_data[ST_ULPS_ENTER_ERR]++;
 		return ret;
 	}
 
@@ -567,6 +599,8 @@ static int dw_mipi_dsi2h_enter_ulps(struct dw_mipi_dsi2h *dsi2h)
 	if (unlikely(ret)) {
 		dev_err(dsi2h->dev, "%s: PHY disable fail, ret = %d", __func__, ret);
 		DPU_ATRACE_END("%s +", __func__);
+		if (dsi2h->stat_data)
+			dsi2h->stat_data[ST_ULPS_ENTER_ERR]++;
 		return ret;
 	}
 	DPU_ATRACE_END("%s +", __func__);
@@ -594,6 +628,8 @@ static int dw_mipi_dsi2h_exit_ulps(struct dw_mipi_dsi2h *dsi2h)
 	if (unlikely(ret)) {
 		dev_err(dsi2h->dev, "%s: PLL enable fail, ret = %d\n", __func__, ret);
 		DPU_ATRACE_END("%s +", __func__);
+		if (dsi2h->stat_data)
+			dsi2h->stat_data[ST_ULPS_EXIT_ERR]++;
 		return ret;
 	}
 
@@ -602,6 +638,8 @@ static int dw_mipi_dsi2h_exit_ulps(struct dw_mipi_dsi2h *dsi2h)
 	if (unlikely(ret < 0)) {
 		dev_err(dsi2h->dev, "%s dsi2h ULPS exit fail, ret = %d\n", __func__, ret);
 		DPU_ATRACE_END("%s +", __func__);
+		if (dsi2h->stat_data)
+			dsi2h->stat_data[ST_ULPS_EXIT_ERR]++;
 		return ret;
 	}
 
@@ -609,6 +647,8 @@ static int dw_mipi_dsi2h_exit_ulps(struct dw_mipi_dsi2h *dsi2h)
 	if (unlikely(ret)) {
 		dev_err(dsi2h->dev, "%s: PHY ULPS state exit fail, ret = %d\n",	__func__, ret);
 		DPU_ATRACE_END("%s +", __func__);
+		if (dsi2h->stat_data)
+			dsi2h->stat_data[ST_ULPS_EXIT_ERR]++;
 		return ret;
 	}
 	DPU_ATRACE_END("%s +", __func__);
@@ -623,6 +663,7 @@ static int dw_mipi_dsi2h_exit_ulps(struct dw_mipi_dsi2h *dsi2h)
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_DEBUG_FS)
 static int dw_dsi2h_pri_receive_triggers(struct dw_mipi_dsi2h *dsi2h)
 {
 	u32 val = 0;
@@ -661,24 +702,44 @@ static int dw_dsi2h_pri_bta_request(struct dw_mipi_dsi2h *dsi2h)
 	/* After performing a BTA, the peripheral may respond with an Acknowledge trigger. */
 	return dw_dsi2h_pri_receive_triggers(dsi2h);
 }
+#endif /* CONFIG_DEBUG_FS */
 
 /* CRI functions */
 static int dw_dsi2h_wait_cri_not_busy(struct dw_mipi_dsi2h *dsi2h)
 {
 	u32 val = 0;
+	u32 is_busy;
 
 	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
 				 !(val & CRI_BUSY), 400, 25000);
+	is_busy = val & CRI_BUSY;
+	if (unlikely(is_busy && dsi2h->stat_data))
+		dsi2h->stat_data[ST_CRI_BUSY]++;
 
-	return val & CRI_BUSY;
+	return is_busy;
 }
 
+/**
+ * dw_dsi2h_cri_rd_data_avail() - Check if CRI read data is available.
+ * @dsi2h: The DSI2H device structure.
+ *
+ * This function polls the DW_DSI2H_CORE_STATUS register, specifically
+ * checking the CRI_RD_DATA_AVAIL bit, until data is available or a timeout occurs.
+ *
+ * Return: The value of the CRI_RD_DATA_AVAIL bit from the status register if
+ *         successful, or a non-zero error code if polling times out.
+ */
 static int dw_dsi2h_cri_rd_data_avail(struct dw_mipi_dsi2h *dsi2h)
 {
+	int ret;
 	u32 val = 0;
 
-	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
-				 (val & CRI_RD_DATA_AVAIL), 400, 10000);
+	ret = regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
+				       (val & CRI_RD_DATA_AVAIL),
+				       DW_DSI2H_CRI_DATA_AVAIL_INTERVAL_US,
+				       DW_DSI2H_CRI_DATA_AVAIL_TIMEOUT_US);
+	if (unlikely(ret))
+		dev_err(dsi2h->dev, "Polling CRI read data failed: %d\n", ret);
 
 	return val & CRI_RD_DATA_AVAIL;
 }
@@ -707,6 +768,8 @@ static int dw_mipi_dsi2h_cri_read(struct dw_mipi_dsi2h *dsi2h,
 		switch (data_type) {
 		case MIPI_DSI_RX_ACKNOWLEDGE_AND_ERROR_REPORT:
 			dev_err(dsi2h->dev, "%s rx ACK error report\n", __func__);
+			if (dsi2h->stat_data)
+				dsi2h->stat_data[ST_DCS_READ_ACK_ERR]++;
 			break;
 
 		case MIPI_DSI_RX_END_OF_TRANSMISSION:
@@ -751,11 +814,16 @@ static int dw_mipi_dsi2h_cri_read(struct dw_mipi_dsi2h *dsi2h,
 					buf_pu8 += write_len;
 				} else {
 					dev_warn(dsi2h->dev, "Received extra data: %x\n", word);
+					if (dsi2h->stat_data)
+						dsi2h->stat_data[ST_DCS_READ_EXTRA_DATA]++;
 				}
 			}
-			if (pkg_remain_len > 0)
+			if (unlikely(pkg_remain_len > 0)) {
 				dev_warn(dsi2h->dev, "%s: %d bytes not arrived\n", __func__,
 					 pkg_remain_len);
+				if (dsi2h->stat_data)
+					dsi2h->stat_data[ST_DCS_READ_DATA_NOT_ARRIVED]++;
+			}
 			break;
 		}
 	}
@@ -1123,6 +1191,7 @@ static void dw_dsi2h_main_config(struct dw_mipi_dsi2h *dsi2h)
 	dw_dsi2h_write_field(dsi2h->field_manual_mode_en, dsi2h->auto_calc_off);
 }
 
+#if IS_ENABLED(CONFIG_DEBUG_FS)
 static int dw_dsi2h_start_tear_effect(struct dw_mipi_dsi2h *dsi2h, u32 sw_type, u32 set_tear_on,
 				      u32 arg)
 {
@@ -1205,6 +1274,7 @@ static int dw_dsi2h_finish_tear_effect(struct dw_mipi_dsi2h *dsi2h)
 
 	return 0;
 }
+#endif /* CONFIG_DEBUG_FS */
 
 static void dw_dsi2h_phy_config(struct dw_mipi_dsi2h *dsi2h)
 {
@@ -1390,63 +1460,63 @@ static void dw_irq_status(struct dw_mipi_dsi2h *dsi2h)
 	/* int_st_cri */
 	if (val_main & BIT(5)) {
 		val_spec = dw_dsi2h_read_reg(dsi2h->regs, DW_DSI2H_INT_ST_CRI);
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_cri_cmd_time, 0, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_cri_cmd_time, 0, NO_RSTN,
 			      "CRI request ignored due to timing error (Video Mode only)\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_cri_dtype, 1, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_cri_dtype, 1, NO_RSTN,
 			      "CRI received packet header invalid data type\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_cri_vchannel, 2, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_cri_vchannel, 2, NO_RSTN,
 			      "CRI received packet header invalid virtual channel\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_cri_rx_length, 3, HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_cri_rx_length, 3, HARD_RSTN,
 			      "CRI received packet and invalid length\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_cri_ecc, 4, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_cri_ecc, 4, NO_RSTN,
 			      "CRI received packet header with single ECC error\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_cri_ecc_fatal, 5, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_cri_ecc_fatal, 5, NO_RSTN,
 			      "CRI received packet header with multiple ECC errors\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_cri_crc, 6, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_cri_crc, 6, NO_RSTN,
 			      "CRI received long packet payload with CRC error\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_cmd_rd_pld_fifo_over, 16, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_cmd_rd_pld_fifo_over, 16, NO_RSTN,
 			      "DSI2-HOST reports this error when write operation is performed but Command Read Payload FIFO is full\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_cmd_rd_pld_fifo_under, 17, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_cmd_rd_pld_fifo_under, 17, NO_RSTN,
 			      "DSI2-HOST reports this error when read operation is performed but Command Read Payload FIFO is empty\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_cmd_wr_pld_fifo_over, 18, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_cmd_wr_pld_fifo_over, 18, NO_RSTN,
 			      "DSI2-HOST reports this error when write operation is performed but Command Write Payload FIFO is full\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_cmd_wr_pld_fifo_under, 19, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_cmd_wr_pld_fifo_under, 19, NO_RSTN,
 			      "DSI2-HOST reports this error when read operation is performed but Command Write Payload FIFO is empty\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_cmd_wr_hdr_fifo_over, 20, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_cmd_wr_hdr_fifo_over, 20, NO_RSTN,
 			      "DSI2-HOST reports this error when write operation is performed but Command Write Header FIFO is full.\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_cmd_wr_hdr_fifo_under, 21, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_cmd_wr_hdr_fifo_under, 21, NO_RSTN,
 			      "DSI2-HOST reports this error when read operation is performed but Command Write Header FIFO is empty.\n");
 	}
 
 	/* int_st_pri */
 	if (val_main & BIT(4)) {
 		val_spec = dw_dsi2h_read_reg(dsi2h->regs, DW_DSI2H_INT_ST_PRI);
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_pri_tx_time, 0, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_pri_tx_time, 0, NO_RSTN,
 			      "PRI request ignored due to timing error (Video Mode only)\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_pri_tx_cmd, 1, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_pri_tx_cmd, 1, NO_RSTN,
 			      "PRI request can not be attended and will be discarded\n");
 	}
 
 	/* int_st_ipi */
 	if (val_main & BIT(3)) {
 		val_spec = dw_dsi2h_read_reg(dsi2h->regs, DW_DSI2H_INT_ST_IPI);
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_display_cmd_time, 0, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_display_cmd_time, 0, NO_RSTN,
 			      "Display command request ignored by the controller due to timing\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ipi_dtype, 1,  NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ipi_dtype, 1,  NO_RSTN,
 			      "No DSI-2 data type is a direct match for the choice made by the pair ipi_format and ipi_depth\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_vid_bandwidth, 2, SYS_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_vid_bandwidth, 2, SYS_RSTN | HARD_RSTN,
 			      "Video packet size exceeds remaining bandwidth of total HLINETIME\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ipi_cmd, 3, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ipi_cmd, 3, NO_RSTN,
 			      "Display command can not be attended and will be discarded\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_display_cmd_ovfl, 8, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_display_cmd_ovfl, 8, NO_RSTN,
 			      "Display command request ignored by the controller due to internal buffer overflow\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_ipi_event_fifo_over, 16, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_ipi_event_fifo_over, 16, NO_RSTN,
 			      "DSI2-HOST reports this error when write operation is performed but IPI event FIFO is full\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_ipi_event_fifo_under, 17, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_ipi_event_fifo_under, 17, NO_RSTN,
 			      "DSI2-HOST reports this error when read operation is performed but IPI event FIFO is empty.\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_ipi_pixel_fifo_over, 18, HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_ipi_pixel_fifo_over, 18, HARD_RSTN,
 			      "DSI2-HOST reports this error when write operation is performed but IPI Pixel FIFO is full.\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_ipi_pixel_fifo_under, 19, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_ipi_pixel_fifo_under, 19, NO_RSTN,
 			      "DSI2-HOST reports this error when read operation is performed but IPI Pixel FIFO is empty.\n");
 	}
 
@@ -1454,78 +1524,78 @@ static void dw_irq_status(struct dw_mipi_dsi2h *dsi2h)
 	if (val_main & BIT(2)) {
 		val_spec = dw_dsi2h_read_reg(dsi2h->regs, DW_DSI2H_INT_ST_ACK);
 		/* TODO(b/443148644): follow up after root cause analysis */
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_0, 0, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_0, 0, NO_RSTN,
 			      "RC Retrieves the SoT error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_1, 1, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_1, 1, NO_RSTN,
 			      "RC Retrieves the SoT Sync error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_2, 2, HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_2, 2, HARD_RSTN,
 			      "RC Retrieves the EoT Sync error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_3, 3, HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_3, 3, HARD_RSTN,
 			      "RC Retrieves the Escape Mode Entry Command error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_4, 4, HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_4, 4, HARD_RSTN,
 			      "RC Retrieves the Low-Power Transmit Sync error bit from the Acknowledge error report\n");
 		/* TODO(b/437202062): follow up after root cause analysis */
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_5, 5, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_5, 5, NO_RSTN,
 			      "RC Retrieves the Peripheral Timeout error bit from the Acknowledge error report\n");
 		/* TODO(b/437202062): follow up after root cause analysis */
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_6, 6, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_6, 6, NO_RSTN,
 			      "RC Retrieves the False Control error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_7, 7, PHY_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_7, 7, PHY_RSTN | HARD_RSTN,
 			      "RC Retrieves the Contention Detected error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_8, 8, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_8, 8, NO_RSTN,
 			      "RC Retrieves the header ECC/SSDC/Checksum single-bit (detected and corrected) error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_9, 9, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_9, 9, NO_RSTN,
 			      "RC Retrieves the header ECC/SSDC/Checksum multi-bit (detected, not corrected) error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_10, 10, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_10, 10, NO_RSTN,
 			      "RC Retrieves the Payload Checksum error bit (long packet only) from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_11, 11, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_11, 11, NO_RSTN,
 			      "RC Retrieves the DSI Data Type not recognized error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_12, 12, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_12, 12, NO_RSTN,
 			      "RC Retrieves the DSI VC ID Invalid error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_13, 13, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_13, 13, NO_RSTN,
 			      "RC Retrieves the Invalid Transmission Length error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_14, 14, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_14, 14, NO_RSTN,
 			      "RC Retrieves the Reserved (specific to device) error bit from the Acknowledge error report\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_ack_rpt_15, 15, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_ack_rpt_15, 15, NO_RSTN,
 			      "RC Retrieves the DSI Protocol Violation error bit from the Acknowledge error report\n");
 	}
 
 	/* int_st_to */
 	if (val_main & BIT(1)) {
 		val_spec = dw_dsi2h_read_reg(dsi2h->regs, DW_DSI2H_INT_ST_TO);
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_to_hstx, 0, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_to_hstx, 0, NO_RSTN,
 			      "RC Indicates that a high-speed TX timeout has occurred\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_to_hstxrdy, 1, SYS_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_to_hstxrdy, 1, SYS_RSTN | HARD_RSTN,
 			      "RC Indicates that a high-speed TX RDY timeout has occurred\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_to_lprx, 2, SYS_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_to_lprx, 2, SYS_RSTN,
 			      "RC Indicates that a low-power RX timeout has occurred\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_to_lptxrdy, 3, SYS_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_to_lptxrdy, 3, SYS_RSTN | HARD_RSTN,
 			      "RC Indicates that a low-power TX DATA timeout has occurred\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_to_lptxtrig, 4, SYS_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_to_lptxtrig, 4, SYS_RSTN,
 			      "RC Indicates that a low-power TX TRIGGER timeout has occurred\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_to_lptxulps, 5, SYS_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_to_lptxulps, 5, SYS_RSTN,
 			      "RC Indicates that a low-power TX ULPS timeout has occurred\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_err_to_bta, 6, SYS_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_err_to_bta, 6, SYS_RSTN | HARD_RSTN,
 			      "RC Indicates that a bus turnaround direction timeout has occurred\n");
 	}
 
 	/* int_st_phy */
 	if (val_main & BIT(0)) {
 		val_spec = dw_dsi2h_read_reg(dsi2h->regs, DW_DSI2H_INT_ST_PHY);
-		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_erresc, 0, PHY_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_phy_l0_erresc, 0, PHY_RSTN | HARD_RSTN,
 			      "RC Escape Entry Error\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_errsyncesc, 1, PHY_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_phy_l0_errsyncesc, 1, PHY_RSTN | HARD_RSTN,
 			      "RC Low-Power Data Transmission Synchronization Error\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_errcontrol, 2, PHY_RSTN | HARD_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_phy_l0_errcontrol, 2, PHY_RSTN | HARD_RSTN,
 			      "RC Control Error\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_errcontentionlp0, 3,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_phy_l0_errcontentionlp0, 3,
 			      PHY_RSTN | HARD_RSTN, "RC LP0 Contention Error\n");
 		/* TODO(b/447004565): relax LP1 Contention due to MIPI OVR solution */
-		INT_BIT_CHECK(dsi2h, val_spec, int_phy_l0_errcontentionlp1, 4, NO_RSTN,
-			      "RC LP1 Contention Error\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_txhs_fifo_over, 16, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, info, val_spec, int_phy_l0_errcontentionlp1, 4, NO_RSTN,
+			      "RC LP1 Contention occurred\n");
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_txhs_fifo_over, 16, NO_RSTN,
 			      "RC DSI2-HOST reports this error when write operation is performed but PHY High-Speed data FIFO is full\n");
-		INT_BIT_CHECK(dsi2h, val_spec, int_txhs_fifo_under, 17, NO_RSTN,
+		INT_BIT_CHECK(dsi2h, err, val_spec, int_txhs_fifo_under, 17, NO_RSTN,
 			      "RC DSI2-HOST reports this error when read operation is performed but PHY High-Speed data FIFO is empty\n");
 	}
 }
@@ -1553,6 +1623,7 @@ static void update_int_cntrs(struct dw_mipi_dsi2h *dsi2h, struct drm_connector_s
 
 	gs_conn_state = to_gs_connector_state(conn_state);
 	bitmap_write(gs_conn_state->dsi_errors, dsi2h->rstn, 0, GS_DSI_ERR_MAX);
+	dsi2h->rstn = 0;
 }
 
 static irqreturn_t dw_irq_callback(int irq, void *data)
@@ -1801,6 +1872,8 @@ static int dw_mipi_dsi2h_enable(struct dw_mipi_dsi2h *dsi2h)
 
 int dw_mipi_dsi2h_disable(struct dw_mipi_dsi2h *dsi2h)
 {
+	int ret;
+
 	lockdep_assert_held(&dsi2h->dsi2h_lock);
 
 	if (dsi2h->state == DSI2H_STATE_SUSPEND) {
@@ -1816,12 +1889,17 @@ int dw_mipi_dsi2h_disable(struct dw_mipi_dsi2h *dsi2h)
 		dsi2h->pending_datarate = 0;
 	}
 
+	/* wait for the core to be idle */
+	ret = dw_dsi2h_wait_core_idle(dsi2h);
+	if (ret)
+		dev_err(dsi2h->dev, "DSI core not idle, %#x\n", ret);
+
 	phy_power_off(dsi2h->phy);
 	phy_exit(dsi2h->phy);
 	dsi2h->state = DSI2H_STATE_SUSPEND;
 	dsi2h->rstn = 0;
 
-	return 0;
+	return ret;
 }
 
 int dw_mipi_dsi2h_resume(void *handle)
@@ -2058,6 +2136,10 @@ static int dw_mipi_dsi2h_atomic_check(struct drm_bridge *bridge,
 	int bpp;
 	int ret;
 
+	mutex_lock(&dsi2h->dsi2h_lock);
+	update_int_cntrs(dsi2h, conn_state);
+	mutex_unlock(&dsi2h->dsi2h_lock);
+
 	if (!drm_atomic_crtc_needs_modeset(crtc_state))
 		return 0;
 
@@ -2089,7 +2171,6 @@ static int dw_mipi_dsi2h_atomic_check(struct drm_bridge *bridge,
 
 	mutex_lock(&dsi2h->dsi2h_lock);
 	update_gs_hs_clk(dsi2h, conn_state);
-	update_int_cntrs(dsi2h, conn_state);
 	mutex_unlock(&dsi2h->dsi2h_lock);
 
 	return 0;
@@ -2200,8 +2281,21 @@ static void dw_mipi_dsi2h_bridge_atomic_enable(struct drm_bridge *bridge,
 	mutex_unlock(&dsi2h->dsi2h_lock);
 }
 
-static void dw_mipi_dsi2h_bridge_atomic_disable(struct drm_bridge *bridge,
-						struct drm_bridge_state *old_bridge_state)
+/**
+ * dw_mipi_dsi2h_bridge_atomic_post_disable() - Disable the DSI bridge.
+ * @bridge: The DRM bridge structure.
+ * @old_bridge_state: The previous state of the bridge.
+ *
+ * This function is called after the display pipeline has been disabled. It
+ * handles the transition to a low-power state. If the new state is Panel
+ * Self-Refresh (PSR), it may enter Ultra-Low Power State (ULPS). Otherwise,
+ * it fully disables the DSI host controller. It also manages runtime power
+ * management, ensuring the device is powered down when not in use.
+ *
+ * This function is part of the DRM atomic modesetting API for bridges.
+ */
+static void dw_mipi_dsi2h_bridge_atomic_post_disable(struct drm_bridge *bridge,
+						     struct drm_bridge_state *old_bridge_state)
 {
 	int ret;
 	struct dw_mipi_dsi2h *dsi2h = bridge_to_dsi(bridge);
@@ -2459,9 +2553,6 @@ static int dw_mipi_dsi2h_debugfs_init(struct dw_mipi_dsi2h *dsi2h)
 
 	dw_create_debugfs_hwv_files(dsi2h);
 
-	/* Creating the int counters debugfs files*/
-	dw_create_debugfs_hwv_u64_files(dsi2h);
-
 	debugfs_create_file("reg_dump", 0444, dsi2h->debugfs, dsi2h, &reg_dump_fops);
 	debugfs_create_bool("force_set_hs_clk", 0644, dsi2h->debugfs, &dsi2h->force_set_datarate);
 	debugfs_create_bool("disable_psr_ulps", 0644, dsi2h->debugfs, &dsi2h->disable_psr_ulps);
@@ -2488,15 +2579,14 @@ static void dw_mipi_dsi2h_debugfs_remove(struct dw_mipi_dsi2h *dsi2h)
 #endif /* CONFIG_DEBUG_FS */
 
 static const struct drm_bridge_funcs dw_mipi_dsi2h_bridge_funcs = {
-	.attach		= dw_mipi_dsi2h_bridge_attach,
-	.mode_set	= dw_mipi_dsi2h_bridge_mode_set,
-	.atomic_enable	= dw_mipi_dsi2h_bridge_atomic_enable,
-	.atomic_disable	= dw_mipi_dsi2h_bridge_atomic_disable,
-	.atomic_check	= dw_mipi_dsi2h_atomic_check,
-
+	.attach = dw_mipi_dsi2h_bridge_attach,
+	.mode_set = dw_mipi_dsi2h_bridge_mode_set,
+	.atomic_enable = dw_mipi_dsi2h_bridge_atomic_enable,
+	.atomic_post_disable = dw_mipi_dsi2h_bridge_atomic_post_disable,
+	.atomic_check = dw_mipi_dsi2h_atomic_check,
 	.atomic_duplicate_state = dw_mipi_dsi2h_atomic_duplicate_state,
-	.atomic_destroy_state   = dw_mipi_dsi2h_atomic_destroy_state,
-	.atomic_reset		= dw_mipi_dsi2h_atomic_reset,
+	.atomic_destroy_state = dw_mipi_dsi2h_atomic_destroy_state,
+	.atomic_reset = dw_mipi_dsi2h_atomic_reset,
 };
 
 static int dw_mipi_dsi2h_regmap_fields_init(struct dw_mipi_dsi2h *dsi2h)
@@ -3048,6 +3138,20 @@ static struct dw_mipi_dsi2h *__dw_mipi_dsi2h_probe(struct platform_device *pdev,
 		goto destroy_vdev;
 	}
 
+	dw_dsi2h->stat_data =
+		devm_kcalloc(dev, (STATS_EVENT_COUNT), sizeof(u32), GFP_KERNEL);
+	if (unlikely(!dw_dsi2h->stat_data)) {
+		dev_err(dev, "Failed to allocate dsi2h stat_data\n");
+		ret = -ENOMEM;
+		goto end;
+	}
+
+	ret = dw_mipi_dsi2h_sysfs_init(dw_dsi2h);
+	if (unlikely(ret)) {
+		dev_err(dev, "Failed to create sysfs: %d\n", ret);
+		goto end;
+	}
+
 	dw_dsi2h->trace_pid = current->tgid;
 
 	return dw_dsi2h;
@@ -3061,7 +3165,7 @@ end:
 }
 
 void *dw_mipi_dsi2h_probe(struct platform_device *pdev,
-					  const struct dw_mipi_dsi2h_plat_data *plat_data)
+			  const struct dw_mipi_dsi2h_plat_data *plat_data)
 {
 	return __dw_mipi_dsi2h_probe(pdev, plat_data);
 }
@@ -3072,6 +3176,7 @@ int dw_mipi_dsi2h_remove(void *handle)
 	struct dw_mipi_dsi2h *dsi2h = handle;
 
 	dw_mipi_dsi2h_debugfs_remove(dsi2h);
+	dw_mipi_dsi2h_sysfs_remove(dsi2h);
 	dw_mipi_dsi2h_destroy_vdev(dsi2h);
 	kfree(dsi2h);
 

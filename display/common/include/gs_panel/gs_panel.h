@@ -1321,6 +1321,18 @@ struct gs_bl_notifier {
 };
 
 /**
+ * struct gs_bl_stats - brightness/mode history for limiting brightness logs
+ * @last_br: the previous actual brightness value
+ * @last_hbm: the previous hbm mode
+ * @was_lp_mode: to detect if the panel was in LP mode
+ */
+struct gs_bl_stats {
+	int last_br;
+	enum gs_hbm_mode last_hbm;
+	bool was_lp_mode;
+};
+
+/**
  * gs_touch_bridge_data - data relating to panel connection to touch bridge
  * @touch_dev: pointer to device_node obtained from device tree
  * @attached: whether we have found and attached a touch device
@@ -1482,6 +1494,9 @@ struct gs_panel {
 	/** @bl_notifier: Struct for notifying ALS about brightness changes */
 	struct gs_bl_notifier bl_notifier;
 
+	/** @bl_stats: Struct for suppressing brightness logs */
+	struct gs_bl_stats bl_stats;
+
 	/* use for notify state changed */
 	struct work_struct notify_panel_mode_changed_work;
 	struct work_struct notify_brightness_changed_work;
@@ -1557,6 +1572,15 @@ struct gs_panel {
 
 	/**@content_gray_level: current content gray level of screen UI */
 	enum gs_content_gray_level content_gray_level;
+
+	/**@gram_collision_count: frame count of GRAM collosion detected by a DDIC */
+	u32 gram_collision_count;
+
+	/**
+	 * @trigger_dumps_for_gram_collision: Whether need to trigger the dumps for GRAM
+	 * collision.
+	 */
+	bool trigger_dumps_for_gram_collision;
 };
 
 /* FUNCTIONS */

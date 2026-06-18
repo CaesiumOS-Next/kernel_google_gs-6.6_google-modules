@@ -2,7 +2,7 @@
  * Misc utility routines for accessing the SOC Interconnects
  * of Broadcom HNBU chips.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -313,7 +313,7 @@ typedef void (*wci2_handler_t)(void *ctx, char *buf, int len);
 
 /* === exported functions === */
 extern si_t *si_attach(uint pcidev, osl_t *osh, volatile void *regs, uint bustype,
-                       void *sdh, char **vars, uint *varsz);
+	void *sdh, char **vars, uint *varsz);
 extern si_t *si_kattach(osl_t *osh);
 extern si_t *si_kinit(osl_t *osh);
 #ifdef BCM_BOOTLOADER
@@ -444,7 +444,7 @@ extern void si_enable_gpio_wake(si_t *sih, uint8 *wake_mask, uint8 *cur_status, 
 /* GCI GPIO event handlers */
 extern void *si_gci_gpioint_handler_register(si_t *sih, uint8 gpio, uint8 sts,
 	gci_gpio_handler_t cb, void *arg);
-extern void si_gci_gpioint_handler_unregister(si_t *sih, void* gci_i);
+extern void si_gci_gpioint_handler_unregister(si_t *sih, void *gci_i);
 
 extern void si_gci_gpio_chipcontrol_ex(si_t *si, uint8 gpoi, uint8 opt);
 extern uint8 si_gci_gpio_status(si_t *sih, uint8 gci_gpio, uint8 mask, uint8 value);
@@ -473,7 +473,7 @@ extern int si_corepciid(si_t *sih, uint func, uint16 *pcivendor, uint16 *pcidevi
 	uint8 *pciclass, uint8 *pcisubclass, uint8 *pciprogif, uint8 *pciheader);
 
 extern uint32 si_seci_access(si_t *sih, uint32 val, int access);
-extern volatile void* si_seci_init(si_t *sih, uint8 seci_mode);
+extern volatile void *si_seci_init(si_t *sih, uint8 seci_mode);
 extern void si_seci_clk_force(si_t *sih, bool val);
 extern bool si_seci_clk_force_status(si_t *sih);
 
@@ -482,7 +482,7 @@ extern bool si_eci(const si_t *sih);
 extern int si_eci_init(si_t *sih);
 extern void si_eci_notify_bt(si_t *sih, uint32 mask, uint32 val, bool interrupt);
 extern bool si_seci(const si_t *sih);
-extern void* si_gci_init(si_t *sih);
+extern void *si_gci_init(si_t *sih);
 extern void si_seci_down(si_t *sih);
 extern void si_seci_upd(si_t *sih, bool enable);
 extern bool si_gci(const si_t *sih);
@@ -502,7 +502,7 @@ extern bool si_sraon(const si_t *sih);
 /* OTP status */
 extern bool si_is_otp_disabled(const si_t *sih);
 extern bool si_is_otp_powered(si_t *sih);
-extern void si_otp_power(si_t *sih, bool on, uint32* min_res_mask);
+extern void si_otp_power(si_t *sih, bool on, uint32 *min_res_mask);
 
 /* SPROM availability */
 extern bool si_is_sprom_available(si_t *sih);
@@ -597,8 +597,8 @@ extern void si_dumpregs(si_t *sih, struct bcmstrbuf *b);
 extern uint32 si_ccreg(si_t *sih, uint32 offset, uint32 mask, uint32 val);
 extern uint32 si_pciereg(const si_t *sih, uint32 offset, uint32 mask, uint32 val, uint type);
 extern int si_bpind_access(si_t *sih, uint32 addr_high, uint32 addr_low,
-	int32* data, bool read, uint32 us_timeout);
-extern void sih_write_sraon(si_t *sih, int offset, int len, const uint32* data);
+	int32 *data, bool read, uint32 us_timeout);
+extern void sih_write_sraon(si_t *sih, int offset, int len, const uint32 *data);
 #ifdef SR_DEBUG
 extern void si_dump_pmu(si_t *sih, void *pmu_var);
 extern void si_pmu_keep_on(const si_t *sih, int32 int_val);
@@ -621,6 +621,7 @@ extern int si_pcie_configspace_get(const si_t *sih, uint8 *buf, uint size);
 
 #ifndef BCMDONGLEHOST
 extern void si_muxenab(si_t *sih, uint32 w);
+#endif /* !BCMDONGLEHOST */
 
 #if defined(FIQ_ON_AXI_ERR) || defined(SOCI_NCI_BUS) && defined(DONGLEBUILD)
 #define si_clear_backplane_to(sih)	0u
@@ -630,7 +631,6 @@ extern uint32 si_clear_backplane_to(si_t *sih);
 
 extern uint32 si_clear_backplane_to_fiq(si_t *sih);
 extern void si_slave_wrapper_add(si_t *sih);
-#endif /* !BCMDONGLEHOST */
 extern uint32 si_clear_backplane_to_per_core(si_t *sih, uint coreid, uint coreunit, void *wrap);
 
 extern uint32 si_findcoreidx_by_axiid(const si_t *sih, uint32 axiid);
@@ -701,8 +701,7 @@ extern uint32 si_raw_reg(const si_t *sih, uint32 reg, uint32 val, uint32 wrire_r
  * the trunk support for these chips gets deprecated
  */
 #if !(defined(VLSI_CTRL_REGS))
-typedef struct gci_cc_map_vlsi2sw_to_legacy
-{
+typedef struct gci_cc_map_vlsi2sw_to_legacy {
 	uint8 reg;
 	uint32 field_mask;
 	uint8 reg_shift;
@@ -1034,8 +1033,8 @@ bool si_srpwr_cap(si_t *sih);
  *      Host needs to power up
  */
 #ifdef BCMDONGLEHOST
-#define MULTIBP_CAP(sih)	(BCM4378_CHIP(sih->chip) || \
-				BCM4383_CHIP(sih->chip) || BCM4387_CHIP(sih->chip) || \
+#define MULTIBP_CAP(sih)	(BCM4378_CHIP(sih->chip) || BCM4383_CHIP(sih->chip) || \
+				BCM4384_CHIP(sih->chip) || BCM4387_CHIP(sih->chip) || \
 				BCM4388_CHIP(sih->chip) || BCM4389_CHIP(sih->chip) || \
 				BCM4390_CHIP(sih->chip) || BCM4397_CHIP(sih->chip) || \
 				BCM4399_CHIP(sih->chip))
@@ -1075,7 +1074,7 @@ typedef struct wrapper2name {
 	char *name;
 } wrapper2name_t;
 
-char* wrapper2name_mapping(uint32 addr);
+char *wrapper2name_mapping(uint32 addr);
 
 #ifdef UART_TRAP_DBG
 void si_dump_APB_Bridge_registers(const si_t *sih);
@@ -1156,5 +1155,8 @@ int si_spm_get_max_ro(si_t *sih, uint32 *max);
 bool si_buscore_prep(si_t *sih, uint bustype, uint devid, void *sdh);
 bool si_ispcie(const si_t *sih);
 int si_bpind_access(si_t *sih, uint32 addr_high, uint32 addr_low,
-	int32 * data, bool read, uint32 us_timeout);
+	int32 *data, bool read, uint32 us_timeout);
+int si_reset_5g_rffe_vio(si_t *sih);
+int si_get_amni_slave_cfg_cc_reg_addrs(si_t *sih, volatile uint32 **idm_errstatus_addr,
+	volatile uint32 **idm_intstatus_addr);
 #endif	/* _siutils_h_ */

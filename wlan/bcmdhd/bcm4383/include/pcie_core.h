@@ -1,7 +1,7 @@
 /*
  * BCM43XX PCIE core hardware definitions.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -311,7 +311,7 @@ typedef volatile struct pcie_serdes_regs {
 #define CONFIGADDR_REG_SHF	0
 
 #define PCIE_CONFIG_INDADDR(f, r)	((((f) & CONFIGADDR_FUNC_MASK) << CONFIGADDR_FUNC_SHF) | \
-			                 (((r) & CONFIGADDR_REG_MASK) << CONFIGADDR_REG_SHF))
+	(((r) & CONFIGADDR_REG_MASK) << CONFIGADDR_REG_SHF))
 
 /* PCIE Config registers */
 #define	PCIE_CFG_DEV_STS_CTRL_2		0x0d4u	/* "dev_sts_control_2  */
@@ -625,15 +625,16 @@ typedef volatile struct pcie_serdes_regs {
 #define PCIECFGREG_MSI_ADDR_H		0x60u
 #define PCIECFGREG_MSI_DATA		0x64u
 #define PCIECFGREG_SPROM_CTRL           0x88u
-#define PCIECFGREG_LINK_STATUS_CTRL	0xBCu
-#define PCIECFGREG_LINK_STATUS_CTRL2	0xDCu
 #define PCIECFGREG_DEV_STATUS_CTRL	0xB4u
+#define PCIECFGREG_LINK_STATUS_CTRL	0xBCu
 #define PCIECFGGEN_DEV_STATUS_CTRL2	0xD4u
+#define PCIECFGREG_LINK_STATUS_CTRL2	0xDCu
 #define PCIECFGREG_PTM_CAP		0x204u
 #define PCIECFGREG_PTM_CTRL		0x208u
 #define PCIECFGREG_RBAR_CTRL		0x228u
 #define PCIECFGREG_PML1_SUB_CTRL1	0x248u
 #define PCIECFGREG_PML1_SUB_CTRL2	0x24Cu
+#define PCIECFGREG_LANE_ERR_STAT	0x308u
 #define PCIECFGREG_REG_BAR2_CONFIG	0x4E0u
 #define PCIECFGREG_REG_BAR3_CONFIG	0x4F4u
 #define PCIECFGREG_EXT2_CAP_ADDR	0x530u
@@ -849,6 +850,9 @@ typedef volatile struct pcie_serdes_regs {
 
 #define DAR_FIS_START_SHIFT	0u
 #define DAR_FIS_START_MASK	(1u << DAR_FIS_START_SHIFT)
+
+#define DAR_ERRLOG_SHIFT	8u
+#define DAR_ERRLOG_MASK		(1u << DAR_ERRLOG_SHIFT)
 
 #define DAR_SEC_STATUS(rev)	PCIE_REG_OFF(dar_security_status)
 

@@ -242,6 +242,9 @@ static void smmu_telemetry_atomic_pages(int count)
 		kvm_hyp_shared_arm_smmu_telemetry->hs2t.s2_atomic_pages.free_reqs++;
 
 	kvm_hyp_shared_arm_smmu_telemetry->hs2t.s2_atomic_pages.pages_in_use += count;
+	kvm_hyp_shared_arm_smmu_telemetry->hs2t.s2_atomic_pages.max_pages_used =
+		max(kvm_hyp_shared_arm_smmu_telemetry->hs2t.s2_atomic_pages.max_pages_used,
+		    kvm_hyp_shared_arm_smmu_telemetry->hs2t.s2_atomic_pages.pages_in_use);
 }
 
 static void smmu_telemetry_cmdq_sync_latency(struct hyp_arm_smmu_v3_device *smmu,
@@ -1361,16 +1364,16 @@ static void smmu_set_ns_ipa_tbl(struct hyp_arm_smmu_v3_domain *smmu_domain)
 {
 	struct arm_lpae_io_pgtable *data = io_pgtable_to_data(smmu_domain->pgtable);
 	u64 tbl_base = hyp_virt_to_phys(data->pgd);
-	u32 start_level = data->start_level;
-	u32 granule = smmu_domain->pgtable->cfg.arm_lpae_s2_cfg.vtcr.tg;
+	u32 sl0 = smmu_domain->pgtable->cfg.arm_lpae_s2_cfg.vtcr.sl;
+	u32 tg = smmu_domain->pgtable->cfg.arm_lpae_s2_cfg.vtcr.tg;
 	u32 t0sz = smmu_domain->pgtable->cfg.arm_lpae_s2_cfg.vtcr.tsz;
 	bool coherent_walk = smmu_domain->pgtable->cfg.coherent_walk;
 	u32 ipa_cfg;
 	struct arm_smccc_res res;
 
 	ipa_cfg = (coherent_walk ? SET_NS_IPA_CFG_COHERENT_WALK : 0) |
-		  FIELD_PREP(SET_NS_IPA_CFG_GRANULE, granule) |
-		  FIELD_PREP(SET_NS_IPA_CFG_START_LVL, start_level) |
+		  FIELD_PREP(SET_NS_IPA_CFG_GRANULE, tg) |
+		  FIELD_PREP(SET_NS_IPA_CFG_START_LVL, sl0) |
 		  FIELD_PREP(SET_NS_IPA_CFG_T0SZ, t0sz);
 
 	arm_smccc_1_1_smc(SMC_FC_OEM_SET_NS_IPA_TBL, tbl_base >> FIRMWARE_PAGE_SHIFT, ipa_cfg,

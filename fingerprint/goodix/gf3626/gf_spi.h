@@ -79,7 +79,28 @@ struct gf_ioc_chip_info {
 	unsigned char reserved[5];
 };
 
-#define GF_IOC_MAGIC 'g' //define magic number
+#include <linux/pm_wakeup.h>
+#include <linux/fb.h>
+#include <linux/timer.h>
+#include <linux/refcount.h>
+#include <linux/spinlock.h>
+
+#ifdef AP_CONTROL_CLK
+#include <linux/clk.h>
+#endif
+
+/**
+ * struct timed_wakelock - reference count guarded wakelock with automatic
+ * release and reference count reset after a timeout.
+ */
+struct timed_wakelock {
+	struct wakeup_source *ws;
+	struct timer_list timer;
+	refcount_t active_count;
+	spinlock_t lock;
+};
+
+#define GF_IOC_MAGIC 'g'
 #define GF_IOC_INIT _IOR(GF_IOC_MAGIC, 0, uint8_t)
 #define GF_IOC_EXIT _IO(GF_IOC_MAGIC, 1)
 #define GF_IOC_RESET _IO(GF_IOC_MAGIC, 2)
@@ -139,6 +160,7 @@ struct gf_dev {
 	struct notifier_block notifier;
 	char device_available;
 	char fb_black;
+	struct timed_wakelock ioctl_wakelock;
 };
 
 int gf_parse_dts(struct gf_dev *gf_dev);

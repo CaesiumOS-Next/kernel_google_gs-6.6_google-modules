@@ -1,7 +1,7 @@
 /*
  * Linux cfg80211 driver - Dongle Host Driver (DHD) related
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -125,10 +125,11 @@ wl_cfg80211_update_iflist_info(struct bcm_cfg80211 *cfg, struct net_device *ndev
 }
 #endif /* WL_STATIC_IF */
 
-struct net_device* wl_cfg80211_allocate_if(struct bcm_cfg80211 *cfg, int ifidx, const char *name,
-	uint8 *mac, uint8 bssidx, const char *dngl_name)
+struct net_device *
+dhd_cfg80211_allocate_if(struct bcm_cfg80211 *cfg, int ifidx, const char *name,
+	uint8 *mac, uint8 bssidx, const char *dngl_name, bool rtnl_lock_reqd)
 {
-	return dhd_allocate_if(cfg->pub, ifidx, name, mac, bssidx, FALSE, dngl_name);
+	return dhd_allocate_if(cfg->pub, ifidx, name, mac, bssidx, rtnl_lock_reqd, dngl_name);
 }
 
 int wl_cfg80211_register_if(struct bcm_cfg80211 *cfg,

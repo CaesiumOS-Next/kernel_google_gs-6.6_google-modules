@@ -39,6 +39,24 @@ TRACE_EVENT(fwtp_perfetto_counter,
 		      __entry->timestamp, __entry->track_id,
 		      __get_str(category), __get_str(name), __entry->value));
 
+/* Define FWTP Perfetto slice ftrace event. */
+TRACE_EVENT(fwtp_perfetto_slice,
+	    TP_PROTO(unsigned long long timestamp, unsigned int track_id,
+		     const char *category, const char *name, bool begin),
+	    TP_ARGS(timestamp, track_id, category, name, begin),
+	    TP_STRUCT__entry(__field(unsigned long long, timestamp) /* lint */
+			     __field(unsigned int, track_id) /* lint */
+			     __string(category, category) /* lint */
+			     __string(name, name) /* lint */
+			     __field(bool, begin)),
+	    TP_fast_assign(__entry->timestamp = timestamp;
+			   __entry->track_id = track_id;
+			   assign_str_wrp(category, category);
+			   assign_str_wrp(name, name); __entry->begin = begin;),
+	    TP_printk("timestamp:%llu track_id:%u category:%s name:%s begin:%u",
+		      __entry->timestamp, __entry->track_id,
+		      __get_str(category), __get_str(name), __entry->begin));
+
 #endif /* FWTP_FTRACE_H_ */
 
 /* This part must be outside protection. */

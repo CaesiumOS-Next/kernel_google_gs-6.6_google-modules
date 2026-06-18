@@ -13,9 +13,8 @@
 #include "gxp-vd.h"
 #include "gxp.h"
 
-/* Converts struct dma_fence to gxp_dma_fence. */
-#define to_gxp_fence(fence)                                                    \
-	container_of(to_gcip_fence(fence), struct gxp_dma_fence, gfence)
+/* Converts struct gcip_dma_fence to gxp_dma_fence. */
+#define to_gxp_fence(gfence) container_of(gfence, struct gxp_dma_fence, gfence)
 
 struct gxp_dma_fence {
 	struct gcip_dma_fence gfence;

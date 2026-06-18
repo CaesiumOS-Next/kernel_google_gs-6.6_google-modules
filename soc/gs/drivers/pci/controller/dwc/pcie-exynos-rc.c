@@ -5347,6 +5347,12 @@ skip_sep_request_irq:
 		dev_dbg(&pdev->dev, "MSI is supported with 64-bit mask.\n");
 	}
 
+	/*
+	 * we would like to skip the dw_pcie_wait_for_link() in the dw_pcie_host_init()
+	 * so we setup this bit to avoid waiting for the link up during the enumeration.
+	 */
+	dw_pcie_cap_set(pci, USE_LINKUP_IRQ);
+
 	ret = dw_pcie_host_init(pp);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to dw pcie host init\n");

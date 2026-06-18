@@ -104,6 +104,13 @@ static inline int gvotable_cast_bool_vote(struct gvotable_election *el,
 	return gvotable_cast_vote(el, reason, 0, vote);
 }
 
+static inline int gvotable_set_compound_result(struct gvotable_election *el, const char *reason,
+					       int vote_hi, int vote_lo)
+{
+	return gvotable_election_set_result(el, reason,
+					    (void *)((((long)vote_hi) << 32) | vote_lo));
+}
+
 int gvotable_recast_ballot(struct gvotable_election *el, const char *reason,
 			   bool enabled);
 int gvotable_run_election(struct gvotable_election *el, bool force_callback);

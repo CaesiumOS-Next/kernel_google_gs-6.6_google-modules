@@ -1,7 +1,7 @@
 /*
  * EVENT_LOG system definitions
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -248,6 +248,8 @@
 #define EVENT_LOG_TAG_SB_SCHED_DBG_SYNC		233
 #define EVENT_LOG_TAG_ENHANCED_TS		234
 #define EVENT_LOG_TAG_PHY_OBSS_INFO		235
+#define EVENT_LOG_TAG_SBI_SC_INFO		236
+#define EVENT_LOG_TAG_SBI_SC_ERR		237
 
 /* Available space for new tags for Dingo, Iguana and branches
  * prior to Koala only. From Koala onwards, new tags must be greater
@@ -628,8 +630,53 @@
 #define EVENT_LOG_TAG_BI_LINK_SCORE		481
 #define EVENT_LOG_TAG_BI_LINK_SCORE_INFO	482
 
+/* datapath log dump */
+#define EVENT_LOG_TAG_DP_DUMP			483
+/* per link infra sta software stats at the time of preferred link off chan activity */
+#define EVENT_LOG_TAG_STA_MLO_SLOT_SW_STATS	484
+/* KM INFO LOG					*/
+#define EVENT_LOG_TAG_KM_INFO			485
+#define EVENT_LOG_TAG_PHY_CAL_DATA		486
+/* MFP scan (motion triggered scan) */
+#define EVENT_LOG_TAG_MPF_SCAN_ERR		487
+#define	EVENT_LOG_TAG_MPF_SCAN_INFO		488
+
+/* URB */
+#define	EVENT_LOG_TAG_URB			489
+
+/* Datapath debugging. */
+/* General datapath debugging. */
+#define	EVENT_LOG_TAG_DATAPATH			490
+/* For rxdatapath. */
+#define	EVENT_LOG_TAG_RX_DATAPATH		491
+/* For txdatapath. */
+#define	EVENT_LOG_TAG_TX_DATAPATH		492
+
+/* FILS Discovery */
+#define EVENT_LOG_TAG_FILS_DISC_DBG		493
+#define EVENT_LOG_TAG_FILS_DISC_INFO		494
+#define EVENT_LOG_TAG_FILS_DISC_ERROR		495
+#define EVENT_LOG_TAG_MCNX_IDX_LOG		496
+
+/* AOP triggered scan (AOP request WiFi FW to scan) */
+#define EVENT_LOG_TAG_AOP_SCAN_ERR		497
+#define EVENT_LOG_TAG_AOP_SCAN_INFO		498
+
+#define EVENT_LOG_TAG_PER_PKT_INFO              499
+#define EVENT_LOG_TAG_PER_PKT_ERROR             500
+
+/* UHR EVEVNT_LOG_TAG */
+#define EVENT_LOG_TAG_WL_UHR_INFO		501
+#define EVENT_LOG_TAG_WL_UHR_TRACE		502
+#define EVENT_LOG_TAG_WL_UHR_WARN		503
+#define EVENT_LOG_TAG_WL_UHR_ERROR		504
+
+#define EVENT_LOG_TAG_WL_MLO_SS_MGMT		505
+
+#define EVENT_LOG_TAG_MSCH_DEBUG_STATE		506
+
 /* EVENT_LOG_TAG_MAX	= Set to the same value of last tag, not last tag + 1 */
-#define EVENT_LOG_TAG_MAX			482
+#define EVENT_LOG_TAG_MAX			506
 
 typedef enum wl_el_set_type_def {
 	EVENT_LOG_SET_TYPE_DEFAULT = 0, /* flush the log buffer when it is full - Default option */

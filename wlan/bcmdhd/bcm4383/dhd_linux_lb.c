@@ -2,7 +2,7 @@
  * Broadcom Dongle Host Driver (DHD), Linux-specific network interface
  * Basically selected code segments from usb-cdc.c and usb-rndis.c
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -24,6 +24,7 @@
 
 #include <dhd_linux_priv.h>
 #include <dhd_plat.h>
+#include <dhd_proto.h>
 
 extern dhd_pub_t *g_dhd_pub;
 
@@ -34,11 +35,20 @@ extern dhd_pub_t *g_dhd_pub;
 #define DHD_NAPI_LATENCY_SIZE (sizeof(uint64) * DHD_NUM_NAPI_LATENCY_ROWS)
 #endif /* DHD_LB_STATS */
 
+#if defined(DHD_LB_RXPOST)
+static int dhd_lb_rxpost_thread(void *data);
+#endif /* DHD_LB_RXPOST */
+
 void
 dhd_lb_set_default_cpus(dhd_info_t *dhd)
 {
 	/* Default CPU allocation for the jobs */
+#if defined(DHD_LB_RXPOST)
+	atomic_set(&dhd->rx_napi_cpu, 3);
+	atomic_set(&dhd->rxpost_cpu, 1);
+#else
 	atomic_set(&dhd->rx_napi_cpu, 1);
+#endif /* DHD_LB_RXPOST */
 	atomic_set(&dhd->tx_cpu, 2);
 	atomic_set(&dhd->net_tx_cpu, 0);
 	atomic_set(&dhd->dpc_cpu, 0);
@@ -197,6 +207,9 @@ void dhd_select_cpu_candidacy(dhd_info_t *dhd)
 	uint32 net_tx_cpu = atomic_read(&dhd->net_tx_cpu);
 	bool use_big_core = dhd_plat_pcie_enable_big_core();
 
+#if defined(DHD_LB_CANDIDACY_OVERRIDE)
+	return;
+#endif /* DHD_LB_CANDIDACY_OVERRIDE */
 	cpumask_clear(dhd->cpumask_set8_new);
 	cpumask_clear(dhd->cpumask_set4_new);
 	cpumask_clear(dhd->cpumask_set0_new);
@@ -1138,7 +1151,6 @@ dhd_napi_poll(struct napi_struct *napi, int budget)
 	unsigned long flags;
 	struct dhd_info *dhd;
 	int processed = 0;
-	int dpc_cpu;
 #ifdef DHD_LB_STATS
 	uint32 napi_latency;
 #endif /* DHD_LB_STATS */
@@ -1180,21 +1192,6 @@ dhd_napi_poll(struct napi_struct *napi, int budget)
 		processed++;
 	}
 
-	if (atomic_read(&dhd->pub.lb_rxp_flow_ctrl) &&
-		(dhd_lb_rxp_process_qlen(&dhd->pub) <= dhd->pub.lb_rxp_strt_thr)) {
-		/*
-		 * If the dpc CPU is online Schedule dhd_dpc_dispatcher_work on the dpc cpu which
-		 * in turn will schedule dpc tasklet. Else schedule dpc takslet.
-		 */
-		get_cpu();
-		dpc_cpu = atomic_read(&dhd->dpc_cpu);
-		if (!cpu_online(dpc_cpu)) {
-			dhd_tasklet_schedule(&dhd->tasklet);
-		} else {
-			dhd_delayed_work_schedule_on(&dhd->dhd_dpc_dispatcher_work, dpc_cpu, 0);
-		}
-		put_cpu();
-	}
 	DHD_LB_STATS_UPDATE_NAPI_HISTO(&dhd->pub, processed);
 
 	DHD_INFO(("%s processed %d\n", __FUNCTION__, processed));
@@ -1577,6 +1574,67 @@ dhd_lb_tx_handler(unsigned long data)
 }
 
 #endif /* DHD_LB_TXP */
+
+#if defined(DHD_LB_RXPOST)
+void
+dhd_lb_rxpost_init(dhd_pub_t *dhdp)
+{
+	dhd_info_t *dhd = dhdp->info;
+	uint32 rxpost_cpu = atomic_read(&dhd->rxpost_cpu);
+	PROC_START_ON(dhd_lb_rxpost_thread, dhd, &dhd->lb_rxpost_thread, 0,
+		"dhd_lb_rxpost_thread", rxpost_cpu);
+}
+
+void
+dhd_lb_rxpost_deinit(dhd_pub_t *dhdp)
+{
+	dhd_info_t *dhd = dhdp->info;
+	tsk_ctl_t *tsk = &dhd->lb_rxpost_thread;
+	if (tsk->parent && tsk->thr_pid >= 0) {
+		PROC_STOP_USING_BINARY_SEMA(tsk);
+	} else {
+		DHD_ERROR(("%s: lb_rxpost_thread(%ld) not inited\n",
+			__FUNCTION__, tsk->thr_pid));
+	}
+}
+
+void
+dhd_lb_rxpost_dispatch(dhd_pub_t *dhdp)
+{
+	dhd_info_t *dhd = dhdp->info;
+	binary_sema_up(&dhd->lb_rxpost_thread);
+}
+
+/* Rxpost Work */
+static int
+dhd_lb_rxpost_thread(void *data)
+{
+	tsk_ctl_t *tsk = (tsk_ctl_t *)data;
+	dhd_info_t *dhd = (dhd_info_t *)tsk->parent;
+
+	while (TRUE) {
+		if (!binary_sema_down(tsk)) {
+			SMP_RD_BARRIER_DEPENDS();
+			/* Check terminated before processing the items */
+			if (tsk->terminated) {
+				DHD_ERROR(("%s: task terminated\n", __FUNCTION__));
+				goto exit;
+			}
+			OSL_DISABLE_PREEMPTION(dhd->pub.osh);
+			dhd_msgbuf_rxbuf_post(&dhd->pub, FALSE); /* alloc pkt ids */
+			OSL_ENABLE_PREEMPTION(dhd->pub.osh);
+
+		} else {
+			DHD_ERROR_RLMT(("%s: unexpected break\n", __FUNCTION__));
+			break;
+		}
+	}
+exit:
+	DHD_TRACE(("%s: EXITED...\n", __FUNCTION__));
+	KTHREAD_COMPLETE_AND_EXIT(&tsk->completed, 0);
+
+}
+#endif /* DHD_LB_RXPOST */
 
 #endif /* DHD_LB */
 

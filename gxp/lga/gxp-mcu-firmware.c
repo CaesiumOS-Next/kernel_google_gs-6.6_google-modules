@@ -165,7 +165,7 @@ static struct gxp_mcu_firmware_ns_buffer *map_ns_buffer(struct gxp_dev *gxp, dma
 							size_t size)
 {
 	struct gxp_mcu_firmware_ns_buffer *ns_buffer;
-	u64 gcip_map_flags = GCIP_MAP_FLAGS_DMA_RW;
+	u64 gcip_map_flags = gcip_iommu_map_flags_dma_rw();
 
 	ns_buffer = kzalloc(sizeof(*ns_buffer), GFP_KERNEL);
 	if (!ns_buffer)
@@ -190,8 +190,10 @@ static struct gxp_mcu_firmware_ns_buffer *map_ns_buffer(struct gxp_dev *gxp, dma
 
 static void unmap_ns_buffer(struct gxp_dev *gxp, struct gxp_mcu_firmware_ns_buffer *ns_buffer)
 {
+	u64 gcip_map_flags = gcip_iommu_map_flags_dma_rw();
+
 	gcip_iommu_domain_unmap_sgt_from_iova(gxp_iommu_get_domain_for_dev(gxp), ns_buffer->sgt,
-					      GCIP_MAP_FLAGS_DMA_RW);
+					      gcip_map_flags);
 	gcip_free_noncontiguous(ns_buffer->sgt);
 	kfree(ns_buffer);
 }
@@ -798,13 +800,13 @@ static int image_config_map(void *data, dma_addr_t daddr, phys_addr_t paddr, siz
 {
 	struct gxp_dev *gxp = data;
 	const bool ns = !(cfg_op_flags & GCIP_IMAGE_CONFIG_FLAGS_SECURE);
-	u64 gcip_map_flags = GCIP_MAP_FLAGS_DMA_RW;
+	u64 gcip_map_flags;
 
 	if (ns)
 		return image_config_map_ns(gxp, daddr, size);
 
-	if (GCIP_IMAGE_CONFIG_MAP_MMIO(cfg_map_flags))
-		gcip_map_flags |= GCIP_MAP_FLAGS_MMIO_TO_FLAGS(1);
+	gcip_map_flags = gcip_iommu_encode_gcip_map_flags(
+		DMA_BIDIRECTIONAL, false, 0, false, GCIP_IMAGE_CONFIG_MAP_MMIO(cfg_map_flags));
 
 	return gcip_iommu_map(gxp_iommu_get_domain_for_dev(gxp), daddr, paddr, size,
 			      gcip_map_flags);

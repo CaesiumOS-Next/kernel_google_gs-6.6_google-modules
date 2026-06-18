@@ -81,6 +81,9 @@ struct edgetpu_mailbox_descriptor {
 enum edgetpu_ext_mailbox_type {
 	EDGETPU_EXTERNAL_MAILBOX_TYPE_DSP,
 	EDGETPU_EXTERNAL_MAILBOX_TYPE_AOC,
+	EDGETPU_EXTERNAL_MAILBOX_TYPE_SSU,
+	/* Count of valid external mailbox types above. */
+	EDGETPU_EXTERNAL_MAILBOX_TYPE_COUNT,
 };
 
 /* Structure to hold multiple external mailboxes allocated for a device group. */
@@ -346,6 +349,9 @@ void edgetpu_mailbox_deactivate_external_mailbox(struct edgetpu_device_group *gr
  * Caller ensures device is powered and must hold @group->lock.
  */
 void edgetpu_mailbox_disable_external_mailbox(struct edgetpu_device_group *group);
+
+/* Dump mailbox state info to kernel log for diagnosing timeouts. */
+void edgetpu_mailbox_dump(struct edgetpu_mailbox *mailbox);
 
 /* Macros for accessing mailbox CSRs. */
 

@@ -21,6 +21,7 @@
 #include "vs_dc_histogram.h"
 #include "vs_dc.h"
 #include "vs_crtc.h"
+#include "vs_trace.h"
 
 #define VS_DP_SYNC_MAXRETRIES 30
 #define VS_REDUNDANT_DP_SYNC_IRQ_THRESH_MS 100
@@ -53,11 +54,20 @@ static bool spliter_check(const struct dc_hw *hw, u8 hw_id, const void *data, u3
 static bool spliter_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
 {
 	const struct drm_vs_spliter *spliter = data;
-	const struct dc_hw_display *display = vs_dc_hw_get_display(hw, hw_id);
+	const struct dc_hw_display *display;
 	u32 split_config = 0;
 	bool dsc_enabled = false;
 	bool vdc_enabled = false;
 
+	trace_config_hw_display_feature_en("SPLITER", hw_id, enable);
+
+	/* validate that hw_id (left) and hw_id + 1 (right) are within bounds */
+	if (hw_id >= DC_DISPLAY_NUM - 1) {
+		dev_err(hw->dev, "%s invalid input with hw_id %d\n", __func__, hw_id);
+		return false;
+	}
+
+	display = vs_dc_hw_get_display(hw, hw_id);
 	split_config = VS_SET_FIELD(split_config, DCREG_SH_PANEL0_SPLIT_CONFIG, ENABLE, enable);
 
 	if (enable) {
@@ -154,6 +164,8 @@ static bool panel_crop_check(const struct dc_hw *hw, u8 hw_id, const void *data,
 static bool panel_crop_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
 {
 	const struct drm_vs_panel_crop *panel_crop = data;
+
+	trace_config_hw_display_feature_en("PANEL_CROP", hw_id, enable);
 
 	dc_write(hw, VS_SET_PANEL_FIELD(DCREG_SH_PANEL, hw_id, OUT_CROP_EN_Address), enable);
 
@@ -266,6 +278,8 @@ static bool splice_mode_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const
 	const struct drm_vs_splice_mode *splice_mode = data;
 	u32 config = 0;
 	struct drm_vs_splice_config splice0_config, splice1_config;
+
+	trace_config_hw_display_feature_en("SPLICE_MODE", hw_id, enable);
 
 	config = dc_read_immediate(hw, DCREG_OUTIF_SPLICE_MODE_Address);
 
@@ -387,6 +401,8 @@ static bool dp_sync_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const voi
 	u8 output_id, output_id_ex = hw_display_ex->output_id;
 	u8 i = 0, output_mask = 0;
 
+	trace_config_hw_display_feature_en("DP_SYNC", hw_id, enable);
+
 	if (enable) {
 		/* stop DP interface which want to sync */
 		for (i = 0; i < HW_DISPLAY_4; i++) {
@@ -451,6 +467,8 @@ static bool free_sync_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const v
 	const struct dc_hw_display *hw_display = vs_dc_hw_get_display(hw, hw_id);
 	const u8 output_id = hw_display->output_id;
 
+	trace_config_hw_display_feature_en("FREE_SYNC", hw_id, enable);
+
 	if (enable) {
 		if (free_sync->type == VS_FREE_SYNC_CONFIG ||
 		    free_sync->type == VS_FREE_SYNC_CONFIG_FINISH) {
@@ -497,6 +515,8 @@ static bool bg_color_check(const struct dc_hw *hw, u8 hw_id, const void *data, u
 static bool bg_color_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
 {
 	const struct drm_vs_color *bg_color = data;
+
+	trace_config_hw_display_feature_en("BG_COLOR", hw_id, enable);
 
 	if (enable) {
 		if (hw_id <= HW_DISPLAY_3) {
@@ -550,6 +570,26 @@ VS_DC_BLOB_PROPERTY_PROTO(bg_color_proto, "BG_COLOR", struct drm_vs_color, bg_co
 			  bg_color_config_hw);
 
 /* low level dither */
+static bool llv_dither_degamma_check(const struct dc_hw *hw, u8 hw_id,
+				     const struct drm_vs_ltm_xgamma *degamma)
+{
+	int i;
+
+	if (!degamma) {
+		dev_err(hw->dev, "%s: crtc[%u] degamma data is NULL.\n", __func__, hw_id);
+		return false;
+	}
+
+	for (i = 0; i < VS_LTM_XGAMMA_COEF_NUM; i++) {
+		if (degamma->coef[i] > (1 << VS_MAX_GAMUT_COEF_NUM)) {
+			dev_err(hw->dev, "%s: crtc[%u] degamma coef[%d] out of range.\n", __func__,
+				hw_id, i);
+			return false;
+		}
+	}
+
+	return true;
+}
 static bool llv_dither_check(const struct dc_hw *hw, u8 hw_id, const void *data, u32 size,
 			     const void *obj_state)
 {
@@ -563,7 +603,33 @@ static bool llv_dither_check(const struct dc_hw *hw, u8 hw_id, const void *data,
 		dev_err(hw->dev, "%s: crtc[%u] has invalid sw index.\n", __func__, hw_id);
 		return false;
 	}
+	if (llv->degamma.enable)
+		if (!llv_dither_degamma_check(hw, hw_id, &llv->degamma.data))
+			return false;
+
 	return true;
+}
+
+static void llv_dither_degamma_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
+{
+	u32 entry_cnt = 0;
+	u32 base_offset = 0x4;
+	const struct drm_vs_ltm_xgamma *degamma = data;
+
+	trace_config_hw_display_feature_en("LLV_DEGAMMA", hw_id, enable);
+	dc_write(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, LL_DE_GAMMA_ENABLE_Address),
+		 enable);
+
+	if (enable) {
+		for (entry_cnt = 0; entry_cnt < VS_LTM_XGAMMA_COEF_NUM; entry_cnt++) {
+			dc_write(hw,
+				 VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id,
+						      LL_DE_GAMMA_DATA_Address) +
+					 (entry_cnt * base_offset),
+				 VS_SET_FIELD(0, DCREG_SH_PANEL0_LL_DE_GAMMA_DATA, VALUE,
+					      degamma->coef[entry_cnt]));
+		}
+	}
 }
 
 static bool llv_dither_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
@@ -571,6 +637,8 @@ static bool llv_dither_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 	const struct drm_vs_llv_dither *llv = data;
 	const u32 offset = vs_dc_get_display_offset(hw_id);
 	u32 config;
+
+	trace_config_hw_display_feature_en("LLV_DITHER", hw_id, enable);
 
 	config = dc_read(hw, DCREG_SH_PANEL0_CONFIG_Address + offset);
 	config = VS_SET_FIELD(config, DCREG_SH_PANEL0_CONFIG, LOW_LEVEL_DITHER, enable);
@@ -609,6 +677,10 @@ static bool llv_dither_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 		if (llv->seed.permut_seed2_enable)
 			dc_write_u32_blob(hw, DCREG_SH_PANEL0_LL_DTH_PS_A2_NUM0_Address + offset,
 					  llv->seed.permut_seed2, VS_RANDOM_DITHER_SEED_NUM);
+		/* degamma */
+		llv_dither_degamma_config_hw(hw, hw_id, llv->degamma.enable, &llv->degamma.data);
+	} else {
+		llv_dither_degamma_config_hw(hw, hw_id, false, NULL);
 	}
 	return true;
 }
@@ -640,6 +712,8 @@ static bool gamma_dither_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, cons
 	const struct drm_vs_dither *dither = data;
 	const u32 offset = vs_dc_get_display_offset(hw_id);
 	u32 config;
+
+	trace_config_hw_display_feature_en("GAMMA_DITHER", hw_id, enable);
 
 	config = dc_read(hw, DCREG_SH_PANEL0_CONFIG_Address + offset);
 	config = VS_SET_FIELD(config, DCREG_SH_PANEL0_CONFIG, GAMMA_DITHER, enable);
@@ -744,6 +818,8 @@ static bool panel_dither_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, cons
 	u32 offset = vs_dc_get_panel_dither_table_offset(hw_id);
 	u8 wb_id = hw->display[hw_id].wb.wb_id;
 	u32 config;
+
+	trace_config_hw_display_feature_en("PANEL_DITHER", hw_id, enable);
 
 	config = dc_read(hw, DCREG_SH_PANEL0_CONFIG_Address + config_offset);
 	/* set dither mode */
@@ -869,6 +945,8 @@ static bool blur_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *
 	u32 config = 0, reg_offset = 0x04;
 	u32 i = 0, j = 0;
 
+	trace_config_hw_display_feature_en("BLUR", hw_id, enable);
+
 	config = dc_read(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, CONFIG_Address));
 	config = VS_SET_FIELD(config, DCREG_SH_PANEL0_CONFIG, BLUR, enable);
 	dc_write(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, CONFIG_Address), config);
@@ -949,6 +1027,8 @@ static bool brightness_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 	const u32 offset = vs_dc_get_display_offset(hw_id);
 	u32 config;
 
+	trace_config_hw_display_feature_en("BRIGHTNESS", hw_id, enable);
+
 	config = dc_read(hw, DCREG_SH_PANEL0_CONFIG_Address + offset);
 	config = VS_SET_FIELD(config, DCREG_SH_PANEL0_CONFIG, BRIGHTNESS, enable);
 	dc_write(hw, DCREG_SH_PANEL0_CONFIG_Address + offset, config);
@@ -1013,6 +1093,8 @@ static bool brightness_roi_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, co
 	const struct drm_vs_brightness_roi *brightness_roi = data;
 	const u32 offset = vs_dc_get_display_offset(hw_id);
 
+	trace_config_hw_display_feature_en("BRIGHTNESS_ROI", hw_id, enable);
+
 	/* ROI0 */
 	if (brightness_roi->roi0_enable) {
 		dc_write(hw, DCREG_SH_PANEL0_BRIGHT_ROI0_ORIGIN_Address + offset,
@@ -1053,6 +1135,8 @@ static bool ccm_lnr_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const voi
 	u32 reg_offset = 0;
 	u32 config = 0;
 
+	trace_config_hw_display_feature_en("CCM_LNR", hw_id, enable);
+
 	if (hw->rev == DC_REV_0) {
 		reg_coef = VS_SH_PANEL_FIELD(hw_id, GAMUT_MATRIX_COEF0_Address);
 		reg_offset = VS_SH_PANEL_FIELD(hw_id, GAMUT_MATRIX_COEF_OFFSET0_Address);
@@ -1088,6 +1172,8 @@ static bool ccm_non_lnr_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const
 	const u32 reg_offset =
 		VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, MATRIX_COEF_OFFSET0_Address);
 	const u32 coef_offset = 0x04;
+
+	trace_config_hw_display_feature_en("CCM_NON_LNR", hw_id, enable);
 
 	UPDATE_PANEL_CONFIG(hw, hw_id, MATRIX, enable);
 	if (enable) {
@@ -1148,6 +1234,8 @@ static bool _9400_degamma_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, con
 		VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, DE_GAMMA_SEGMENT_STEP_Address);
 	const u32 reg_seg_data = VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, DE_GAMMA_DATA_Address);
 
+	trace_config_hw_display_feature_en("9400_DEGAMMA", hw_id, enable);
+
 	UPDATE_PANEL_CONFIG(hw, hw_id, DE_GAMMA, enable);
 
 	/* C0 - C8 configuration */
@@ -1175,6 +1263,8 @@ static bool _9500_degamma_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, con
 	const u32 reg_seg_pnt = VS_SH_PANEL_FIELD(hw_id, EOTF_SEGMENT_POINT1_Address);
 	const u32 reg_seg_step = VS_SH_PANEL_FIELD(hw_id, EOTF_SEGMENT_STEP_Address);
 	const u32 reg_seg_data = VS_SH_PANEL_FIELD(hw_id, EOTF_DATA_Address);
+
+	trace_config_hw_display_feature_en("9500_DEGAMMA", hw_id, enable);
 
 	/* enable EOTF */
 	config = dc_read(hw, VS_SET_PANEL_FIELD(DCREG_SH_PANEL, hw_id, CONFIG_Address));
@@ -1242,6 +1332,8 @@ static bool data_trunc_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 {
 	const struct drm_vs_data_trunc *data_trunc = data;
 	u32 config = 0;
+
+	trace_config_hw_display_feature_en("DATA_TRUNC", hw_id, enable);
 
 	if (enable) {
 		if (hw_id <= HW_DISPLAY_1) {
@@ -1324,6 +1416,8 @@ static bool display_data_extend_config_hw(struct dc_hw *hw, u8 hw_id, bool enabl
 {
 	const struct drm_vs_data_extend *data_extend = data;
 	u32 config = 0;
+
+	trace_config_hw_display_feature_en("DATA_EXTEND", hw_id, enable);
 
 	if (enable) {
 		if (hw_id <= HW_DISPLAY_1) {

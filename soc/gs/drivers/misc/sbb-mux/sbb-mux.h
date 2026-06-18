@@ -351,6 +351,11 @@ struct sbb_gpio_tracker {
 	 * The sysfs file exposing the GPIO's value to userland.
 	 */
 	struct sysfs_file value_file;
+
+	/*
+	 * The pinctrl platform device for the GPIO.
+	 */
+	struct platform_device *pinctrl_pdev;
 };
 
 /*

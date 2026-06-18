@@ -601,6 +601,10 @@ static struct drm_driver pdp_drm_driver = {
 	.dumb_create			= pdp_gem_dumb_create,
 	.dumb_map_offset		= pdp_gem_dumb_map_offset,
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+	PDP_FBDEV_DRIVER_OPS,
+#endif
+
 	.name				= DRIVER_NAME,
 	.desc				= DRIVER_DESC,
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))

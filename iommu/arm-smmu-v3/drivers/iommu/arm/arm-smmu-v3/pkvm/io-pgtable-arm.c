@@ -35,7 +35,8 @@ void *__arm_lpae_alloc_pages(size_t size, gfp_t gfp, struct io_pgtable_cfg *cfg)
 		cfg->telemetry_cb->atomic_pages_tel(size >> PAGE_SHIFT);
 	} else {
 		addr = kvm_iommu_donate_pages_request(get_order(size));
-		cfg->telemetry_cb->s1_pages_tel(size >> PAGE_SHIFT);
+		if (addr)
+			cfg->telemetry_cb->s1_pages_tel(size >> PAGE_SHIFT);
 	}
 
 	if (addr && !cfg->coherent_walk)

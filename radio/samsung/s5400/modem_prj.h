@@ -216,8 +216,6 @@ struct t_handover_block_info {
 /*
  * Definitions for IO devices
  */
-#define MAX_IOD_RXQ_LEN		2048
-
 
 #define IPv6			6
 #define SOURCE_MAC_ADDR		{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC}
@@ -380,6 +378,12 @@ struct io_device {
 
 	/* Rx queue of sk_buff */
 	struct sk_buff_head sk_rx_q;
+
+	/* jiffies when rx_q was last accessed */
+	unsigned long rx_q_access_time;
+
+	/* Number of entries in the rx_q when we last logged. */
+	unsigned int q_high_watermark;
 
 	/* For keeping multi-frame packets temporarily */
 	struct sk_buff_head sk_multi_q[NUM_SIPC_MULTI_FRAME_IDS];

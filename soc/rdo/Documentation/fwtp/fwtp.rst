@@ -22,10 +22,10 @@ services make use of FWTP interfaces.
 The interface must set the ``send_message`` field to a function that may be used
 to send messages through the interface.
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_if.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_if.h
    :identifiers: fwtp_if
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_if.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_if.h
    :identifiers: fwtp_if_send_message
 
 FWTP interface platform layer
@@ -35,72 +35,85 @@ The FWTP interface services make use of a platform layer to provide some
 platform specific services and definitions. Each platform must provide these
 services and definitions.
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_platform.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_platform.h
    :identifiers: fwtp_if_platform FWTP_MALLOC FWTP_FREE FWTP_IF_LOG_ERR
                  FWTP_IF_LOG_WARN
 
 FWTP IPC clients
 ================
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_ipc_client.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_ipc_client.h
    :doc: FWTP IPC clients
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_ipc_client.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_ipc_client.h
    :identifiers: fwtp_ipc_client
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_ipc_client.c
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_ipc_client.c
    :identifiers: fwtp_ipc_client_register fwtp_ipc_client_unregister
 
 FWTP protocol
 =============
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :doc: FWTP protocol
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :identifiers: fwtp_msg_base fwtp_msg_type
 
 FWTP protocol versioning
 ------------------------
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :doc: FWTP protocol versioning
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :identifiers: fwtp_msg_version
 
 FWTP string tables
 ------------------
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :doc: FWTP string tables
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :identifiers: fwtp_msg_get_strings
 
 FWTP tracepoint rings
 ---------------------
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :doc: FWTP tracepoint rings
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
-   :identifiers: fwtp_msg_get_ring_info
-
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
-   :identifiers: fwtp_msg_get_tracepoints
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+   :identifiers: fwtp_msg_get_ring_info fwtp_msg_get_tracepoints
 
 FWTP tracepoint ring notifications
 ----------------------------------
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
    :doc: FWTP tracepoint ring notifications
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
-   :identifiers: fwtp_msg_ring_notify
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+   :identifiers: fwtp_msg_ring_notify fwtp_msg_ring_subscribe
 
-.. kernel-doc:: ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
-   :identifiers: fwtp_msg_ring_subscribe
+FWTP tracepoint filters
+-----------------------
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+   :doc: FWTP filters
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+   :identifiers: fwtp_msg_get_filter_info fwtp_msg_filter_config_entry
+                 fwtp_msg_set_filter_config
+
+FWTP add tracepoint
+-----------------------
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+   :doc: FWTP add tracepoint
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_protocol.h
+   :identifiers: fwtp_msg_add_tracepoint
 
 FWTP to firmware message interface
 ==================================
@@ -197,8 +210,8 @@ the FWTP sources. It must be run from the root of the common kernel directory.
    .
    .
    .
-   $ (cd aosp && \
-      ../private/google-modules/soc/rdo/drivers/soc/google/fwtp/lint.sh)
+   $ (export KERNEL=`pwd` && cd aosp && \
+      $KERNEL/private/google-modules/soc/rdo/drivers/soc/google/fwtp/lint.sh)
    Linting fwtp_google_gdmc.c
    Linting lint.sh
    $

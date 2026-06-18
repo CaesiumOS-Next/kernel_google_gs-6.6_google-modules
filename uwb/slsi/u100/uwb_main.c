@@ -527,16 +527,14 @@ static long uci_ioctl(struct file *fp, unsigned int cmd, unsigned long args)
 			UWB_DEBUG("UWB_IOCTL_FW_FLASH [%s], disable_crc_check[%d]\n",
 				u100_ctx->uwb_fw_ctx.uwb_fw[DEFAULT_BIN_IDX].fw_name,
 				u100_ctx->uwb_fw_ctx.disable_crc_check);
-			ret = init_fw_download_thread(u100_ctx, false);
+			ret = fw_download(u100_ctx);
 		}
 		break;
 
 	case UWB_IOCTL_POWER_ON:
 		UWB_DEBUG("UWB_IOCTL_POWER_ON\n");
 		/* Check u100 status */
-		ret = uwbs_sync_reset(u100_ctx);
-		if (ret)
-			u100_report_coredump_on_poweron(u100_ctx, ret);
+		ret = uwbs_sync_reset_and_coredump(u100_ctx, "IOCTL_POWER_ON");
 		break;
 
 	case UWB_IOCTL_POWER_OFF:
@@ -758,7 +756,7 @@ static int uwb_spi_probe(struct spi_device *spi)
 		} else {
 			UWB_DEBUG("fwname %s", fwname);
 			if (set_fw_name(u100_ctx, fwname)) {
-				ret = init_fw_download_thread(u100_ctx, false);
+				ret = fw_download(u100_ctx);
 				if (ret < 0)
 					UWB_WARN("init_fw_download failed\n");
 			}
@@ -770,7 +768,6 @@ static int uwb_spi_probe(struct spi_device *spi)
 	return 0;
 
 err_setup:
-	u100_report_coredump_on_poweron(u100_ctx, ret);
 	if (u100_ctx->coredump && u100_ctx->coredump->sscd)
 		u100_unregister_coredump(u100_ctx);
 
@@ -797,8 +794,6 @@ static void uwb_spi_remove(struct spi_device *spi)
 		mutex_destroy(&u100_ctx->atr_lock);
 		mutex_destroy(&u100_ctx->ioctl_mutex);
 		mutex_destroy(&u100_ctx->tx_mutex);
-		if (atomic_read(&u100_ctx->flashing))
-			stop_fw_download_thread(u100_ctx);
 
 		u100_unregister_coredump(u100_ctx);
 

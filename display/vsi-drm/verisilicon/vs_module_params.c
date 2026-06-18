@@ -8,8 +8,7 @@
 #include "vs_module_params.h"
 
 static u32 recovery_sources = BIT(SSCD_SRC_MANUAL) |
-			      BIT(SSCD_SRC_FRAME_UPDATE_TIMEOUT) |
-			      BIT(SSCD_SRC_DSI_ERR);
+			      BIT(SSCD_SRC_FRAME_UPDATE_TIMEOUT);
 module_param(recovery_sources, uint, 0644);
 MODULE_PARM_DESC(recovery_sources,
 		 "Bitmask of which sources are allowed to trigger panel recovery");

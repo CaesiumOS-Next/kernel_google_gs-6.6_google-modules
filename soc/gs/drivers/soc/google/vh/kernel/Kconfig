@@ -66,4 +66,9 @@ config VH_THERMAL
 	depends on VH_KERNEL
 	default n
 
+config VH_POWER
+	tristate "Vendor hooks for kernel power"
+	depends on VH_KERNEL
+	default n
+
 source "$(KCONFIG_SOC_GS_PREFIX)drivers/soc/google/vh/kernel/sched/Kconfig"

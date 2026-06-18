@@ -28,7 +28,10 @@ void u100_power_stats_on_switch(struct u100_ctx *u100_ctx)
 	int is_active;
 	enum u100_power_state current_state, new_state;
 
-	if (!power_stats || IS_ERR_OR_NULL(power_stats->gpio_u100_power_stats)) {
+	if (!power_stats)
+		return;
+
+	if (IS_ERR_OR_NULL(power_stats->gpio_u100_power_stats)) {
 		UWB_ERR("Failed to get power stats related resources");
 		return;
 	}
@@ -43,9 +46,9 @@ void u100_power_stats_on_switch(struct u100_ctx *u100_ctx)
 	current_state = power_stats->current_power_state;
 	if (new_state == current_state) {
 		if (new_state != U100_OFF)
-			UWB_WARN("Switched power state from %s to %s: %llu",
+			UWB_DEBUG("Missing power state from %s: %llu",
 				uwb_power_state_name[current_state],
-				uwb_power_state_name[new_state], current_time_ms);
+				current_time_ms);
 		mutex_unlock(&power_stats->power_stats_mutex);
 		return;
 	}

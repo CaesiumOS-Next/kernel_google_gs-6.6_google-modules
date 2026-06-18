@@ -36,5 +36,6 @@ int dvfs_helper_freq_to_lvl_ceil(struct dvfs_domain_info const * const di, const
 s64 dvfs_helper_lvl_to_freq_floor(struct dvfs_domain_info const * const di, const unsigned int lvl);
 int dvfs_helper_freq_to_lvl_floor(struct dvfs_domain_info const * const di, const u64 Hz);
 s64 dvfs_helper_get_domain_opp_frequency_mhz(u16 domain_idx, const unsigned int lvl);
-
+struct dvfs_domain_info *dvfs_helper_get_domain(const char *name);
+struct dvfs_domain_info *dvfs_helper_get_domain_from_id(u16 domain_idx);
 #endif /* _GOOGLE_DVFS_HELPER_H */

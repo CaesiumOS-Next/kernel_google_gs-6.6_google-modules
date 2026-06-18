@@ -1,7 +1,7 @@
 /*
  * log_dump - debugability support for dumping logs to file - header file
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -326,9 +326,9 @@ void dhd_schedule_log_dump(dhd_pub_t *dhdp, void *type);
 void dhd_log_dump_trigger(dhd_pub_t *dhdp, int subcmd);
 void dhd_log_dump_vendor_trigger(dhd_pub_t *dhd_pub);
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifdef DHD_DMPD
 int dhd_debug_dump_get_ring_num(int sec_type);
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* DHD_DMPD */
 int dhd_log_dump_ring_to_file(dhd_pub_t *dhdp, void *ring_ptr, void *file,
 		unsigned long *file_posn, log_dump_section_hdr_t *sec_hdr, char *text_hdr,
 		uint32 sec_type);
@@ -417,9 +417,13 @@ extern int dhd_os_get_axi_error_dump_size(struct net_device *dev);
 extern void dhd_os_get_axi_error_filename(struct net_device *dev, char *dump_path, int len);
 #endif /*  DNGL_AXI_ERROR_LOGGING */
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
-extern int dhd_debug_dump_to_ring(dhd_pub_t *dhdp);
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#ifdef DHD_DMPD
+extern int dhd_debug_dump_to_ring(dhd_pub_t *dhdp, const char *reason);
+extern int dhd_get_debug_dump_buf_info(dhd_pub_t *dhdp,
+	void **b1, uint32 *l1, void **b2, uint32 *l2);
+extern int dhd_get_debug_dump_buf_merged(dhd_pub_t *dhdp,
+	void *buf, int len);
+#endif /* DHD_DMPD */
 
 extern char *dhd_log_dump_get_timestamp(void);
 #ifdef DHD_EFI

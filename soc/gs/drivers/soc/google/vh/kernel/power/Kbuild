@@ -1,0 +1,5 @@
+## SPDX-License-Identifier: GPL-2.0-only
+
+# vendor power module
+obj-$(CONFIG_VH_POWER) += vh_power.o
+vh_power-y += process.o init.o

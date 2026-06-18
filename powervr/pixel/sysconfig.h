@@ -11,8 +11,8 @@
 
 #include <linux/miscdevice.h>
 
-#include <pvrsrvkm/pvrsrv_device.h>
-#include <pvrsrvkm/devicemem_utils.h>
+#include <pvrsrvkm/services/server/include/pvrsrv_device.h>
+#include <pvrsrvkm/services/shared/include/devicemem_utils.h>
 
 #include "pixel_fw_info_shared.h"
 #include "debug.h"
@@ -20,7 +20,7 @@
 #include "of.h"
 #include "gpu_uevent.h"
 
-#define FW_ABI_VERSION 27
+#define FW_ABI_VERSION 33
 #define PIXEL_PA_RANGE_16K_PAGE_ABI_VERSION 15
 
 struct pixel_gpu_secure;

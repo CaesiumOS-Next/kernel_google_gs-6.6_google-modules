@@ -1,7 +1,7 @@
 /*
  * Linux cfg80211 Vendor Extension Code
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -30,6 +30,7 @@
 #define _wl_cfgvendor_h_
 #define OUI_BRCM 0x001018
 #define OUI_GOOGLE 0x001A11
+#define OUI_SYNA 0x90CC24
 #define BRCM_VENDOR_SUBCMD_PRIV_STR 1
 #define ATTRIBUTE_U16_LEN (NLA_HDRLEN + 2)
 #define ATTRIBUTE_U32_LEN (NLA_HDRLEN + 4)
@@ -40,6 +41,8 @@
 #define ETHERTYPE_IPV6 0x86dd /* IP protocol version 6 */
 #define MAX_CACHED_SCAN_RESULT 20u
 #define WL_SCAN_DBG(x) WL_TRACE(x)
+
+#include <wifi_stats.h>
 
 enum brcm_vendor_attr {
 	BRCM_ATTR_DRIVER_CMD		= 0,
@@ -55,21 +58,6 @@ enum brcm_wlan_vendor_features {
 	BRCM_WLAN_VENDOR_FEATURE_KEY_MGMT_OFFLOAD	= 0,
 	BRCM_WLAN_VENDOR_FEATURES_MAX			= 1
 };
-
-typedef enum wifi_error {
-	WIFI_SUCCESS = 0,
-	WIFI_ERROR_NONE = 0,
-	WIFI_ERROR_UNKNOWN = -1,
-	WIFI_ERROR_UNINITIALIZED = -2,
-	WIFI_ERROR_NOT_SUPPORTED = -3,
-	WIFI_ERROR_NOT_AVAILABLE = -4,
-	WIFI_ERROR_INVALID_ARGS = -5,
-	WIFI_ERROR_INVALID_REQUEST_ID = -6,
-	WIFI_ERROR_TIMED_OUT = -7,
-	WIFI_ERROR_TOO_MANY_REQUESTS = -8,
-	WIFI_ERROR_OUT_OF_MEMORY = -9,
-	WIFI_ERROR_BUSY = -10
-} wifi_error_t;
 
 #define SCAN_RESULTS_COMPLETE_FLAG_LEN       ATTRIBUTE_U32_LEN
 #define SCAN_INDEX_HDR_LEN                   (NLA_HDRLEN)
@@ -241,12 +229,13 @@ enum andr_vendor_subcmd {
 	WIFI_SUBCMD_CHANNEL_POLICY,
 	WIFI_SUBCMD_ML_POLICY,
 	ANDR_TWT_SUBCMD_GET_CAP = ANDROID_NL80211_SUBCMD_TWT_START,
-	ANDR_TWT_SUBCMD_SETUP,
-	ANDR_TWT_SUBCMD_TEARDOWN,
-	ANDR_TWT_SUBCMD_INFO_FRAME,
-	ANDR_TWT_SUBCMD_GET_STATS,
-	ANDR_TWT_SUBCMD_CLR_STATS,
-	ANDR_TWT_SUBCMD_GET_RESPONSE,
+	ANDR_TWT_SUBCMD_SESSION_SETUP_REQUEST,
+	ANDR_TWT_SUBCMD_SESSION_TEAR_DOWN_REQUEST,
+	ANDR_TWT_SUBCMD_SESSION_UPDATE_REQUEST,
+	ANDR_TWT_SUBCMD_SESSION_SUSPEND_REQUEST,
+	ANDR_TWT_SUBCMD_SESSION_RESUME_REQUEST,
+	ANDR_TWT_SUBCMD_SESSION_GET_STATS,
+	ANDR_TWT_SUBCMD_SESSION_CLR_STATS,
 	RTT_SUBCMD_SET_CONFIG = ANDROID_NL80211_SUBCMD_RTT_RANGE_START,
 	RTT_SUBCMD_CANCEL_CONFIG,
 	RTT_SUBCMD_GETCAPABILITY,
@@ -302,6 +291,12 @@ enum andr_vendor_subcmd {
 	NAN_WIFI_SUBCMD_ENABLE_MERGE,						 /* 0x1712 */
 	NAN_WIFI_SUBCMD_SUSPEND,						 /* 0x1713 */
 	NAN_WIFI_SUBCMD_RESUME,							 /* 0x1714 */
+	NAN_WIFI_SUBCMD_PAIRING_REQUEST,					 /* 0x1715 */
+	NAN_WIFI_SUBCMD_PAIRING_RESPONSE,					 /* 0x1716 */
+	NAN_WIFI_SUBCMD_PAIRING_END,						 /* 0x1717 */
+	NAN_WIFI_SUBCMD_BOOTSTRAPPING_REQUEST,					 /* 0x1718 */
+	NAN_WIFI_SUBCMD_BOOTSTRAPPING_RESPONSE,					 /* 0x1719 */
+
 	APF_SUBCMD_GET_CAPABILITIES = ANDROID_NL80211_SUBCMD_PKT_FILTER_RANGE_START,
 	APF_SUBCMD_SET_FILTER,
 	APF_SUBCMD_READ_FILTER_DATA,
@@ -477,6 +472,9 @@ enum rtt_attributes {
 	RTT_ATTRIBUTE_TARGET_BURST_DURATION	= 14,
 	RTT_ATTRIBUTE_TARGET_PREAMBLE		= 15,
 	RTT_ATTRIBUTE_TARGET_BW			= 16,
+	RTT_ATTRIBUTE_TARGET_MIN_DELTA		= 17,
+	RTT_ATTRIBUTE_TARGET_MAX_DELTA		= 18,
+	/* RTT Result Attributes */
 	RTT_ATTRIBUTE_RESULTS_COMPLETE		= 30,
 	RTT_ATTRIBUTE_RESULTS_PER_TARGET	= 31,
 	RTT_ATTRIBUTE_RESULT_CNT		= 32,
@@ -484,6 +482,28 @@ enum rtt_attributes {
 	RTT_ATTRIBUTE_RESULT_DETAIL		= 34,
 	RTT_ATTRIBUTE_RESULT_FREQ		= 35,
 	RTT_ATTRIBUTE_RESULT_BW			= 36,
+	RTT_ATTRIBUTE_RESULT_I2R_LTF_REP_COUNT  = 37,
+	RTT_ATTRIBUTE_RESULT_R2I_LTF_REP_COUNT	= 38,
+	RTT_ATTRIBUTE_RESULT_NTB_MIN_DELTA	= 39,
+	RTT_ATTRIBUTE_RESULT_NTB_MAX_DELTA	= 40,
+
+	/* Security */
+	RTT_ATTRIBUTE_TARGET_PROTECTED_FRM_REQD	= 41,
+	RTT_ATTRIBUTE_TARGET_KEY_LIFE_TIME      = 42,
+	RTT_ATTRIBUTE_TARGET_RTT_AKM            = 43,
+	RTT_ATTRIBUTE_TARGET_SEC_LTF_REQD       = 44,
+	RTT_ATTRIBUTE_TARGET_KEY_PASSPHRASE     = 45,
+	RTT_ATTRIBUTE_TARGET_KEY_PASSPHRASE_LEN = 46,
+	RTT_ATTRIBUTE_TARGET_CIPHER_TYPE        = 47,
+
+	RTT_ATTRIBUTE_RESULT_NTB_I2R_STS	= 48,
+	RTT_ATTRIBUTE_RESULT_NTB_R2I_STS	= 49,
+	RTT_ATTRIBUTE_RESULT_RNG_PROT_ENABLED	= 50,
+	RTT_ATTRIBUTE_RESULT_SLTF_ENABLED	= 51,
+	RTT_ATTRIBUTE_RESULT_RTT_AKM		= 52,
+	RTT_ATTRIBUTE_RESULT_CIPHER_TYPE	= 53,
+	RTT_ATTRIBUTE_RESULT_SLTF_PROTO_VER	= 54,
+
 	/* Add any new RTT_ATTRIBUTE prior to RTT_ATTRIBUTE_MAX */
 	RTT_ATTRIBUTE_MAX
 };
@@ -753,7 +773,15 @@ typedef enum wl_vendor_event {
 	BRCM_VENDOR_EVENT_CONNECTIVITY_LOG = 47,
 	BRCM_VENDOR_EVENT_HAPD_TSF = 48,
 	GOOGLE_NAN_EVENT_SUSPENSION_STATUS = 49,
-	BRCM_VENDOR_EVENT_LAST
+	GOOGLE_NAN_EVENT_PAIRING_REQ_IND = 50,
+	GOOGLE_NAN_EVENT_PAIRING_CONFIRM = 51,
+	GOOGLE_NAN_EVENT_PAIRING_END = 52,
+	GOOGLE_NAN_EVENT_BOOTSTRAPPING_REQ_IND = 53,
+	GOOGLE_NAN_EVENT_BOOTSTRAPPING_CONFIRM = 54,
+	SYNA_VENDOR_EVENT_SCHED_PM = 56,
+	SYNA_VENDOR_EVENT_TID_LINK_MAPPING = 57,
+	SYNA_VENDOR_EVENT_CSI_REPORT = 58,
+	VENDOR_EVENT_LAST
 } wl_vendor_event_t;
 
 enum andr_wifi_attr {
@@ -928,6 +956,17 @@ typedef enum {
 #define DUTY_CYCLE_CRITICAL	30u
 #define DUTY_CYCLE_EMERGENCY	10u
 #endif /* WL_THERMAL_MITIGATION */
+#ifdef BCN_TSFINFO
+#define BRCM_VENDOR_GET_TSFINFO_LEN     \
+	sizeof(uint32) * 4
+
+typedef enum {
+	WIFI_SOFTAP_TSFINFO_HIGH        = 0,
+	WIFI_SOFTAP_TSFINFO_LOW         = 1,
+	WIFI_UTCTIME_SEC                = 2,
+	WIFI_UTCTIME_USEC               = 3
+} softap_tsfinfo_attribute;
+#endif /* BCN_TSFINFO */
 
 #ifdef WL_TWT
 typedef enum {
@@ -964,17 +1003,29 @@ typedef enum {
 } wifi_twt_attribute;
 #endif /* WL_TWT */
 
-#ifdef BCN_TSFINFO
-#define BRCM_VENDOR_GET_TSFINFO_LEN     \
-	sizeof(uint32) * 4
+#ifdef WLSCHED_PM
+typedef enum {
+	WIFI_SCHED_PM_ATTR_NONE		= 0,
+	WIFI_SCHED_PM_ATTR_SUB_EVENT	= 1,
+	WIFI_SCHED_PM_ATTR_REASON_CODE	= 2,
+	WIFI_SCHED_PM_ATTR_STATUS	= 3,
+	WIFI_SCHED_PM_ATTR_EVENT_ID	= 4,
+	WIFI_SCHED_PM_ATTR_MAX
+} wifi_sched_pm_attribute;
+#endif /* WLSCHED_PM */
 
 typedef enum {
-	WIFI_SOFTAP_TSFINFO_HIGH        = 0,
-	WIFI_SOFTAP_TSFINFO_LOW         = 1,
-	WIFI_UTCTIME_SEC                = 2,
-	WIFI_UTCTIME_USEC               = 3
-} softap_tsfinfo_attribute;
-#endif /* BCN_TSFINFO */
+	WIFI_CSI_REPORT_ATTR_VERSION     = 0,
+	WIFI_CSI_REPORT_ATTR_DATA_VER_1  = 1
+} wifi_csi_report_attribute_t;
+
+typedef enum {
+	WIFI_TID_LINK_MAPPING_ATTR_DEFAULT_MAPPING  = 0,
+	WIFI_TID_LINK_MAPPING_ATTR_NUM_LINKS        = 1,
+	WIFI_TID_LINK_MAPPING_ATTR_LINK_ID          = 2,
+	WIFI_TID_LINK_MAPPING_ATTR_STATUS           = 3,
+	WIFI_TID_LINK_MAPPING_ATTR_MAX
+} wifi_tid_link_map_attribute;
 
 typedef enum {
 	/**
@@ -1041,55 +1092,6 @@ typedef enum {
 	OTA_UPDATE_ATTRIBUTE_MAX
 } OTA_UPDATE_ATTRIBUTE;
 #endif /* SUPPORT_OTA_UPDATE */
-
-#ifdef WL_TWT_HAL_IF
-#define BRCM_TWT_HAL_VENDOR_EVENT_BUF_LEN   500
-
-typedef enum {
-	ANDR_TWT_ATTR_NONE		= 0,
-	ANDR_TWT_ATTR_CONFIG_ID		= 1,
-	ANDR_TWT_ATTR_NEGOTIATION_TYPE	= 2,
-	ANDR_TWT_ATTR_TRIGGER_TYPE	= 3,
-	ANDR_TWT_ATTR_WAKE_DURATION	= 4,
-	ANDR_TWT_ATTR_WAKE_INTERVAL	= 5,
-	ANDR_TWT_ATTR_WAKE_INTERVAL_MIN	= 6,
-	ANDR_TWT_ATTR_WAKE_INTERVAL_MAX	= 7,
-	ANDR_TWT_ATTR_WAKE_DURATION_MIN	= 8,
-	ANDR_TWT_ATTR_WAKE_DURATION_MAX	= 9,
-	ANDR_TWT_ATTR_AVG_PKT_SIZE	= 10,
-	ANDR_TWT_ATTR_AVG_PKT_NUM	= 11,
-	ANDR_TWT_ATTR_WAKETIME_OFFSET	= 12,
-	ANDR_TWT_ATTR_ALL_TWT		= 13,
-	ANDR_TWT_ATTR_RESUME_TIME	= 14,
-	ANDR_TWT_ATTR_AVG_EOSP_DUR	= 15,
-	ANDR_TWT_ATTR_EOSP_CNT		= 16,
-	ANDR_TWT_ATTR_NUM_SP		= 17,
-	ANDR_TWT_ATTR_DEVICE_CAP	= 18,
-	ANDR_TWT_ATTR_PEER_CAP		= 19,
-	ANDR_TWT_ATTR_STATUS		= 20,
-	ANDR_TWT_ATTR_REASON_CODE	= 21,
-	ANDR_TWT_ATTR_TWT_RESUMED	= 22,
-	ANDR_TWT_ATTR_TWT_NOTIFICATION	= 23,
-	ANDR_TWT_ATTR_SUB_EVENT		= 24,
-	ANDR_TWT_ATTR_NUM_PEER_STATS	= 25,
-	ANDR_TWT_ATTR_AVG_PKT_NUM_TX	= 26,
-	ANDR_TWT_ATTR_AVG_PKT_SIZE_TX	= 27,
-	ANDR_TWT_ATTR_AVG_PKT_NUM_RX	= 28,
-	ANDR_TWT_ATTR_AVG_PKT_SIZE_RX	= 29,
-	ANDR_TWT_ATTRIBUTE_SETUP_CMD	= 30,
-	ANDR_TWT_ATTRIBUTE_FLOW_FLAGS	= 31,
-	ANDR_TWT_ATTRIBUTE_FLOW_ID	= 32,
-	ANDR_TWT_ATTRIBUTE_CHANNEL	= 33,
-	ANDR_TWT_ATTR_MAX
-} andr_twt_attribute;
-
-typedef enum {
-	ANDR_TWT_EVENT_SETUP	= 1,
-	ANDR_TWT_EVENT_TEARDOWN	= 2,
-	ANDR_TWT_EVENT_INFO_FRM	= 3,
-	ANDR_TWT_EVENT_NOTIFY	= 4
-} andr_twt_sub_event;
-#endif /* WL_TWT_HAL_IF */
 
 typedef enum {
 	ANDR_LSTAT_ATTRIBUTE_INVALID	= 0,
@@ -1162,6 +1164,7 @@ typedef struct {
 #define BRCM_VENDOR_SCMD_CAPA	"cap"
 #define MEMDUMP_PATH_LEN	128
 
+int wl_cfgvendor_send_cmd_reply(struct wiphy *wiphy, const void  *data, int len);
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 13, 0)) || defined(WL_VENDOR_EXT_SUPPORT)
 extern int wl_cfgvendor_attach(struct wiphy *wiphy, dhd_pub_t *dhd);
 extern int wl_cfgvendor_detach(struct wiphy *wiphy);
@@ -1230,15 +1233,15 @@ extern int wl_cfgvendor_send_supp_advlog(const char *fmt, ...);
 		} \
 	} while (0)
 
-#define COMPAT_MEMCOPY_IFACE(output, total_len, normal_structure, value, wifi_rate_stat)	\
+#define COMPAT_MEMCOPY_IFACE(output, total_len, normal_structure, value)	\
 	do { \
 		if (compat_task_state) {	\
 			memcpy(output, &compat_ ## value, sizeof(compat_ ## normal_structure));	\
-			output += (sizeof(compat_ ## value) - sizeof(wifi_rate_stat));	\
+			output += sizeof(compat_ ## value);	\
 			total_len += sizeof(compat_ ## normal_structure);	\
 		} else { \
 			memcpy(output, &value, sizeof(normal_structure));	\
-			output += (sizeof(value) - sizeof(wifi_rate_stat));	\
+			output += sizeof(value);	\
 			total_len += sizeof(normal_structure);	\
 		} \
 	} while (0)
@@ -1246,10 +1249,10 @@ extern int wl_cfgvendor_send_supp_advlog(const char *fmt, ...);
 #define COMPAT_STRUCT_IFACE(normal_structure, value)	normal_structure value;
 #define COMPAT_BZERO_IFACE(normal_structure, value)	bzero(&value, sizeof(normal_structure));
 #define COMPAT_ASSIGN_VALUE(normal_structure, member, value)	normal_structure.member = value;
-#define COMPAT_MEMCOPY_IFACE(output, total_len, normal_structure, value, rate_stat)	\
+#define COMPAT_MEMCOPY_IFACE(output, total_len, normal_structure, value)	\
 	do { \
 		memcpy(output, &value, sizeof(normal_structure));	\
-		output += (sizeof(value) - sizeof(wifi_rate_stat));	\
+		output += sizeof(value);	\
 		total_len += sizeof(normal_structure);	\
 	} while (0)
 #endif /* CONFIG_COMPAT */
@@ -1292,6 +1295,25 @@ void wl_cfgdbg_tput_debug_work(struct work_struct *work);
 int wl_cfgdbg_tput_debug_get_cmd(struct wiphy *wiphy,
 	struct wireless_dev *wdev, const void *data, int len);
 #endif /* TPUT_DEBUG_DUMP */
+#if !defined(WL_TWT) && defined(WL_TWT_HAL_IF)
+int wl_cfgtwt_cap(struct wiphy *wiphy, struct wireless_dev *wdev,
+	const void  *data, int len);
+int wl_cfgtwt_session_setup_update(struct wiphy *wiphy, struct wireless_dev *wdev,
+	const void  *data, int len);
+int wl_cfgtwt_session_teardown(struct wiphy *wiphy, struct wireless_dev *wdev,
+	const void  *data, int len);
+int wl_cfgtwt_session_get_stats(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void  *data, int len);
+int wl_cfgtwt_session_clear_stats(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void  *data, int len);
+int wl_cfgtwt_session_suspend(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void  *data, int len);
+int wl_cfgtwt_session_resume(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void  *data, int len);
+#endif /* !WL_TWT && WL_TWT_HAL_IF */
+
+extern void fill_chanspec_to_channel_info(chanspec_t cur_chanspec,
+        wifi_channel_info *channel, int *cur_band);
 extern int wl_cfgvendor_multista_set_primary_connection(struct wiphy *wiphy,
 	struct wireless_dev *wdev, const void  *data, int len);
 

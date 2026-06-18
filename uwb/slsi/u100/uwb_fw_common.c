@@ -23,7 +23,7 @@
 #define APDU_LAST_BYTE_DELAY_US 50
 #define BL1_VER_PREFIX_LEN 5
 
-void iso_t1_header_pcb_reset(struct u100_ctx *u100_ctx)
+static void iso_t1_header_pcb_reset(struct u100_ctx *u100_ctx)
 {
 	u100_ctx->uwb_fw_ctx.iso_t1_pcb = 0;
 }
@@ -204,8 +204,8 @@ unsigned char lrc8(const uint8_t *s, size_t n)
 	return c;
 }
 
-enum fw_err send_mode_command(struct u100_ctx *u100_ctx, const uint8_t *select_cmd,
-						int select_cmd_len, bool is_bl0)
+static enum fw_err send_mode_command(struct u100_ctx *u100_ctx, const uint8_t *select_cmd,
+		int select_cmd_len, bool is_bl0)
 {
 	enum fw_err ret;
 	int rsp_len;
@@ -235,7 +235,7 @@ enum fw_err send_mode_command(struct u100_ctx *u100_ctx, const uint8_t *select_c
 	return parse_iso_iblock(u100_ctx->uwb_fw_ctx.cmd_rsp, rsp_len);
 }
 
-void parse_select_bl1_rsp(uint8_t *data, int len, struct fw_download_param *param)
+static void parse_select_bl1_rsp(uint8_t *data, int len, struct fw_download_param *param)
 {
 	if (len <= V1_SELECT_BL1_RSP_LEN) {
 		param->fast_mode = false;
@@ -252,7 +252,7 @@ void parse_select_bl1_rsp(uint8_t *data, int len, struct fw_download_param *para
 	}
 }
 
-enum fw_err select_uwb_bl0_mode(struct u100_ctx *u100_ctx)
+static enum fw_err select_uwb_bl0_mode(struct u100_ctx *u100_ctx)
 {
 	static const uint8_t select_cmd[] = {0x00, 0xA4, 0x04, 0x00, 0x08, 0xA0, 0x00,
 					0x53, 0x2E, 0x4C, 0x53, 0x49, 0x00, 0x00};
@@ -270,7 +270,7 @@ enum fw_err enter_uwb_bl0_mode(struct u100_ctx *u100_ctx)
 	return select_uwb_bl0_mode(u100_ctx);
 }
 
-enum fw_err select_uwb_bl1_mode(struct u100_ctx *u100_ctx)
+static enum fw_err select_uwb_bl1_mode(struct u100_ctx *u100_ctx)
 {
 	static const uint8_t select_cmd[] = {0x00, 0x75, 0x02, 0x01, 0x10};
 	enum fw_err ret;
@@ -435,7 +435,7 @@ enum fw_err uwb_flash_img(struct u100_ctx *u100_ctx, uint8_t *data, uint32_t siz
  *
  * e.g., If data is '1.3.3', the parsed bl1_version is '01 03 0003'
  */
-void parse_bl1_version_num(uint8_t *data, int data_len, struct u100_ctx *u100_ctx)
+static void parse_bl1_version_num(uint8_t *data, int data_len, struct u100_ctx *u100_ctx)
 {
 	unsigned int major = 0;
 	unsigned int mid = 0;
@@ -461,7 +461,7 @@ void parse_bl1_version_num(uint8_t *data, int data_len, struct u100_ctx *u100_ct
 	uwb_fw_ctx->bl1_version[3] = minor & 0xFF;
 }
 
-enum fw_err parse_bl1_version(struct u100_ctx *u100_ctx)
+static enum fw_err parse_bl1_version(struct u100_ctx *u100_ctx)
 {
 	uint16_t iso_len;
 	uint8_t *data;
@@ -501,7 +501,8 @@ enum fw_err parse_bl1_version(struct u100_ctx *u100_ctx)
 
 }
 
-enum fw_err send_cmd_to_fast_mode_bl1(struct u100_ctx *u100_ctx, const uint8_t *cmd, int cmd_len)
+static enum fw_err send_cmd_to_fast_mode_bl1(struct u100_ctx *u100_ctx, const uint8_t *cmd,
+		int cmd_len)
 {
 	int len = cmd_len + ISO_T1_HEADER_FM_LEN;
 	struct iso_t1_header header;
@@ -552,7 +553,7 @@ enum fw_err send_cmd_to_fast_mode_bl1(struct u100_ctx *u100_ctx, const uint8_t *
 	return parse_bl1_version(u100_ctx);
 }
 
-enum fw_err try_get_bl1_version(struct u100_ctx *u100_ctx)
+static enum fw_err try_get_bl1_version(struct u100_ctx *u100_ctx)
 {
 	static const uint8_t get_bl1_ver_cmd[] = {0x81, 0xed, 0x00, 0x0};
 	enum fw_err ret;
@@ -593,7 +594,7 @@ int check_iso_iblock(uint8_t *data, int max_size)
 	return parse_iso_iblock(data, len);
 }
 
-void set_default_download_param(struct u100_ctx *u100_ctx)
+static void set_default_download_param(struct u100_ctx *u100_ctx)
 {
 	u100_ctx->uwb_fw_ctx.download_param.fast_mode = DEFAULT_FAST_MODE_DISABLE;
 	u100_ctx->uwb_fw_ctx.download_param.max_segment_size = MAX_AP_APDU_DATA_FM_LEN;

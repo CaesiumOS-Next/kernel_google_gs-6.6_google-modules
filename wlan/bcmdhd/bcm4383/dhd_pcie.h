@@ -1,7 +1,7 @@
 /*
  * Linux DHD Bus Module for PCIE
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -273,7 +273,8 @@ typedef enum dhd_pcie_link_state {
 	DHD_PCIE_LINK_DOWN = 1,
 	DHD_PCIE_COMMON_BP_DOWN = 2,
 	DHD_PCIE_WLAN_BP_DOWN = 3,
-	DHD_PCIE_LINK_RESET = 4
+	DHD_PCIE_COEXCPU_BP_DOWN = 4,
+	DHD_PCIE_LINK_RESET = 5
 } dhd_pcie_link_state_type_t;
 
 /* PCIe bus memory mapped regions for device memory accees */
@@ -376,6 +377,7 @@ typedef struct dhd_bus {
 	uint32		bus;			/* gSPI or SDIO bus */
 	uint32		intstatus;		/* Intstatus bits (events) pending */
 	bool		dpc_sched;		/* Indicates DPC schedule (intrpt rcvd) */
+	bool		dpc_resched;		/* Indicates DPC rescheduled */
 	bool		fcstate;		/* State of dongle flow-control */
 
 	uint16		cl_devid;		/* cached devid for dhdsdio_probe_attach() */
@@ -530,6 +532,10 @@ typedef struct dhd_bus {
 	dhd_ds_trace_t   ds_trace[MAX_DS_TRACE_SIZE];
 	uint32	ds_trace_count;
 
+#ifdef DHD_SSSR_DUMP
+	bool sssr_in_progress;	/* flag to indicate sssr ops in progress */
+#endif /* DHD_SSSR_DUMP */
+
 	uint32  hostready_count; /* Number of hostready issued */
 #if defined(PCIE_OOB) || defined(BCMPCIE_OOB_HOST_WAKE)
 	bool	oob_presuspend;
@@ -607,9 +613,9 @@ typedef struct dhd_bus {
 #ifdef OEM_ANDROID
 	bool chk_pm;	/* To avoid counting of wake up from Runtime PM */
 #endif /* OEM_ANDROID */
-#ifdef DHD_ENABLE_L1SS_FROM_PM_COMPLETE
-	bool system_resume_in_progress;
-#endif /* DHD_ENABLE_L1SS_FROM_PM_COMPLETE */
+#ifdef DHD_DEFER_L1SS_ENABLE_IN_RESUME
+	struct work_struct l1ss_enable_work;
+#endif /* DHD_DEFER_L1SS_ENABLE_IN_RESUME */
 #if defined(PCIE_INB_DW)
 	bool calc_ds_exit_latency;
 	bool deep_sleep; /* Indicates deep_sleep set or unset by the DHD IOVAR deep_sleep */
@@ -633,9 +639,11 @@ typedef struct dhd_bus {
 	bool    cto_enable;     /* enable PCIE CTO Prevention and recovery */
 	uint32  cto_threshold;  /* PCIE CTO timeout threshold */
 	bool	cto_triggered;	/* CTO is triggered */
-	bool	init_done; 	/* ready to receive interrupts from dongle */
+	/* enable PCIE CTO recovery when PCIE CTO Prevention is enabled */
+	bool    cto_recovery_enable;
+	bool	init_done;		/* ready to receive interrupts from dongle */
 	int	pwr_req_ref;
-	bool flr_force_fail; /* user intends to simulate flr force fail */
+	bool flr_force_fail;	/* user intends to simulate flr force fail */
 
 	/* Information used to compose the memory map and to write the memory map,
 	 * FW, and FW signature to dongle RAM.
@@ -696,8 +704,8 @@ typedef struct dhd_bus {
 #ifdef EWP_DACS
 	ewp_hw_info_t ewp_hw_info;
 #endif /* EWP_DACS */
-	etb_config_info_t *etb_config_info;
-	uint etb_config_size;
+	etb_block_t *eblk_buf;
+	uint eblk_buf_size;
 	bool etb_validity[ETB_USER_MAX];
 #ifdef DHD_AGGR_WI
 	/* Aggregation bits : 0 = TXPOST | 1 = RXPOST | 2 = TXCPL | 3 = RXCPL */
@@ -755,6 +763,7 @@ typedef struct dhd_bus {
 	bool ptm_host_ready_adopt_rx; /* rx: some systems host PTM gets reset on host sleep/wake */
 	bool ptm_host_ready_adopt_tx; /* tx: some systems host PTM gets reset on host sleep/wake */
 
+	uint32 security_status;
 } dhd_bus_t;
 
 #ifdef DHD_PCIE_WRAPPER_DUMP
@@ -926,14 +935,11 @@ extern void dhdpcie_bus_ringbell_2_fast(struct dhd_bus *bus, uint32 value, bool 
 extern void dhdpcie_dongle_reset(dhd_bus_t *bus);
 extern int dhd_bus_cfg_sprom_ctrl_bp_reset(struct dhd_bus *bus);
 extern int dhd_bus_cfg_ss_ctrl_bp_reset(struct dhd_bus *bus);
-#ifdef DHD_PCIE_NATIVE_RUNTIMEPM
 extern int dhdpcie_bus_suspend(struct  dhd_bus *bus, bool state, bool byint);
-#else
-extern int dhdpcie_bus_suspend(struct  dhd_bus *bus, bool state);
-#endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
 extern int dhdpcie_pci_suspend_resume(struct  dhd_bus *bus, bool state);
 extern uint32 dhdpcie_force_alp(struct dhd_bus *bus, bool enable);
 extern uint32 dhdpcie_set_l1_entry_time(struct dhd_bus *bus, int force_l1_entry_time);
+extern int32 dhdpcie_get_l1_entry_time(struct dhd_bus *bus);
 extern bool dhdpcie_tcm_valid(dhd_bus_t *bus);
 extern void dhdpcie_pme_active(osl_t *osh, bool enable);
 extern bool dhdpcie_pme_cap(osl_t *osh);
@@ -1199,7 +1205,7 @@ void dhd_assoc_check_sr(dhd_pub_t *dhd, bool state);
 
 void dhdpcie_setbar2win(dhd_bus_t *bus, uint32 addr);
 void dhd_init_bar1_switch_lock(dhd_bus_t *bus);
-int dhd_pcie_nci_wrapper_dump(dhd_pub_t *dhd);
+int dhd_pcie_nci_wrapper_dump(dhd_pub_t *dhd, bool dump_to_dmesg);
 int dhd_bus_get_armca7_pc(struct dhd_bus *bus, bool loop_print);
 void dhd_bt_dwnld_pwr_req(dhd_bus_t *bus);
 void dhd_bt_dwnld_pwr_req_clear(dhd_bus_t *bus);
@@ -1263,4 +1269,8 @@ int dhdpcie_ewphw_get_initdumps(dhd_bus_t *bus);
 void dhd_bus_pcie_pwr_req(struct dhd_bus *bus);
 void dhd_bus_pcie_pwr_req_clear(struct dhd_bus *bus);
 
+#define PCIE_SUBSYS_CTRL_BPACCESS_ENABLE 0x800C0u
+#define PCIE_SUBSYS_CTRL_BPACCESS_DISABLE 0x80080u
+#define BP_INDACCESS_SHIFT (0x1 << 6)
+void dhdpcie_print_amni_regs(dhd_bus_t *bus, bool trap_or_rot);
 #endif /* dhd_pcie_h */

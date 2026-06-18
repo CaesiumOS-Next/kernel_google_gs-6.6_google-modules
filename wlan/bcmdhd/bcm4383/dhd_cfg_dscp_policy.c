@@ -12,7 +12,7 @@
  *
  * This file is used only if the DHD is built with the feature string "dscp_policy".
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -886,14 +886,23 @@ dhd_dscp_policy_send_af(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 	wl_af_params_v1_t *af_params = NULL;
 	wl_action_frame_v1_t *action_frame;
 	struct ether_addr tmp_bssid;
-	struct channel_info ci;
 	uint8 *smbuf  = NULL;
-	int tmp_channel = 0;
 	int ret_val;
 	wl_af_params_v2_t *af_params_v2_p = NULL;
 	u8 *af_params_iov_p = NULL;
 	s32 af_params_iov_len = 0;
 	uint16 wl_af_params_size = 0;
+	uint8 *bi_buf = NULL;
+	uint32 bi_buf_len = WLC_IOCTL_MAXLEN;
+	wl_bss_info_v109_t *bss;
+
+	/* Allocate bss info buf */
+	bi_buf = (uint8 *) MALLOCZ(cfg->osh, bi_buf_len);
+	if (bi_buf == NULL) {
+		ret_val = BCME_NOMEM;
+		DHD_ERROR(("*** dhd_dscp_policy_send_response: unable to allocate bi_info\n"));
+		goto done;
+	}
 
 	/* fill up af_params */
 	af_params = (wl_af_params_v1_t *)MALLOCZ(cfg->osh, WL_WIFI_AF_PARAMS_SIZE_V1);
@@ -911,17 +920,17 @@ dhd_dscp_policy_send_af(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 		goto done;
 	}
 
-	bzero(&ci, sizeof(ci));
-	ret_val = wldev_ioctl_get(ndev, WLC_GET_CHANNEL, &ci, sizeof(ci));
+	/* Get BSS information */
+	*(u32 *) bi_buf = htod32(bi_buf_len);
+	ret_val = wldev_ioctl_get(ndev, WLC_GET_BSS_INFO, (void *)bi_buf, bi_buf_len);
 	if (ret_val != BCME_OK) {
 		DHD_ERROR(("wldev_ioctl_get has failed to get channel,"
 		           " ret_val = %d\n", ret_val));
 		goto done;
 	}
 
-	tmp_channel = ci.hw_channel;
-
-	af_params->channel = tmp_channel;
+	bss = (wl_bss_info_v109_t *)(bi_buf + sizeof(bi_buf_len));
+	af_params->channel = bss->chanspec;
 	af_params->dwell_time = DSCP_AF_DEFAULT_DWELL_TIME;
 	eacopy(tmp_bssid.octet, af_params->BSSID.octet);
 	action_frame = &af_params->action_frame;
@@ -975,6 +984,9 @@ dhd_dscp_policy_send_af(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 		DHD_INFO(("*** sending DSCP response action frame is a success \n"));
 	}
 done:
+	if (bi_buf) {
+		MFREE(cfg->osh, bi_buf, bi_buf_len);
+	}
 
 	if (af_params_v2_p) {
 		MFREE(cfg->osh, af_params_v2_p, wl_af_params_size);

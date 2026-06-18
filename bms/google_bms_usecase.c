@@ -339,8 +339,9 @@ EXPORT_SYMBOL_GPL(bms_usecase_add_tail);
  * When free_state is BMS_USECASE_FREE_FROM_LIST or BMS_USECASE_FREE_ALL, requires
  * &bms_uc_data->queue_lock to be held
  */
-void bms_usecase_free_node(struct bms_usecase_data *bms_uc_data, struct bms_usecase_entry *entry,
-			   enum bms_usecase_free_state free_state)
+void bms_usecase_free_node_locked(struct bms_usecase_data *bms_uc_data,
+				  struct bms_usecase_entry *entry,
+				  enum bms_usecase_free_state free_state)
 {
 	struct device *dev = bms_uc_data->chg_data->dev;
 
@@ -369,6 +370,20 @@ void bms_usecase_free_node(struct bms_usecase_data *bms_uc_data, struct bms_usec
 		mutex_unlock(&bms_uc_data->pool_lock);
 	}
 }
+EXPORT_SYMBOL_GPL(bms_usecase_free_node_locked);
+
+/*
+ * When free_state is BMS_USECASE_FREE_FROM_LIST or BMS_USECASE_FREE_ALL, requires
+ * &bms_uc_data->queue_lock to be held
+ */
+void bms_usecase_free_node(struct bms_usecase_data *bms_uc_data,
+				  struct bms_usecase_entry *entry,
+				  enum bms_usecase_free_state free_state)
+{
+	mutex_lock(&bms_uc_data->queue_lock);
+	bms_usecase_free_node_locked(bms_uc_data, entry, free_state);
+	mutex_unlock(&bms_uc_data->queue_lock);
+}
 EXPORT_SYMBOL_GPL(bms_usecase_free_node);
 
 void bms_usecase_clear_queue(struct bms_usecase_data *bms_uc_data, int err)
@@ -390,7 +405,7 @@ void bms_usecase_clear_queue(struct bms_usecase_data *bms_uc_data, int err)
 
 		node = klist_next(&iter);
 		entry->uc_work_ret = err;
-		bms_usecase_free_node(bms_uc_data, entry,
+		bms_usecase_free_node_locked(bms_uc_data, entry,
 				      !_bms_usecase_meta_async_get(entry->value));
 	}
 
@@ -414,7 +429,7 @@ static void bms_usecase_reset_sem(struct bms_usecase_entry *entry)
 	atomic_set(&entry->sem_count, 0);
 }
 
-void bms_usecase_down(struct bms_usecase_entry *entry)
+int bms_usecase_down(struct bms_usecase_entry *entry)
 {
 	int ret, sem_count;
 
@@ -424,7 +439,7 @@ void bms_usecase_down(struct bms_usecase_entry *entry)
 	if (ret < 0) {
 		dev_err(entry->dev, "Error! Can not down sem on node:%d ret:%d\n",
 			entry->id, ret);
-		return;
+		return ret;
 	}
 	sem_count = atomic_read(&entry->sem_count);
 
@@ -435,6 +450,7 @@ void bms_usecase_down(struct bms_usecase_entry *entry)
 			sem_count, atomic_read(&entry->sem_count), entry->id);
 		bms_usecase_reset_sem(entry);
 	}
+	return 0;
 }
 EXPORT_SYMBOL_GPL(bms_usecase_down);
 
@@ -528,11 +544,21 @@ static void bms_usecase_process_work(struct work_struct *work)
 		bms_usecase_set(bms_uc_data, entry->usecase, 0);
 
 		node = bms_usecase_queue_next(bms_uc_data, &iter);
-
+		/*
+		 * Check for ownership transfer via the orphan status.
+		 * Must hold queue_lock to ensure atomic check-and-free relative to
+		 * the caller setting the flag.
+		 */
 		mutex_lock(&bms_uc_data->queue_lock);
-		bms_usecase_free_node(bms_uc_data, entry,
-				      !_bms_usecase_meta_async_get(entry->value));
+		if (!_bms_usecase_meta_async_get(entry->value) &&
+		    entry->status == BMS_USECASE_STATUS_ORPHAN) {
+			bms_usecase_free_node_locked(bms_uc_data, entry, BMS_USECASE_FREE_ALL);
+		} else {
+			bms_usecase_free_node_locked(bms_uc_data, entry,
+						!_bms_usecase_meta_async_get(entry->value));
+		}
 		mutex_unlock(&bms_uc_data->queue_lock);
+
 	}
 
 	klist_iter_exit(&iter);

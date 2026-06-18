@@ -377,114 +377,6 @@ static ssize_t vs_plane_pattern_write(struct file *file, const char __user *ubuf
 	return len;
 }
 
-static int vs_plane_crc_show(struct seq_file *s, void *data)
-{
-	struct drm_plane *plane = s->private;
-	struct vs_plane_state *plane_state = to_vs_plane_state(plane->state);
-
-	seq_printf(s, "plane[%u]: %s\n", plane->base.id, plane->name);
-
-	seq_printf(s, "\tenable: %d\n", plane_state->crc.enable);
-	seq_printf(s, "\tpos setting instructions:\n\t\tpos\t\tid\n\t\tDFC\t\t0\
-\n\t\tHDR\t\t1\n");
-	seq_printf(s, "\tpos-id = %d\n", plane_state->crc.pos);
-	seq_printf(s, "\talpha-seed= 0x%x\n", plane_state->crc.seed.a);
-	seq_printf(s, "\tred-seed= 0x%x\n", plane_state->crc.seed.r);
-	seq_printf(s, "\tgreen-seed= 0x%x\n", plane_state->crc.seed.g);
-	seq_printf(s, "\tblue-seed= 0x%x\n", plane_state->crc.seed.b);
-
-	seq_printf(s, "\talpha-crc= 0x%x\n", plane_state->crc.result.a);
-	seq_printf(s, "\tred-crc= 0x%x\n", plane_state->crc.result.r);
-	seq_printf(s, "\tgreen-crc= 0x%x\n", plane_state->crc.result.g);
-	seq_printf(s, "\tblue-crc= 0x%x\n", plane_state->crc.result.b);
-
-	return 0;
-}
-
-static int vs_plane_crc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, vs_plane_crc_show, inode->i_private);
-}
-
-static ssize_t vs_plane_crc_write(struct file *file, const char __user *ubuf, size_t len,
-				  loff_t *offp)
-{
-	struct seq_file *s = file->private_data;
-	struct drm_plane *plane = s->private;
-	struct drm_device *drm_dev = plane->dev;
-	struct vs_plane *vs_plane = to_vs_plane(plane);
-	struct vs_plane_state *plane_state = to_vs_plane_state(plane->state);
-	struct vs_drm_private *priv = NULL;
-	char buf[120], *cur = buf;
-	unsigned long value;
-
-	if (!drm_dev)
-		return -ENXIO;
-
-	priv = drm_dev->dev_private;
-	if (!priv || !priv->dc_dev)
-		return -ENXIO;
-
-	if (!vs_plane->funcs->set_crc)
-		return -EINVAL;
-
-	if (len > sizeof(buf) - 1)
-		return -EINVAL;
-
-	if (copy_from_user(buf, ubuf, len))
-		return -EFAULT;
-
-	buf[len] = '\0';
-
-	cur = strstr(buf, "enable:");
-	if (cur) {
-		cur += 7;
-		value = simple_strtoul(cur, NULL, 10);
-		plane_state->crc.enable = value;
-	} else {
-		return -EINVAL;
-	}
-
-	cur = strstr(buf, "pos:");
-	if (cur) {
-		cur += 4;
-		value = simple_strtoul(cur, NULL, 10);
-		plane_state->crc.pos = value;
-	}
-
-	cur = strstr(buf, "a-seed:0x");
-	if (cur) {
-		cur += 9;
-		value = simple_strtoul(cur, NULL, 16);
-		plane_state->crc.seed.a = value;
-	}
-
-	cur = strstr(buf, "r-seed:0x");
-	if (cur) {
-		cur += 9;
-		value = simple_strtoul(cur, NULL, 16);
-		plane_state->crc.seed.r = value;
-	}
-
-	cur = strstr(buf, "g-seed:0x");
-	if (cur) {
-		cur += 9;
-		value = simple_strtoul(cur, NULL, 16);
-		plane_state->crc.seed.g = value;
-	}
-
-	cur = strstr(buf, "b-seed:0x");
-	if (cur) {
-		cur += 9;
-		value = simple_strtoul(cur, NULL, 16);
-		plane_state->crc.seed.b = value;
-	}
-
-	vs_plane->funcs->set_crc(priv->dc_dev, vs_plane);
-
-	return len;
-}
-
 static const struct file_operations vs_plane_pattern_fops = {
 	.open = vs_plane_pattern_open,
 	.read = seq_read,
@@ -493,13 +385,6 @@ static const struct file_operations vs_plane_pattern_fops = {
 	.release = single_release,
 };
 
-static const struct file_operations vs_plane_crc_fops = {
-	.open = vs_plane_crc_open,
-	.read = seq_read,
-	.write = vs_plane_crc_write,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
 static int vs_plane_debugfs_init(struct drm_plane *plane)
 {
 	struct vs_plane *vs_plane = to_vs_plane(plane);
@@ -515,7 +400,6 @@ static int vs_plane_debugfs_init(struct drm_plane *plane)
 
 	debugfs_create_file("pattern", 0644, vs_plane->debugfs_entry, plane,
 			    &vs_plane_pattern_fops);
-	debugfs_create_file("CRC", 0644, vs_plane->debugfs_entry, plane, &vs_plane_crc_fops);
 
 	return 0;
 }

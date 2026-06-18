@@ -12,7 +12,6 @@ filegroup(
     name = "vsi-drm.kconfig",
     srcs = [
         "//private/google-modules/display/vsi-drm/bridge/synopsys/dsi2host:Kconfig",
-        "//private/google-modules/display/vsi-drm/dwc_dptx:Kconfig",
         "//private/google-modules/display/vsi-drm/phy/synopsys:Kconfig",
         "//private/google-modules/display/vsi-drm/verisilicon:Kconfig",
     ],
@@ -66,7 +65,6 @@ kernel_module_group(
     name = "vsi-drm",
     srcs = [
         "//private/google-modules/display/vsi-drm/bridge/synopsys/dsi2host:mipi-dsi2h",
-        "//private/google-modules/display/vsi-drm/dwc_dptx",
         "//private/google-modules/display/vsi-drm/phy/synopsys:mipi-cdphy",
         "//private/google-modules/display/vsi-drm/verisilicon:vs_drm",
     ],

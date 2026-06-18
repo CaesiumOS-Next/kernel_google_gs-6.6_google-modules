@@ -1,7 +1,7 @@
 /*
  * Bit packing and Base64 utils for EWP
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -23,7 +23,7 @@
 
 #ifndef __BITPACK_H_
 #define __BITPACK_H_
-
+#include <typedefs.h>
 #define BYTE_SIZE(a) ((a + 7)/8)
 
 extern int32 dhd_bit_pack(char *buf, int32 buf_len, int bit_offset, uint32 data, int32 bit_length);

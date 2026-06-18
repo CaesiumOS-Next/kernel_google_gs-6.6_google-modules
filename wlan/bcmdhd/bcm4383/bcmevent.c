@@ -1,7 +1,7 @@
 /*
  * bcmevent read-only data shared by kernel or app layers
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -127,6 +127,10 @@ static const bcmevent_name_str_t bcmevent_names[] = {
 	BCMEVENT_NAME(WLC_E_IBSS_COALESCE),
 #endif /* #if defined(NDIS) */
 
+#ifdef BCMWAPI_WAI
+	BCMEVENT_NAME(WLC_E_WAI_STA_EVENT),
+	BCMEVENT_NAME(WLC_E_WAI_MSG),
+#endif /* BCMWAPI_WAI */
 
 	BCMEVENT_NAME(WLC_E_ESCAN_RESULT),
 	BCMEVENT_NAME(WLC_E_ACTION_FRAME_OFF_CHAN_COMPLETE),
@@ -196,7 +200,6 @@ static const bcmevent_name_str_t bcmevent_names[] = {
 	BCMEVENT_NAME(WLC_E_CSA_START_IND),
 	BCMEVENT_NAME(WLC_E_CSA_DONE_IND),
 	BCMEVENT_NAME(WLC_E_CSA_FAILURE_IND),
-	BCMEVENT_NAME(WLC_E_RMC_EVENT),
 	BCMEVENT_NAME(WLC_E_DPSTA_INTF_IND),
 	BCMEVENT_NAME(WLC_E_ALLOW_CREDIT_BORROW),
 	BCMEVENT_NAME(WLC_E_MSCH),
@@ -226,9 +229,7 @@ static const bcmevent_name_str_t bcmevent_names[] = {
 	BCMEVENT_NAME(WLC_E_ROAM_CACHE_UPDATE),
 	BCMEVENT_NAME(WLC_E_AP_BCN_DRIFT),
 	BCMEVENT_NAME(WLC_E_PFN_SCAN_ALLGONE_EXT),
-#ifdef WL_CLIENT_SAE
 	BCMEVENT_NAME(WLC_E_AUTH_START),
-#endif /* WL_CLIENT_SAE */
 #ifdef WL_TWT
 	BCMEVENT_NAME(WLC_E_TWT),
 #endif /* WL_TWT */
@@ -250,6 +251,13 @@ static const bcmevent_name_str_t bcmevent_names[] = {
 	BCMEVENT_NAME(WLC_E_BCN_TSF),
 	BCMEVENT_NAME(WLC_E_OWE_INFO),
 	BCMEVENT_NAME(WLC_E_ULMU_DISABLED_REASON_UPD),
+	BCMEVENT_NAME(WLC_E_CSI_DATA),
+	BCMEVENT_NAME(WLC_E_EDS_EVENT),
+	BCMEVENT_NAME(WLC_E_ICM),
+	BCMEVENT_NAME(WLC_E_AP_BCN_MUTE),
+	BCMEVENT_NAME(WLC_E_VLPTPC),
+	BCMEVENT_NAME(WLC_E_SBI_SC_EVENT),
+	BCMEVENT_NAME(WLC_E_SCHED_PM)
 };
 
 const char *bcmevent_get_name(uint event_type)

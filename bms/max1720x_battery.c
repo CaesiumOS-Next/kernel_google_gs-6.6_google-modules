@@ -234,8 +234,6 @@ struct max1720x_chip {
 	int bhi_recalibration_algo; /* 0:release, 1:internal */
 	int bhi_target_capacity;
 
-	struct wakeup_source *get_prop_ws;
-
 	int timerh_base;
 
 	/* Current Offset */
@@ -504,16 +502,6 @@ static inline int reg_to_cycles(u32 val, int gauge_type)
 		/* LSB: 16% of one cycle */
 		return DIV_ROUND_CLOSEST(val * 16, 100);
 	}
-}
-
-static inline int reg_to_vempty(u16 val)
-{
-	return ((val >> 7) & 0x1FF) * 10;
-}
-
-static inline int reg_to_vrecovery(u16 val)
-{
-	return (val & 0x7F) * 40;
 }
 
 /* b/177099997 TaskPeriod ----------------------------------------------- */
@@ -2679,14 +2667,12 @@ static int max1720x_get_property(struct power_supply *psy,
 	int rc, err = 0;
 	u16 data = 0;
 
-	__pm_stay_awake(chip->get_prop_ws);
 	mutex_lock(&chip->model_lock);
 
 	pm_runtime_get_sync(chip->dev);
 	if (!chip->init_complete || !chip->resume_complete) {
 		pm_runtime_put_sync(chip->dev);
 		mutex_unlock(&chip->model_lock);
-		__pm_relax(chip->get_prop_ws);
 		return -EAGAIN;
 	}
 	pm_runtime_put_sync(chip->dev);
@@ -2784,7 +2770,6 @@ static int max1720x_get_property(struct power_supply *psy,
 			if (!chip->por)
 				max1720x_check_por(chip);
 			mutex_unlock(&chip->model_lock);
-			__pm_relax(chip->get_prop_ws);
 			return err;
 		}
 		break;
@@ -2828,7 +2813,6 @@ static int max1720x_get_property(struct power_supply *psy,
 		pr_debug("error %d reading prop %d\n", err, psp);
 
 	mutex_unlock(&chip->model_lock);
-	__pm_relax(chip->get_prop_ws);
 
 	return err;
 }
@@ -3018,14 +3002,12 @@ static int max1720x_gbms_get_property(struct power_supply *psy,
 	int err = 0;
 	u16 data = 0;
 
-	__pm_stay_awake(chip->get_prop_ws);
 	mutex_lock(&chip->model_lock);
 
 	pm_runtime_get_sync(chip->dev);
 	if (!chip->init_complete || !chip->resume_complete) {
 		pm_runtime_put_sync(chip->dev);
 		mutex_unlock(&chip->model_lock);
-		__pm_relax(chip->get_prop_ws);
 		return -EAGAIN;
 	}
 	pm_runtime_put_sync(chip->dev);
@@ -3075,6 +3057,9 @@ static int max1720x_gbms_get_property(struct power_supply *psy,
 	case GBMS_PROP_AAFV_OFFSET:
 		val->prop.intval = chip->aafv;
 		break;
+	case GBMS_PROP_AACV_OFFSET:
+		/* not support */
+		break;
 	case GBMS_PROP_NEED_CHARGE_TO_FULL:
 		if (chip->gauge_type != MAX_M5_GAUGE_TYPE)
 			break;
@@ -3095,7 +3080,6 @@ static int max1720x_gbms_get_property(struct power_supply *psy,
 		pr_debug("error %d reading prop %d\n", err, psp);
 
 	mutex_unlock(&chip->model_lock);
-	__pm_relax(chip->get_prop_ws);
 
 	return err;
 }
@@ -3172,6 +3156,9 @@ static int max1720x_gbms_set_property(struct power_supply *psy,
 		chip->aafv = val->prop.intval;
 		rc = max1720x_aafv_update(chip);
 		mutex_unlock(&chip->model_lock);
+		break;
+	case GBMS_PROP_AACV_OFFSET:
+		/* not support */
 		break;
 	case GBMS_PROP_NEED_CHARGE_TO_FULL:
 		rc = maxfg_update_bypass_charge_limit(chip->ce_log, chip->dev,
@@ -3520,7 +3507,7 @@ static void max17201_fg_stuck_monitor_work(struct work_struct *work)
 	struct max1720x_chip *chip = container_of(work, struct max1720x_chip,
 						  stuck_monitor_work.work);
 	u16 timer = 0, status = 0, vcell = 0, vfocv = 0, temp = 0, curr = 0, repsoc = 0;
-	u16 config = 0, misccfg = 0, fstat = 0, vconv = 0, fstat2 = 0, npackcfg = 0, hconfig2 = 0;
+	u16 config = 0, misccfg = 0, fstat = 0, vconv = 0, fstat2 = 0, packcfg = 0, hconfig2 = 0;
 	u16 voltraw = 0, hconfig = 0;
 	int ret;
 	bool was_stuck = chip->is_timer_stuck, was_br = chip->is_battery_removal;
@@ -3565,9 +3552,9 @@ static void max17201_fg_stuck_monitor_work(struct work_struct *work)
 	ret |= REGMAP_READ(&chip->regmap, MAX1720X_FSTAT, &fstat);
 	ret |= REGMAP_READ(&chip->regmap, MAX1720X_VCONVERT, &vconv);
 	ret |= REGMAP_READ(&chip->regmap_nvram, MAX1720X_FSTAT2, &fstat2);
-	ret |= REGMAP_READ(&chip->regmap_nvram, MAX1720X_NPACKCFG, &npackcfg);
+	ret |= REGMAP_READ(&chip->regmap, MAX1720X_PACKCFG, &packcfg);
 	ret |= REGMAP_READ(&chip->regmap_nvram, MAX1720X_HCONFIG2, &hconfig2);
-	ret |= REGMAP_READ(&chip->regmap_nvram, MAX1720X_VOLT_RAW, &voltraw);
+	ret |= REGMAP_READ(&chip->regmap, MAX1720X_VOLT_RAW, &voltraw);
 	ret |= REGMAP_READ(&chip->regmap_nvram, MAX1720X_HCONFIG, &hconfig);
 
 	if (ret != 0)
@@ -3578,7 +3565,7 @@ static void max17201_fg_stuck_monitor_work(struct work_struct *work)
 			      MONITOR_TAG_AB, GET_BIT_POSITION(MAXFG_EVENT_STUCK),
 			      chip->is_timer_stuck, (unsigned int)ktime_get_real_seconds(),
 			      timer, status, vcell, vfocv, curr, temp, repsoc, config, misccfg,
-			      fstat, vconv, fstat2, npackcfg, hconfig2, voltraw, hconfig);
+			      fstat, vconv, fstat2, packcfg, hconfig2, voltraw, hconfig);
 
 	/* send uevent to notify vendor logger */
 	kobject_uevent(&chip->dev->kobj, KOBJ_CHANGE);
@@ -3610,6 +3597,38 @@ static int max1720x_read_batt_id(int *batt_id, const struct max1720x_chip *chip)
 	if (rc == 0) {
 		dev_warn(chip->dev, "forcing battery RID %d\n", temp_id);
 		*batt_id = temp_id;
+		return 0;
+	}
+
+	/* add flip side battery ID: b/465345352#comment14 */
+	if (chip->gauge_type == MAX1720X_GAUGE_TYPE) {
+		u16 cell_type = 0;
+
+		rc = REGMAP_READ(&chip->regmap_nvram, MAX1720X_NUSER1D1, &cell_type);
+		if (rc < 0) {
+			dev_warn(chip->dev, "failed to read NUSER1D1, rc=%d\n", rc);
+			*batt_id = 0;
+			return 0;
+		}
+
+		switch (cell_type & 0xFF) {
+		case 'A': /* ATL */
+			*batt_id = 1;
+			break;
+		case 'C': /* COS */
+			*batt_id = 2;
+			break;
+		case 'L': /* LSN */
+			*batt_id = 3;
+			break;
+		case 'W': /* LWN */
+			*batt_id = 4;
+			break;
+		default:
+			*batt_id = 0;
+			break;
+		}
+
 		return 0;
 	}
 
@@ -6643,10 +6662,6 @@ static int max1720x_probe(struct i2c_client *client)
 	/* fuel gauge model needs to know the batt_id */
 	mutex_init(&chip->model_lock);
 
-	chip->get_prop_ws = wakeup_source_register(NULL, "GetProp");
-	if (!chip->get_prop_ws)
-		dev_info(chip->dev, "failed to register wakeup sources\n");
-
 	chip->max1720x_psy_desc.psy_dsc.type = POWER_SUPPLY_TYPE_BATTERY;
 	chip->max1720x_psy_desc.psy_dsc.get_property = max1720x_get_property;
 	chip->max1720x_psy_desc.psy_dsc.set_property = max1720x_set_property;
@@ -6765,7 +6780,6 @@ static void max1720x_remove(struct i2c_client *client)
 		i2c_unregister_device(chip->secondary);
 
 	maxfg_free_capture_buf(&chip->cb_lh);
-	wakeup_source_unregister(chip->get_prop_ws);
 }
 
 static const struct of_device_id max1720x_of_match[] = {

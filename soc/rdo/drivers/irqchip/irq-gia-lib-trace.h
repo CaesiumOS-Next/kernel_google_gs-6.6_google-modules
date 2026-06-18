@@ -28,6 +28,25 @@ TRACE_EVENT(gia_error,
 	TP_printk("dev_name=%s, %s", __get_str(dev_name), __get_str(msg))
 );
 
+TRACE_EVENT(gia_pending_irq_error,
+	TP_PROTO(struct gia_device_data *gdd, int chip_number, u32 pending, const char *msg),
+	TP_ARGS(gdd, chip_number, pending, msg),
+	TP_STRUCT__entry(
+		__string(dev_name, GIA_DEV_NAME(gdd))
+		__field(int, chip_number)
+		__field(u32, pending)
+		__string(msg, msg)
+	),
+	TP_fast_assign(
+		assign_str_wrp(dev_name, GIA_DEV_NAME(gdd));
+		__entry->chip_number = chip_number;
+		__entry->pending = pending;
+		assign_str_wrp(msg, msg);
+	),
+	TP_printk("dev_name=%s, chip_number=%d, pending=0x%x, %s",
+		  __get_str(dev_name), __entry->chip_number, __entry->pending, __get_str(msg))
+);
+
 DECLARE_EVENT_CLASS(gia_irq_events,
 	TP_PROTO(struct gia_device_data *gdd, struct irq_data *d),
 	TP_ARGS(gdd, d),
@@ -128,17 +147,15 @@ DEFINE_EVENT(gia_device_events, gia_exit,
 );
 
 TRACE_EVENT(gia_get_power,
-	TP_PROTO(struct gia_device_data *gdd, bool irq_context),
-	TP_ARGS(gdd, irq_context),
+	TP_PROTO(struct gia_device_data *gdd),
+	TP_ARGS(gdd),
 	TP_STRUCT__entry(
 		__string(dev_name, GIA_DEV_NAME(gdd))
-		__field(bool, irq_context)
 	),
 	TP_fast_assign(
 		assign_str_wrp(dev_name, GIA_DEV_NAME(gdd));
-		__entry->irq_context = irq_context;
 	),
-	TP_printk("dev_name=%s, irq_context=%d", __get_str(dev_name), __entry->irq_context)
+	TP_printk("dev_name=%s", __get_str(dev_name))
 );
 
 TRACE_EVENT(gia_irq_update_effective_affinity,

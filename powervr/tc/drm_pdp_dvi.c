@@ -166,7 +166,7 @@ static int pdp_dvi_connector_helper_get_modes(struct drm_connector *connector)
 
 static enum drm_mode_status
 pdp_dvi_connector_helper_mode_valid(struct drm_connector *connector,
-				    struct drm_display_mode *mode)
+				    DRM_DISPLAY_MODE *mode)
 {
 	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
 		return MODE_NO_INTERLACE;

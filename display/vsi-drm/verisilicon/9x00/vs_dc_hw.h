@@ -576,11 +576,11 @@ struct dc_hw_y2r {
 };
 
 struct dc_hw_r2y {
+	s32 coef[VS_MAX_R2Y_COEF_NUM];
 	u8 gamut;
 	u8 mode;
-	s32 coef[VS_MAX_R2Y_COEF_NUM];
-	bool dirty;
 	bool enable;
+	bool dirty;
 };
 
 struct dc_hw_data_extend {
@@ -610,20 +610,7 @@ struct dc_hw_pattern {
 	u64 color;
 	u64 pixel_value; /*read back for curser*/
 	bool enable;
-};
-
-struct dc_hw_crc {
-	bool enable;
-	u8 pos;
-	struct drm_vs_color seed;
-	struct drm_vs_color result;
-};
-
-struct dc_hw_disp_crc {
-	bool enable;
-	u8 pos;
-	struct drm_vs_color seed[MAX_CRC_CORE_NUM];
-	struct drm_vs_color result[MAX_CRC_CORE_NUM];
+	bool delayed;
 };
 
 struct dc_hw_ltm_enable {
@@ -906,7 +893,6 @@ struct dc_hw_wb_funcs {
  * @ltm_ds: LTM down-sampling configuration.
  * @hw_hist_chan: Per-channel histogram hardware state.
  * @hw_hist_rgb: RGB histogram hardware state.
- * @crc: Display-level CRC calculation configuration.
  * @urgent_cmd_config: Urgent request configuration for command mode.
  * @urgent_vid_config: Urgent request configuration for video mode.
  * @states: Group of generic property states for this display.
@@ -951,7 +937,6 @@ struct dc_hw_display {
 	struct dc_hw_ltm_ds ltm_ds;
 	struct dc_hw_hist_chan hw_hist_chan[VS_HIST_CHAN_IDX_COUNT];
 	struct dc_hw_hist_rgb hw_hist_rgb;
-	struct dc_hw_disp_crc crc;
 	struct vs_dc_urgent_cmd_config urgent_cmd_config;
 	struct vs_dc_urgent_vid_config urgent_vid_config;
 	struct vs_dc_property_state_group states;
@@ -975,7 +960,6 @@ struct dc_hw_plane {
 	struct dc_hw_std_bld std_bld;
 	struct dc_hw_y2r y2r;
 	struct dc_hw_block lut_3d;
-	struct dc_hw_crc crc;
 	struct dc_hw_scale scale;
 	struct dc_hw_roi roi;
 	struct dc_hw_clear clear;
@@ -1036,7 +1020,7 @@ struct dc_hw_funcs {
 	 * actual requirements during developing !
 	 */
 	void (*set_mode)(struct dc_hw *hw, u8 hw_id, u8 output_id, struct dc_hw_display_mode *mode);
-	void (*set_wb)(struct dc_hw *hw, u8 hw_id, struct dc_hw_wb *wb);
+	void (*writeback)(struct dc_hw *hw, u8 display_id);
 	void (*plane)(struct dc_hw *hw, u8 display_id);
 	void (*display)(struct dc_hw *hw, u8 display_id);
 };
@@ -1158,6 +1142,7 @@ void dc_hw_config_plane_status(struct dc_hw *hw, u8 id, bool config);
 void dc_hw_config_load_filter(struct dc_hw *hw, u8 hw_id, const u32 *coef_v, const u32 *coef_h);
 void dc_hw_config_display_status(struct dc_hw *hw, u8 id, bool config);
 void dc_hw_config_wb_status(struct dc_hw *hw, u8 id, bool config);
+void dc_hw_force_be_csr_read(struct dc_hw *hw);
 void dc_hw_enable_clock_domain_iso(struct dc_hw *hw, bool enable);
 void dc_hw_enable_frame_irqs(struct dc_hw *hw, u8 id, bool enable);
 void dc_hw_enable_vblank_irqs(struct dc_hw *hw, u8 id, bool enable);
@@ -1170,13 +1155,8 @@ int dc_hw_enable_fe_interrupts(struct dc_hw *hw);
 u8 dc_hw_get_plane_id(u8 layer, struct dc_hw *hw);
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 void dc_hw_set_plane_pattern(struct dc_hw *hw, u8 hw_id, struct dc_hw_pattern *pattern);
-void dc_hw_set_plane_crc(struct dc_hw *hw, u8 id, struct dc_hw_crc *crc);
-void dc_hw_get_plane_crc(struct dc_hw *hw, u8 id, struct dc_hw_crc *crc);
-void dc_hw_get_plane_crc_config(struct dc_hw *hw, u8 id, struct dc_hw_crc *crc);
-void dc_hw_set_display_pattern(struct dc_hw *hw, u8 hw_id, struct dc_hw_pattern *pattern);
-void dc_hw_set_display_crc(struct dc_hw *hw, u8 hw_id, struct dc_hw_disp_crc *crc);
-void dc_hw_get_display_crc(struct dc_hw *hw, u8 hw_id, struct dc_hw_disp_crc *crc);
-void dc_hw_get_display_crc_config(struct dc_hw *hw, u8 id, struct dc_hw_disp_crc *crc);
+void dc_hw_set_display_pattern(struct dc_hw *hw, u8 id, struct dc_hw_pattern *pattern);
+void dc_hw_clear_display_pattern(struct dc_hw *hw, u8 id, struct dc_hw_pattern *pattern);
 #endif /* CONFIG_DEBUG_FS */
 int dc_hw_reg_dump_custom(struct dc_hw *hw, struct drm_printer *p, const char *desc, u32 offset,
 			  u32 size);
@@ -1207,6 +1187,7 @@ void dc_hw_plane_commit(struct dc_hw *hw, u8 display_id);
 void dc_hw_disable_plane_features(struct dc_hw *hw, u8 display_id);
 void dc_hw_display_commit(struct dc_hw *hw, u8 display_id);
 void dc_hw_display_frame_done(struct dc_hw *hw, u8 display_id);
+void dc_hw_wb_commit(struct dc_hw *hw, u8 display_id);
 void dc_hw_display_flip_done(struct dc_hw *hw, u8 display_id);
 u32 vs_dc_get_display_offset(u32 hw_id);
 u32 vs_dc_get_panel_dither_table_offset(u32 hw_id);

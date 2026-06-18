@@ -73,6 +73,8 @@
 /* Odin/Orion common registers */
 #include "tc_odin_common_regs.h"
 
+#include "kernel_compatibility.h"
+
 /* Macros to set and get register fields */
 #define REG_FIELD_GET(v, str) \
 	(u32)(((v) & (str##_MASK)) >> (str##_SHIFT))
@@ -798,16 +800,6 @@ err_out:
 	return err;
 }
 
-static int odin_get_default_clocks_vali(struct tc_device *tc,
-				int *core_clock, int *mem_clock, int *clock_multiplex)
-{
-	/* For now use default TC values */
-	*core_clock = RGX_TC_CORE_CLOCK_SPEED;
-	*mem_clock = RGX_TC_MEM_CLOCK_SPEED;
-	*clock_multiplex = RGX_TC_CLOCK_MULTIPLEX;
-	return 0;
-}
-
 static int odin_hard_reset_bonnie(struct tc_device *tc)
 {
 	int reset_cnt = 0;
@@ -1250,8 +1242,6 @@ static int odin_hard_reset(struct tc_device *tc, int *core_clock, int *mem_clock
 #if defined(SUPPORT_RGX)
 	if (tc->version == ODIN_VERSION_TCF_BONNIE)
 		return odin_hard_reset_bonnie(tc);
-	if (tc->version == ODIN_VERSION_VALI)
-		return odin_get_default_clocks_vali(tc, core_clock, mem_clock, clock_multiplex);
 	if (tc->version == ODIN_VERSION_FPGA)
 		return odin_hard_reset_fpga(tc, core_clock, mem_clock, clock_multiplex);
 	if (tc->version == ODIN_VERSION_ORION)
@@ -1378,8 +1368,7 @@ static int odin_hw_init(struct tc_device *tc, int *core_clock,
 	if (err)
 		goto err_out;
 
-	if (!tc->vali)
-		odin_set_fbc_bypass(tc, fbc_bypass);
+	odin_set_fbc_bypass(tc, fbc_bypass);
 
 #if defined(SUPPORT_RGX)
 	if (tc->version == ODIN_VERSION_FPGA)
@@ -1429,7 +1418,7 @@ static int odin_enable_irq(struct tc_device *tc)
 static void odin_disable_irq(struct tc_device *tc)
 {
 #if defined(TC_FAKE_INTERRUPTS)
-	del_timer_sync(&tc->timer);
+	timer_delete_sync(&tc->timer);
 #else
 	iowrite32(0, tc->tcf.registers +
 			common_reg_offset(tc, CORE_INTERRUPT_ENABLE));
@@ -1448,9 +1437,6 @@ odin_detect_daughterboard_version(struct tc_device *tc)
 
 	if (tc->orion)
 		return ODIN_VERSION_ORION;
-
-	if (tc->vali)
-		return ODIN_VERSION_VALI;
 
 	val = (val & ODN_REG_BANK_DB_TYPE_ID_TYPE_MASK) >>
 		ODN_REG_BANK_DB_TYPE_ID_TYPE_SHIFT;
@@ -1641,11 +1627,6 @@ static int odin_dev_init(struct tc_device *tc, struct pci_dev *pdev,
 		       ODN_CORE_REL);
 		dev_info(&pdev->dev, "%s = 0x%08x\n",
 			"ODN_CORE_REL", val);
-	} else if (tc->vali) {
-		val = ioread32(tc->tcf.registers + ODN_CORE_ID);
-		dev_info(&pdev->dev, "%s = 0x%08x\n", "VALI_CORE_ID", val);
-		val = ioread32(tc->tcf.registers + ODN_CORE_REL);
-		dev_info(&pdev->dev, "%s = 0x%08x\n", "VALI_CORE_REL", val);
 	} else {
 		val = ioread32(tc->tcf.registers +
 		       SRS_CORE_REVISION);
@@ -1701,6 +1682,11 @@ static void odin_dev_cleanup(struct tc_device *tc)
 
 static u32 odin_interrupt_id_to_flag(int interrupt_id)
 {
+	if ((interrupt_id >= TC_INTERRUPT_OSID0) && (interrupt_id <= TC_INTERRUPT_OSID31))
+	{
+		return ODN_INTERRUPT_ENABLE_OSID(interrupt_id - TC_INTERRUPT_OSID0);
+	}
+
 	switch (interrupt_id) {
 	case TC_INTERRUPT_PDP:
 		return ODN_INTERRUPT_ENABLE_PDP1;
@@ -1712,22 +1698,6 @@ static u32 odin_interrupt_id_to_flag(int interrupt_id)
 		return ODN_INTERRUPT_ENABLE_CDMA;
 	case TC_INTERRUPT_CDMA2:
 		return ODN_INTERRUPT_ENABLE_CDMA2;
-	case TC_INTERRUPT_OSID0:
-		return ODN_INTERRUPT_ENABLE_OSID(0);
-	case TC_INTERRUPT_OSID1:
-		return ODN_INTERRUPT_ENABLE_OSID(1);
-	case TC_INTERRUPT_OSID2:
-		return ODN_INTERRUPT_ENABLE_OSID(2);
-	case TC_INTERRUPT_OSID3:
-		return ODN_INTERRUPT_ENABLE_OSID(3);
-	case TC_INTERRUPT_OSID4:
-		return ODN_INTERRUPT_ENABLE_OSID(4);
-	case TC_INTERRUPT_OSID5:
-		return ODN_INTERRUPT_ENABLE_OSID(5);
-	case TC_INTERRUPT_OSID6:
-		return ODN_INTERRUPT_ENABLE_OSID(6);
-	case TC_INTERRUPT_OSID7:
-		return ODN_INTERRUPT_ENABLE_OSID(7);
 	default:
 		BUG();
 	}
@@ -1852,14 +1822,13 @@ int odin_register_ext_device(struct tc_device *tc)
 	int err = 0;
 	int osid;
 
-	unsigned long CarveoutSize = tc->tc_mem.size/RGX_NUM_DRIVERS_SUPPORTED;
 	unsigned long EXTHeapSize  = tc->ext_heap_mem_size/RGX_NUM_DRIVERS_SUPPORTED;
 	unsigned long PDPHeapSize  = tc->pdp_heap_mem_size/RGX_NUM_DRIVERS_SUPPORTED;
 
 	for (osid=0; osid < RGX_NUM_DRIVERS_SUPPORTED; osid++)
 	{
-		unsigned long EXTHeapBase = tc->tc_mem.base + osid*CarveoutSize;
-		unsigned long PDPHeapBase = EXTHeapBase + EXTHeapSize;
+		unsigned long EXTHeapBase = tc->tc_mem.base + osid*EXTHeapSize;
+		unsigned long PDPHeapBase = tc->pdp_heap_mem_base + osid*PDPHeapSize;
 
 		struct resource odin_rogue_resources[] = {
 			DEFINE_RES_MEM_NAMED(pci_resource_start(tc->pdev, ODN_DUT_SOCIF_BAR) +
@@ -1898,8 +1867,6 @@ int odin_register_ext_device(struct tc_device *tc)
 			pdata.baseboard = TC_BASEBOARD_ODIN;
 		else if (tc->orion)
 			pdata.baseboard = TC_BASEBOARD_ORION;
-		else if (tc->vali)
-			pdata.baseboard = TC_BASEBOARD_VALI;
 
 		tc->ext_dev[osid]
 			= platform_device_register_full(&odin_rogue_dev_info);
@@ -1970,63 +1937,41 @@ void odin_enable_interrupt_register(struct tc_device *tc,
 	u32 val;
 	u32 flag;
 
-	switch (interrupt_id) {
-	case TC_INTERRUPT_PDP:
+	if ((interrupt_id >= TC_INTERRUPT_OSID0) && (interrupt_id <= TC_INTERRUPT_OSID31))
+	{
+		u32 osid = interrupt_id - TC_INTERRUPT_OSID0;
+
 		dev_info(&tc->pdev->dev,
-			"Enabling Odin PDP interrupts\n");
-		break;
-	case TC_INTERRUPT_EXT:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin DUT interrupts\n");
-		break;
-	case TC_INTERRUPT_PDP2:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin PDP2 interrupts\n");
-		break;
-	case TC_INTERRUPT_CDMA:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin CDMA interrupts\n");
-		break;
-	case TC_INTERRUPT_CDMA2:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin CDMA2 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID0:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID0 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID1:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID1 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID2:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID2 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID3:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID3 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID4:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID4 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID5:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID5 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID6:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID6 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID7:
-		dev_info(&tc->pdev->dev,
-			"Enabling Odin OSID7 interrupts\n");
-		break;
-	default:
-		dev_err(&tc->pdev->dev,
-			"Error - illegal interrupt id\n");
-		return;
+			"Enabling Odin OSID%u interrupts\n", osid);
+	}
+	else
+	{
+		switch (interrupt_id) {
+		case TC_INTERRUPT_PDP:
+			dev_info(&tc->pdev->dev,
+				"Enabling Odin PDP interrupts\n");
+			break;
+		case TC_INTERRUPT_EXT:
+			dev_info(&tc->pdev->dev,
+				"Enabling Odin DUT interrupts\n");
+			break;
+		case TC_INTERRUPT_PDP2:
+			dev_info(&tc->pdev->dev,
+				"Enabling Odin PDP2 interrupts\n");
+			break;
+		case TC_INTERRUPT_CDMA:
+			dev_info(&tc->pdev->dev,
+				"Enabling Odin CDMA interrupts\n");
+			break;
+		case TC_INTERRUPT_CDMA2:
+			dev_info(&tc->pdev->dev,
+				"Enabling Odin CDMA2 interrupts\n");
+			break;
+		default:
+			dev_err(&tc->pdev->dev,
+				"Error - illegal interrupt id\n");
+			return;
+		}
 	}
 
 	val = ioread32(tc->tcf.registers +
@@ -2042,63 +1987,42 @@ void odin_disable_interrupt_register(struct tc_device *tc,
 {
 	u32 val;
 
-	switch (interrupt_id) {
-	case TC_INTERRUPT_PDP:
+	if ((interrupt_id >= TC_INTERRUPT_OSID0) && (interrupt_id <= TC_INTERRUPT_OSID31))
+	{
+		u32 osid = interrupt_id - TC_INTERRUPT_OSID0;
+
 		dev_info(&tc->pdev->dev,
-			"Disabling Odin PDP interrupts\n");
-		break;
-	case TC_INTERRUPT_EXT:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin DUT interrupts\n");
-		break;
-	case TC_INTERRUPT_PDP2:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin PDP2 interrupts\n");
-		break;
-	case TC_INTERRUPT_CDMA:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin CDMA interrupts\n");
-		break;
-	case TC_INTERRUPT_CDMA2:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin CDMA2 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID0:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID0 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID1:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID1 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID2:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID2 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID3:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID3 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID4:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID4 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID5:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID5 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID6:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID6 interrupts\n");
-		break;
-	case TC_INTERRUPT_OSID7:
-		dev_info(&tc->pdev->dev,
-			"Disabling Odin OSID7 interrupts\n");
-		break;
-	default:
-		dev_err(&tc->pdev->dev,
-			"Error - illegal interrupt id\n");
-		return;
+			"Disabling Odin OSID%u interrupts\n", osid);
+	}
+	else
+	{
+		switch (interrupt_id) {
+		case TC_INTERRUPT_PDP:
+			dev_info(&tc->pdev->dev,
+				"Disabling Odin PDP interrupts\n");
+			break;
+		case TC_INTERRUPT_EXT:
+			dev_info(&tc->pdev->dev,
+				"Disabling Odin DUT interrupts\n");
+			break;
+		case TC_INTERRUPT_PDP2:
+			dev_info(&tc->pdev->dev,
+				"Disabling Odin PDP2 interrupts\n");
+			break;
+		case TC_INTERRUPT_CDMA:
+			dev_info(&tc->pdev->dev,
+				"Disabling Odin CDMA interrupts\n");
+			break;
+		case TC_INTERRUPT_CDMA2:
+			dev_info(&tc->pdev->dev,
+				"Disabling Odin CDMA2 interrupts\n");
+			break;
+
+		default:
+			dev_err(&tc->pdev->dev,
+				"Error - illegal interrupt id\n");
+			return;
+		}
 	}
 	val = ioread32(tc->tcf.registers +
 		       common_reg_offset(tc, CORE_INTERRUPT_ENABLE));
@@ -2319,8 +2243,6 @@ const char *odin_tc_name(struct tc_device *tc)
 		return "Odin";
 	else if (tc->orion)
 		return "Orion";
-	else if (tc->vali)
-		return "Vali";
 	else
 		return "Unknown TC";
 }

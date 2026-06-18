@@ -38,7 +38,6 @@ inline uint64_t vs_fb_parse_fourcc_modifier(uint64_t mode_cmd_modifier)
 		break;
 	default:
 		return mode_cmd_modifier;
-		break;
 	}
 }
 

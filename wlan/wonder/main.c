@@ -27,6 +27,41 @@
 module_param(physical_name, charp, 0444);
 MODULE_PARM_DESC(physical_name, "Interface name to use (e.g., wlan0, radiotap0, ...)");
 
+
+#define WONDER_MAX_COMPAT_VERSIONS 5
+static int wonder_ver_match_table[WONDER_VERSION_MAX][WONDER_MAX_COMPAT_VERSIONS] = {
+	{ WONDER_VERSION_1_0, -1 },
+	{ WONDER_VERSION_1_1, -1 },
+	{ WONDER_VERSION_1_2, -1 },
+	{ WONDER_VERSION_1_3, -1 },
+	{ WONDER_VERSION_1_4, -1 },
+	{ WONDER_VERSION_1_4_1, WONDER_VERSION_1_4, -1 },
+	{ WONDER_VERSION_1_5, WONDER_VERSION_1_4, WONDER_VERSION_1_4_1, -1 },
+	{ WONDER_VERSION_1_5_1, WONDER_VERSION_1_4, WONDER_VERSION_1_5,
+		WONDER_VERSION_1_4_1, -1 },
+	{ WONDER_VERSION_1_6_1, WONDER_VERSION_1_4, WONDER_VERSION_1_5,
+		WONDER_VERSION_1_4_1, -1 },
+};
+
+static bool wonder_ver_can_support(enum wondertap_ver slave, enum wondertap_ver master)
+{
+	int i;
+
+	if (master < 0 || master >= WONDER_VERSION_MAX)
+		return false;
+	if (slave < 0 || slave >= WONDER_VERSION_MAX)
+		return false;
+
+	for (i = 0; i < WONDER_MAX_COMPAT_VERSIONS; i++) {
+		if (wonder_ver_match_table[master][i] == -1)
+			break;
+		if (wonder_ver_match_table[master][i] == slave) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static int wonder_master_bind(struct device *dev)
 {
 	struct wondertap_data *wondertap = dev_get_drvdata(dev);
@@ -51,7 +86,7 @@ static int wonder_master_bind(struct device *dev)
 	if (!wlan_priv || !wlan_priv->wonder_ops)
 		goto err;
 
-	if (wlan_priv->ver != wondertap->ver) {
+	if (!wonder_ver_can_support(wlan_priv->ver, wondertap->ver)) {
 		dev_err(dev, "%s(): wondertap interface version mismatch(%d,%d)!\n",
 			__func__, wlan_priv->ver, wondertap->ver);
 		goto err;
@@ -59,8 +94,14 @@ static int wonder_master_bind(struct device *dev)
 	/* All matched, hook the ops to wondertap interface. */
 	wondertap_register_ops(wlan_priv->wonder_ops);
 	wondertap->wonder_ops = wlan_priv->wonder_ops;
+	dev_info(dev, "%s(): Connected to wlan ver %d (cur: wonder ver %d)!\n",
+		__func__, wlan_priv->ver, wondertap->ver);
+	ret = wondertap_get_capabilities(wondertap, &wondertap->cap);
+	if (ret) {
+		dev_err(dev, "Failed to get wondertap capabilities, error: %d\n", ret);
+		goto err;
+	}
 	put_device(&wlan_pdev->dev);
-	dev_info(dev, "%s(): Connected to wlan ver %d!\n", __func__, wlan_priv->ver);
 	return 0;
 err:
 	dev_err(dev, "%s(): wlan driver data invalid!\n", __func__);
@@ -110,7 +151,7 @@ static int wonder_probe(struct platform_device *pdev)
 	}
 	wondertap->wlan_node = provider_node;
 	/* Assign wondertap interface version will be used in the match process. */
-	wondertap->ver = WONDER_VERSION_1_4;
+	wondertap->ver = WONDER_VERSION_1_6_2;
 	platform_set_drvdata(pdev, wondertap);
 	component_match_add_release(&pdev->dev, &match, NULL,
 							wonder_compare_dev, provider_node);

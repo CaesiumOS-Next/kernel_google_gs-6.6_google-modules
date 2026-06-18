@@ -1,7 +1,7 @@
 /*
  * FTM module IOCTL structure definitions.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -26,12 +26,14 @@
 
 #include <typedefs.h>
 
+/* Backwards compatibility for legacy branches. */
+#if !defined(BCM_EXTENSION)
+#define BCM_EXTENSION
+#endif
+
 typedef uint16		wl_ftm_session_id_t;
 typedef int16		wl_ftm_result_flags_t;
 typedef int16		wl_ftm_method_t;
-#ifndef BCMUTILS_ERR_CODES
-typedef int32		wl_ftm_status_t;
-#endif /* BCMUTILS_ERR_CODES  */
 
 /** 11az ftm types */
 enum wl_ftm_type {
@@ -46,6 +48,7 @@ typedef uint8 wl_ftm_type_t;
 /** session flags for 11AZ */
 
 /** global and method configuration flags */
+BCM_EXTENSION	/* Suppress warning: enum values in range 'int'. */
 enum wl_ftm_flags {
 	WL_FTM_FLAG_NONE			= 0x00000000,
 	WL_FTM_FLAG_RX_ENABLED			= 0x00000001, /* respond to requests, per bss */
@@ -131,7 +134,19 @@ typedef uint32	wl_ftm_flags_t;
 #define WL_FTM_SESSION_FLAG_PASSIVE_TB_RANGING	0x0000800000000000llu	/* Passive TB ranging */
 #define WL_FTM_SESSION_FLAG_ONE_WAY		0x0001000000000000llu	/* ONE_WAY RTT */
 #define WL_FTM_SESSION_FLAG_PASSIVE_STA		0x0002000000000000llu	/* Passive STA */
+#define WL_FTM_SESSION_FLAG_DONT_USE_SCAN_CACHE	0x0004000000000000llu	/* Don't use scan cache for
+									 * ranging scan
+									 */
+#define WL_FTM_SESSION_FLAG_DONT_SCAN		0x0008000000000000llu	/* Don't scan when both
+									 * peers are already known.
+									 */
+#define WL_FTM_SESSION_FLAG_USE_BSS_COLOR_LMR	0x0010000000000000llu	/* Set BSS Color in HE LMR
+									 * regardless of assoc
+									 */
 
+#define WL_FTM_SESSION_FLAG_USE_ANT_DIVERSITY	0x0020000000000000llu	/* Use antenna diversity
+									 * for ranging operation
+									 */
 #define WL_FTM_SESSION_FLAG_ALL			0xffffffffffffffffllu
 typedef uint64 wl_ftm_session_flags_t;
 
@@ -152,7 +167,9 @@ typedef uint64 wl_ftm_session_flags_t;
 	| WL_FTM_SESSION_FLAG_AUTO_BURST \
 	| WL_FTM_SESSION_FLAG_NAN_BSS \
 	| WL_FTM_SESSION_FLAG_NO_TSF_SYNC \
-	| WL_FTM_SESSION_FLAG_CONT_ON_BURST_ERR)
+	| WL_FTM_SESSION_FLAG_CONT_ON_BURST_ERR \
+	| WL_FTM_SESSION_FLAG_DONT_USE_SCAN_CACHE \
+	| WL_FTM_SESSION_FLAG_DONT_SCAN)
 
 /* flags relevant to MC sessions */
 #define FTM_MC_CONFIG_MASK \
@@ -170,7 +187,8 @@ typedef uint64 wl_ftm_session_flags_t;
 	| WL_FTM_SESSION_FLAG_SEQ_EN \
 	| WL_FTM_SESSION_FLAG_NOCHANSWT \
 	| WL_FTM_SESSION_FLAG_MBURST_FOLLOWUP \
-	| WL_FTM_SESSION_FLAG_ONE_WAY)
+	| WL_FTM_SESSION_FLAG_ONE_WAY \
+	| WL_FTM_SESSION_FLAG_USE_ANT_DIVERSITY)
 
 /* flags common for TB/NTB sessions */
 #define FTM_TB_NTB_COMMON_CONFIG_MASK \
@@ -184,7 +202,8 @@ typedef uint64 wl_ftm_session_flags_t;
 	| WL_FTM_SESSION_FLAG_RNM_MFP_REQ \
 	| WL_FTM_SESSION_FLAG_SEC_LTF_SUPPORTED \
 	| WL_FTM_SESSION_FLAG_SEC_LTF_REQUIRED \
-	| WL_FTM_SESSION_FLAG_TX_HE_LMR)
+	| WL_FTM_SESSION_FLAG_TX_HE_LMR \
+	| WL_FTM_SESSION_FLAG_USE_BSS_COLOR_LMR)
 
 /* flags relevant to NTB sessions */
 #define FTM_NTB_CONFIG_MASK	FTM_TB_NTB_COMMON_CONFIG_MASK
@@ -374,6 +393,18 @@ typedef enum {
 	WL_FTM_TLV_ID_TB_ISTA_AW		= 52,	/* TB ISTA Availabilty Window */
 	WL_FTM_TLV_ID_AZ_NDP_MCS		= 53,	/* MCS index of HE Ranging NDP frame */
 
+	WL_FTM_TLV_ID_TX_COREMASK		= 54,	/* tx coremask for ranging frm tx */
+	WL_FTM_TLV_ID_ANT_DIVERSITY_MODE	= 55,	/* Antenna Diversity Mode */
+
+	/* security */
+	WL_FTM_TLV_ID_SECURITY_KEY_IDLE_TIME	= 56, /* ftm security key_idle time */
+	WL_FTM_TLV_ID_SECURITY_KEY_LIFE_TIME	= 57, /* ftm security key life time */
+	WL_FTM_TLV_ID_SECURITY_AKM		= 58, /* ftm security AKM */
+	WL_FTM_TLV_ID_SECURITY_PASSPHRASE	= 59, /* ftm security passphrase */
+	WL_FTM_TLV_ID_SECURITY_PASSPHRASE_LEN	= 60, /* ftm security passphrase len */
+	WL_FTM_TLV_ID_SECURITY_CIPHER_TYPE	= 61, /* ftm security cipher type */
+	WL_FTM_TLV_ID_SECURITY_LTF_REQD		= 62,	/* ftm security, secure ltf needed */
+
 	/* Extra common TLV IDs */
 	WL_FTM_TLV_ID_TYPE_FLAGS		= 128,
 
@@ -394,6 +425,8 @@ typedef enum {
 	WL_FTM_TLV_ID_AZ_COUNTERS_V1		= 525,	/* wl_ftm_az_counters_v1_t */
 	WL_FTM_TLV_ID_HAL_COUNTERS_V1		= 526,	/* wl_ftm_hal_counters_v1_t */
 	WL_FTM_TLV_ID_AZ_COUNTERS_V2		= 527,	/* wl_ftm_az_counters_v2_t */
+	WL_FTM_TLV_ID_AZ_RTT_RESULT_V2		= 528,	/* wl_ftm_az_rtt_result_v2_t */
+	WL_FTM_TLV_ID_AZ_RTT_RESULT_V3		= 529,	/* wl_ftm_az_rtt_result_v3_t */
 
 	/* debug tlvs can be added starting 1024 */
 	WL_FTM_TLV_ID_DEBUG_MASK		= 1024,
@@ -417,16 +450,13 @@ typedef enum {
 	WL_FTM_TLV_ID_CSI_PROC_RESULT		= 1039,	/* wl_ftm_csi_proc_result_t */
 	WL_FTM_TLV_ID_CSI_PROC_RTT		= 1040,	/* wl_ftm_csi_proc_rtt_t */
 	WL_FTM_TLV_ID_TIMESTAMP_DUMP_V1		= 1041,	/* wl_ftm_timestamp_dump_t */
-
-	/* security */
-	WL_FTM_TLV_ID_SECURITY_KEY_IDLE_TIME	= 1042, /* ftm security key_idle time */
-	WL_FTM_TLV_ID_SECURITY_KEY_LIFE_TIME	= 1043, /* ftm security key life time */
-	WL_FTM_TLV_ID_SECURITY_AKM		= 1044, /* ftm security AKM */
-	WL_FTM_TLV_ID_SECURITY_PASSPHRASE	= 1045, /* ftm security passphrase */
-	WL_FTM_TLV_ID_SECURITY_PASSPHRASE_LEN	= 1046, /* ftm security passphrase len */
-	WL_FTM_TLV_ID_SECURITY_CIPHER_TYPE	= 1047, /* ftm security cipher type */
-	WL_FTM_TLV_ID_SECURITY_LTF_REQD		= 1048	/* ftm security, secure ltf needed */
 } wl_ftm_tlv_types_t;
+
+enum wl_ftm_ant_div_mode {
+	WL_FTM_ANT_DIV_AVG_MODE	= 0u,
+	WL_FTM_ANT_DIV_MIN_MODE	= 1u
+};
+typedef uint8 wl_ftm_ant_div_mode_t;
 
 enum wl_ftm_wait_reason {
 	WL_FTM_WAIT_NONE	= 0x0000,
@@ -473,13 +503,21 @@ typedef struct wl_ftm_counters_v2 {
 
 enum wl_test_mode_flag {
 	/* WFA CTT device behavior */
-	WL_FTM_TEST_MODE_FLAG_CTT_STA		= 0x00000001,
-	WL_FTM_TEST_MODE_FLAG_CTT_AP		= 0x00000002,
-	WL_FTM_TEST_MODE_FLAG_NOPFTIVCHK	= 0x00000004,
-	WL_FTM_TEST_MODE_FLAG_NOMFP		= 0x00000008,
+	WL_FTM_TEST_MODE_FLAG_CTT_STA		= 0x00000001u,
+	WL_FTM_TEST_MODE_FLAG_CTT_AP		= 0x00000002u,
+	WL_FTM_TEST_MODE_FLAG_NOPFTIVCHK	= 0x00000004u,
+	WL_FTM_TEST_MODE_FLAG_NOMFP		= 0x00000008u,
+	WL_FTM_TEST_MODE_FLAG_NO_SLTF_ELMT	= 0x00000010u,
+	WL_FTM_TEST_MODE_FLAG_BAD_SAC		= 0x00000020u,
+	WL_FTM_TEST_MODE_FLAG_NULL_SAC		= 0x00000040u,
+	WL_FTM_TEST_MODE_FLAG_SKIP_LMR_TX	= 0x00000080u,
+	WL_FTM_TEST_MODE_FLAG_BAD_SLTF_SEQ	= 0x00000100u,
+	/* add new CTT device behavior here */
+	WL_FTM_TEST_MODE_FLAG_WFA_CTT_MASK	= 0x0000FFFFu,
+
 	/* for internal testing purpose */
-	WL_FTM_TEST_MODE_FLAG_TRAP_ON_CSI_TMO	= 0x00010000,
-	WL_FTM_TEST_MODE_FLAG_NO_TS_IN_LMR	= 0x00020000
+	WL_FTM_TEST_MODE_FLAG_TRAP_ON_CSI_TMO	= 0x00010000u,
+	WL_FTM_TEST_MODE_FLAG_NO_TS_IN_LMR	= 0x00020000u
 };
 typedef uint32 wl_test_mode_flag_t;
 
@@ -597,11 +635,26 @@ typedef struct wl_ftm_event {
 /* 11az RTT sample flags */
 enum wl_ftm_az_rtt_sample_flags {
 	WL_FTM_AZ_RTT_SAMPLE_FLAG_NONE		= 0x0000u,
-	WL_FTM_AZ_RTT_SAMPLE_FLAG_VALID		= 0x0001u,
+	WL_FTM_AZ_RTT_SAMPLE_FLAG_VALID		= 0x0001u, /* Valid RTT sample */
+	WL_FTM_AZ_RTT_SAMPLE_FLAG_SIGNED_RTT	= 0x0002u, /* Signed RTT sample */
 	/* add new flag here */
 	WL_FTM_AZ_RTT_SAMPLE_FLAG_ALL		= 0xffffu
 };
 typedef uint16 wl_ftm_az_rtt_sample_flags_t;
+
+/* 802.11az-2022 Table 9-322al */
+/* WL_FTM_TLV_ID_FORMAT_BW */
+enum wl_ftm_ranging_format_bw {
+	WL_FTM_FMT_BW_HE_20		= 0u,
+	WL_FTM_FMT_BW_HE_40		= 1u,
+	WL_FTM_FMT_BW_HE_80		= 2u,
+	WL_FTM_FMT_BW_HE_80_80		= 3u,
+	WL_FTM_FMT_BW_HE_2RF_160	= 4u,
+	WL_FTM_FMT_BW_HE_1RF_160	= 5u,
+	/* determined by ranging chanspec configuration */
+	WL_FTM_FMT_BW_AUTO		= 255u
+};
+typedef uint8 wl_ftm_ranging_format_bw_t;
 
 /* WL_FTM_TLV_ID_AZ_RTT_SAMPLE_V1
  * 11az RTT sample from a measurement
@@ -617,13 +670,18 @@ typedef struct wl_ftm_az_rtt_sample_v1 {
 
 #define WL_FTM_AZ_RTT_SAMPLE_VALID(_sp) \
 	(((_sp)->flags & WL_FTM_AZ_RTT_SAMPLE_FLAG_VALID) != 0u)
+#define WL_FTM_AZ_RTT_SAMPLE_IS_SIGNED(_sp) \
+	(((_sp)->flags & WL_FTM_AZ_RTT_SAMPLE_FLAG_SIGNED_RTT) != 0u)
 
 /* 11az RTT result flags */
+BCM_EXTENSION	/* Suppress warning: enum values in range 'int'. */
 enum wl_ftm_az_rtt_result_flags {
 	WL_FTM_AZ_RTT_RESULT_FLAG_NONE		= 0x00000000u,
 	WL_FTM_AZ_RTT_RESULT_FLAG_RTT_IN_100PS	= 0x00000001u, /* RTT in 100 ps unit */
 	WL_FTM_AZ_RTT_RESULT_FLAG_DIST_IN_4CM	= 0x00000002u, /* Distance in 1/256 m unit */
 	WL_FTM_AZ_RTT_RESULT_FLAG_SLTF		= 0x00000004u, /* Secure LTF */
+	WL_FTM_AZ_RTT_RESULT_FLAG_SIGNED_RTT	= 0x00000008u, /* RTT result is negative */
+	WL_FTM_AZ_RTT_RESULT_FLAG_SECURE_SN	= 0x00000010u, /* RNG MFP enabled */
 	/* add new flag here */
 	WL_FTM_AZ_RTT_RESULT_FLAG_ALL		= 0xffffffffu
 };
@@ -635,6 +693,10 @@ typedef uint32 wl_ftm_az_rtt_result_flags_t;
 	(((_rp)->flags & WL_FTM_AZ_RTT_RESULT_FLAG_DIST_IN_4CM) != 0u)
 #define WL_FTM_AZ_RTT_RESULT_SLTF(_rp) \
 	(((_rp)->flags & WL_FTM_AZ_RTT_RESULT_FLAG_SLTF) != 0u)
+#define WL_FTM_AZ_RTT_RESULT_SECURE_SN(_rp) \
+	(((_rp)->flags & WL_FTM_AZ_RTT_RESULT_FLAG_SECURE_SN) != 0u)
+#define WL_FTM_AZ_RTT_RESULT_IS_SIGNED(_rp) \
+	(((_rp)->flags & WL_FTM_AZ_RTT_RESULT_FLAG_SIGNED_RTT) != 0u)
 
 /* WL_FTM_TLV_ID_AZ_RTT_RESULT_V1
  * 11az RTT result from a session
@@ -656,6 +718,68 @@ typedef struct wl_ftm_az_rtt_result_v1 {
 	uint16				sample_fmt;	/* format of rtt sample (TLV ID) */
 	uint8				rtt_samples[];	/* optional variable length fields */
 } wl_ftm_az_rtt_result_v1_t;
+
+/* WL_FTM_TLV_ID_AZ_RTT_RESULT_V2
+ * 11az RTT result from a session
+ */
+typedef struct wl_ftm_az_rtt_result_v2 {
+	wl_ftm_session_id_t		sid;
+	struct ether_addr		peer;
+	wl_ftm_az_rtt_result_flags_t	flags;
+	wl_ftm_status_t			status;		/* session status */
+	wl_ftm_session_state_t		state;		/* session state */
+	uint16				max_num_meas;	/* configured num of measurement */
+	uint16				num_meas;	/* num of measurement done */
+	uint16				num_rtt;	/* num of rtt */
+	uint32				rtt_mean;	/* mean RTT (in ps by default) */
+	uint32				rtt_sd;		/* standard deviation of RTT */
+	uint32				dist;		/* Distance (in cm unit by default) */
+	int8				rssi_mean[WL_RSSI_ANT_MAX];
+	wl_ftm_intvl_t			min_delta;	/* min delta bet meas for ntb ranging */
+	wl_ftm_intvl_t			max_delta;	/* min delta bet meas for ntb ranging */
+	uint8				i2r_ltf_rep;	/* initiator to responder ltf repetitions */
+	uint8				r2i_ltf_rep;	/* responder to initiator ltf repetitions */
+	uint16				num_sample;	/* number of rtt sample */
+	uint16				sample_fmt;	/* format of rtt sample (TLV ID) */
+	chanspec_t			chanspec;	/* ranging chanspec */
+	wl_ftm_ranging_format_bw_t	format_bw;	/* format bw used for ranging */
+	uint8				i2r_sts;	/* initiator to responder spatial stream */
+	uint8				r2i_sts;	/* responder to initiator spatial stream */
+	uint8				pad;
+	uint8				rtt_samples[];	/* optional variable length fields */
+} wl_ftm_az_rtt_result_v2_t;
+
+/* WL_FTM_TLV_ID_AZ_RTT_RESULT_V3
+ * 11az RTT result from a session
+ */
+typedef struct wl_ftm_az_rtt_result_v3 {
+	wl_ftm_session_id_t		sid;
+	struct ether_addr		peer;
+	wl_ftm_az_rtt_result_flags_t	flags;
+	wl_ftm_status_t			status;		/* session status */
+	wl_ftm_session_state_t		state;		/* session state */
+	uint16				max_num_meas;	/* configured num of measurement */
+	uint16				num_meas;	/* num of measurement done */
+	uint16				num_rtt;	/* num of rtt */
+	uint32				rtt_mean;	/* mean RTT (in ps by default) */
+	uint32				rtt_sd;		/* standard deviation of RTT */
+	uint32				dist;		/* Distance (in cm unit by default) */
+	int8				rssi_mean[WL_RSSI_ANT_MAX];
+	wl_ftm_intvl_t			min_delta;	/* min delta bet meas for ntb ranging */
+	wl_ftm_intvl_t			max_delta;	/* min delta bet meas for ntb ranging */
+	uint8				i2r_ltf_rep;	/* initiator to responder ltf repetitions */
+	uint8				r2i_ltf_rep;	/* responder to initiator ltf repetitions */
+	uint16				num_sample;	/* number of rtt sample */
+	uint16				sample_fmt;	/* format of rtt sample (TLV ID) */
+	chanspec_t			chanspec;	/* ranging chanspec */
+	wl_ftm_ranging_format_bw_t	format_bw;	/* format bw used for ranging */
+	uint8				i2r_sts;	/* initiator to responder spatial stream */
+	uint8				r2i_sts;	/* responder to initiator spatial stream */
+	uint8				sec_ltf_proto_ver; /* secure ltf protocol version */
+	uint16				akm_type;	 /* akm type used for secure ranging */
+	uint16				cipher_type;	 /* cipher type used for secure ranging */
+	uint8				rtt_samples[];	 /* optional variable length fields */
+} wl_ftm_az_rtt_result_v3_t;
 
 /* WL_FTM_TLV_ID_AZ_COUNTERS_V1
  * 11az ranging counters

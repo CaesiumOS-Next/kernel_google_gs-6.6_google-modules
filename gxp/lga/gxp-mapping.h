@@ -17,6 +17,7 @@
 
 #include <gcip/gcip-iommu-reserve.h>
 #include <gcip/gcip-iommu.h>
+#include <gcip/gcip-mapping.h>
 
 #include "gxp-internal.h"
 
@@ -31,7 +32,7 @@ extern bool gxp_log_iova;
 #define GXP_IOVA_LOG_DMABUF (1u << 1)
 
 struct gxp_mapping {
-	struct gcip_iommu_mapping *gcip_mapping;
+	struct gcip_mapping *gcip_mapping;
 	struct rb_node node;
 	refcount_t refcount;
 	void (*destructor)(struct gxp_mapping *mapping);
@@ -43,8 +44,6 @@ struct gxp_mapping {
 	u64 host_address;
 	struct gxp_dev *gxp;
 	uint gxp_dma_flags;
-	/* A mapping can only be synced by one thread at a time */
-	struct mutex sync_lock;
 	/*
 	 * `virtual_address` and `page_count` are set when gxp_mapping_vmap(..)
 	 * is called, and unset when gxp_mapping_vunmap(..) is called

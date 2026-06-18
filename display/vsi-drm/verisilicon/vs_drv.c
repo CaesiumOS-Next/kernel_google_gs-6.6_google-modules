@@ -664,6 +664,7 @@ static struct platform_driver vs_drm_platform_driver = {
 static int __init vs_drm_init(void)
 {
 	int ret;
+
 	ret = platform_register_drivers(drm_sub_drivers, NUM_DRM_DRIVERS);
 	if (ret)
 		return ret;

@@ -1,7 +1,7 @@
 /*
  * Linux platform device for DHD WLAN adapter
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -37,11 +37,6 @@
 #include <wl_android.h>
 #endif
 #include <dhd_plat.h>
-#if defined(CONFIG_WIFI_CONTROL_FUNC) || defined(CUSTOMER_HW4)
-#include <linux/wlan_plat.h>
-#else
-#include <dhd_plat.h>
-#endif /* CONFIG_WIFI_CONTROL_FUNC */
 #ifdef CONFIG_DTS
 #include<linux/regulator/consumer.h>
 #include<linux/of_gpio.h>
@@ -201,6 +196,18 @@ int wifi_platform_set_power(wifi_adapter_info_t *adapter, bool on, unsigned long
 	}
 #endif /* WBRC_HW_QUIRKS */
 
+	if (on && dhd_plat_get_wlan_reg_on_gpio() == 1) {
+		DHD_PRINT(("%s: wl_reg_on gpio already high\n", __FUNCTION__));
+		is_power_on = TRUE;
+		goto exit;
+	}
+
+	if (!on && dhd_plat_get_wlan_reg_on_gpio() == 0) {
+		DHD_PRINT(("%s: wl_reg_on gpio already low\n", __FUNCTION__));
+		is_power_on = FALSE;
+		goto exit;
+	}
+
 #ifdef CONFIG_DTS
 	if (on) {
 		err = regulator_enable(wifi_regulator);
@@ -212,8 +219,11 @@ int wifi_platform_set_power(wifi_adapter_info_t *adapter, bool on, unsigned long
 	if (err < 0)
 		DHD_ERROR(("%s: regulator enable/disable failed", __FUNCTION__));
 #else
-	if (!adapter || !adapter->wifi_plat_data)
-		return -EINVAL;
+	if (!adapter || !adapter->wifi_plat_data) {
+		err = -EINVAL;
+		goto exit;
+	}
+
 	plat_data = adapter->wifi_plat_data;
 
 	DHD_PRINT(("%s = %d, delay: %lu msec\n", __FUNCTION__, on, msec));
@@ -249,6 +259,7 @@ int wifi_platform_set_power(wifi_adapter_info_t *adapter, bool on, unsigned long
 
 #endif /* CONFIG_DTS */
 
+exit:
 #ifdef WBRC_HW_QUIRKS
 	if (on) {
 		wl2wbrc_wlan_after_regon();
@@ -396,7 +407,11 @@ static int wifi_plat_dev_drv_probe(struct platform_device *pdev)
 	return wifi_plat_dev_probe_ret;
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
+static void wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#else
 static int wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0) */
 {
 	wifi_adapter_info_t *adapter;
 
@@ -419,7 +434,9 @@ static int wifi_plat_dev_drv_remove(struct platform_device *pdev)
 #ifdef CONFIG_DTS
 	regulator_put(wifi_regulator);
 #endif /* CONFIG_DTS */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
 	return 0;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) */
 }
 
 static int wifi_plat_dev_drv_suspend(struct platform_device *pdev, pm_message_t state)
@@ -656,7 +673,11 @@ static int bcmdhd_wifi_plat_dev_drv_probe(struct platform_device *pdev)
 	return dhd_wifi_platform_load();
 }
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0))
+static void bcmdhd_wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#else
 static int bcmdhd_wifi_plat_dev_drv_remove(struct platform_device *pdev)
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 11, 0) */
 {
 	int i;
 	wifi_adapter_info_t *adapter;
@@ -668,7 +689,9 @@ static int bcmdhd_wifi_plat_dev_drv_remove(struct platform_device *pdev)
 		wifi_platform_set_power(adapter, FALSE, WIFI_TURNOFF_DELAY);
 		wifi_platform_bus_enumerate(adapter, FALSE);
 	}
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0))
 	return 0;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) */
 }
 
 static struct platform_driver dhd_wifi_platform_dev_driver = {
@@ -1051,6 +1074,17 @@ void __attribute__ ((weak)) dhd_plat_l1ss_ctrl(bool ctrl)
 	return;
 }
 
+void __attribute__ ((weak)) dhd_plat_pm_runtime_init(void *plat_info,
+		struct pci_dev *pdev)
+{
+	return;
+}
+
+void __attribute__ ((weak)) dhd_plat_pm_runtime_exit(void *plat_info)
+{
+	return;
+}
+
 void __attribute__ ((weak)) dhd_plat_l1_exit_io(void)
 {
 	return;
@@ -1077,6 +1111,16 @@ void __attribute__ ((weak)) dhd_plat_rx_pktcount(void *plat_info, uint cnt)
 }
 
 int __attribute__ ((weak)) dhd_plat_pcie_suspend(void *plat_info)
+{
+	return 0;
+}
+
+int __attribute__ ((weak)) dhd_plat_pcie_suspend_nosave(void *plat_info)
+{
+	return 0;
+}
+
+int __attribute__ ((weak)) dhd_plat_pcie_savestate(void *plat_info)
 {
 	return 0;
 }
@@ -1139,6 +1183,17 @@ bool __attribute__ ((weak)) dhd_plat_pcie_enable_big_core(void)
 int
 __attribute__ ((weak)) dhd_get_platform_naming_for_nvram_clmblob_file(download_type_t component,
 	char *file_name)
+{
+	return BCME_ERROR;
+}
+
+int __attribute__ ((weak)) dhd_plat_get_wlan_reg_on_gpio(void)
+{
+	DHD_ERROR(("%s:%s: enter\n", __FILE__, __func__));
+	return BCME_ERROR;
+}
+
+int __attribute__ ((weak)) dhd_plat_get_wlan_host_wake_up_gpio(void)
 {
 	return BCME_ERROR;
 }

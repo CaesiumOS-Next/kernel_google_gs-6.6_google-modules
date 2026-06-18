@@ -1,7 +1,7 @@
 /*
  * Linux DHD Bus Module for PCIE
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -110,6 +110,8 @@ unsigned char gpio_direction;
 #define BCMPCI_DEV_ID PCI_ANY_ID
 #endif
 
+extern int dhd_disable_l2_in_d3;
+
 #ifdef FORCE_TPOWERON
 extern uint32 tpoweron_scale;
 #endif /* FORCE_TPOWERON */
@@ -190,7 +192,11 @@ static void __devexit dhdpcie_pci_remove(struct pci_dev *pdev);
 static void __devexit dhdpcie_pci_shutdown(struct pci_dev *pdev);
 static void __devexit dhdpcie_pci_stop(struct pci_dev *pdev);
 static int dhdpcie_init(struct pci_dev *pdev);
+#ifdef GOOGLE_DAL_CORE
+irqreturn_t dhdpcie_isr(int irq, void *arg);
+#else
 static irqreturn_t dhdpcie_isr(int irq, void *arg);
+#endif /* GOOGLE_DAL_CORE */
 /* OS Routine functions for PCI suspend/resume */
 
 #ifdef DHD_PCIE_NATIVE_RUNTIMEPM
@@ -282,11 +288,10 @@ static const struct dev_pm_ops dhd_pcie_pm_ops = {
 #endif /* OEM_ANDROID */
 
 static struct pci_driver dhdpcie_driver = {
-	node:		{&dhdpcie_driver.node, &dhdpcie_driver.node},
-	name :		"dhdpcie",
+	name:		"dhdpcie",
 	id_table :	dhdpcie_pci_devid,
 	probe :		dhdpcie_pci_probe,
-	remove :		dhdpcie_pci_remove,
+	remove :	dhdpcie_pci_remove,
 	.driver.pm = &dhd_pcie_pm_ops,
 	shutdown :	dhdpcie_pci_shutdown,
 };
@@ -869,10 +874,6 @@ static int dhdpcie_pm_resume(struct device *dev)
 	DHD_GENERAL_LOCK(bus->dhd, flags);
 	DHD_BUS_BUSY_SET_RESUME_IN_PROGRESS(bus->dhd);
 	DHD_GENERAL_UNLOCK(bus->dhd, flags);
-#ifdef DHD_ENABLE_L1SS_FROM_PM_COMPLETE
-	DHD_PRINT(("%s: Set system_resume_in_progress\n", __FUNCTION__));
-	bus->system_resume_in_progress = TRUE;
-#endif /* DHD_ENABLE_L1SS_FROM_PM_COMPLETE */
 
 	if (bus->dhd->up)
 		ret = dhdpcie_set_suspend_resume(bus, FALSE);
@@ -903,17 +904,6 @@ static void dhdpcie_pm_complete(struct device *dev)
 #endif /* WL_TWT */
 
 	bus->chk_pm = FALSE;
-
-#ifdef DHD_ENABLE_L1SS_FROM_PM_COMPLETE
-	DHD_PRINT(("%s: Clear system_resume_in_progress\n", __FUNCTION__));
-	bus->system_resume_in_progress = FALSE;
-
-	/*
-	 * Re-enable L1ss in Resume path. Implementation defalts to NOP
-	 * If need override in the paltform file
-	 */
-	dhd_plat_l1ss_ctrl(1);
-#endif /* DHD_ENABLE_L1SS_FROM_PM_COMPLETE */
 
 	return;
 }
@@ -1065,11 +1055,8 @@ static int dhdpcie_pci_resume(struct device *dev)
 }
 
 #endif /* OEM_ANDROID */
-#ifdef DHD_PCIE_NATIVE_RUNTIMEPM
-static int dhdpcie_set_suspend_resume(dhd_bus_t *bus, bool state, bool byint)
-#else
+
 static int dhdpcie_set_suspend_resume(dhd_bus_t *bus, bool state)
-#endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
 {
 	int ret = 0;
 
@@ -1092,11 +1079,8 @@ static int dhdpcie_set_suspend_resume(dhd_bus_t *bus, bool state)
 #endif /* DHD_PCIE_RUNTIMEPM */
 		return ret;
 	}
-#ifdef DHD_PCIE_NATIVE_RUNTIMEPM
-	ret = dhdpcie_bus_suspend(bus, state, byint);
-#else
-	ret = dhdpcie_bus_suspend(bus, state);
-#endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
+
+	ret = dhdpcie_bus_suspend(bus, state, state);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0) && defined(DHD_TCP_LIMIT_OUTPUT)
 	if (ret == BCME_OK) {
@@ -1227,6 +1211,40 @@ extern void dhd_dpc_tasklet_kill(dhd_pub_t *dhdp);
 #endif /* OEM_ANDROID && LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0) */
 
 static void
+dhdpcie_suspend_dump_rc_cfgregs(struct dhd_bus *bus, char *suspend_state)
+{
+#ifdef BOARD_STB
+	uint32 val = 0;
+	int cap_ptr = 0;
+	int offset = 0;
+	if (!bus->rc_dev) {
+		DHD_RPM(("%s:RC dev is NULL\n", suspend_state));
+		return;
+	}
+
+	pci_read_config_dword(bus->rc_dev, PCIECFGREG_STATUS_CMD, &val);
+	DHD_RPM(("%s:RC status_cmd =0x%x\n", suspend_state, val));
+	cap_ptr = pci_find_ext_capability(bus->rc_dev, PCI_EXT_CAP_ID_ERR);
+	if (cap_ptr == 0) {
+		DHD_RPM(("RC AER Capability does not exist\n"));
+		return;
+	} else {
+		DHD_RPM(("RC AER block from Start=0x%x End=0x%x\n",
+			(cap_ptr + PCI_ERR_UNCOR_STATUS),
+			(cap_ptr + PCI_ERR_ROOT_ERR_SRC)));
+	}
+	for (offset = cap_ptr + PCI_ERR_UNCOR_STATUS;
+		offset <= (cap_ptr + PCI_ERR_ROOT_ERR_SRC); offset += 0x4) {
+
+		pci_read_config_dword(bus->rc_dev, offset, &val);
+		pr_cont("0x%08x ", val);
+	}
+	printf("\n");
+#endif /* BOARD_STB */
+	return;
+}
+
+static void
 dhdpcie_suspend_dump_cfgregs(struct dhd_bus *bus, char *suspend_state)
 {
 	DHD_RPM(("%s: BaseAddress0(0x%x)=0x%x, BaseAddress1(0x%x)=0x%x BaseAddress2(0x%x)=0x%x "
@@ -1271,9 +1289,15 @@ static int dhdpcie_suspend_dev(struct pci_dev *dev)
 	get_debug_dump_time(dhd_suspend_resume_time_str);
 	DHD_PRINT(("%s: Enter: TS(%s)\n", __FUNCTION__, dhd_suspend_resume_time_str));
 #else
-	DHD_RPM(("%s: Enter\n", __FUNCTION__));
+	DHD_PRINT(("%s: Enter\n", __FUNCTION__));
 #endif /* CUSTOMER_HW4_DEBUG */
-
+#ifdef DHD_DEFER_L1SS_ENABLE_IN_RESUME
+	/*
+	 * Ensure any pending L1SS enablement is finished or cancelled
+	 * before we proceed to disable it for suspend.
+	 */
+	cancel_work_sync(&bus->l1ss_enable_work);
+#endif /* DHD_DEFER_L1SS_ENABLE_IN_RESUME */
 	/*
 	 * Disable L1ss on EP and RC side ... defaults to NOP
 	 * If needed implement this function in the dhd_custom_xxx.c
@@ -1282,6 +1306,7 @@ static int dhdpcie_suspend_dev(struct pci_dev *dev)
 	dhd_plat_l1ss_ctrl(0);
 
 	dhdpcie_suspend_dump_cfgregs(bus, "BEFORE_EP_SUSPEND");
+	dhdpcie_suspend_dump_rc_cfgregs(bus, "BEFORE_EP_SUSPEND");
 
 #if defined(OEM_ANDROID) && (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0))
 	dhd_dpc_tasklet_kill(bus->dhd);
@@ -1303,11 +1328,12 @@ static int dhdpcie_suspend_dev(struct pci_dev *dev)
 			__FUNCTION__, ret));
 	}
 
-#ifdef OEM_ANDROID
+#ifdef DHD_PCIE_RESUME_DELAY_WAR
 	dev->state_saved = FALSE;
-#endif /* OEM_ANDROID */
+#endif /* DHD_PCIE_RESUME_DELAY_WAR */
 
 	dhdpcie_suspend_dump_cfgregs(bus, "AFTER_EP_SUSPEND");
+	dhdpcie_suspend_dump_rc_cfgregs(bus, "AFTER_EP_SUSPEND");
 	return ret;
 }
 
@@ -1365,6 +1391,8 @@ static int dhdpcie_resume_dev(struct pci_dev *dev)
 	int err = 0;
 	dhdpcie_info_t *pch = pci_get_drvdata(dev);
 
+	dhdpcie_suspend_dump_rc_cfgregs(pch->bus, "BEFORE_EP_RESUME");
+	dhdpcie_suspend_dump_cfgregs(pch->bus, "BEFORE_EP_RESUME");
 #if defined(OEM_ANDROID) && (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0))
 	pci_load_and_free_saved_state(dev, &pch->state);
 #endif /* OEM_ANDROID && LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0) */
@@ -1374,7 +1402,7 @@ static int dhdpcie_resume_dev(struct pci_dev *dev)
 	get_debug_dump_time(dhd_suspend_resume_time_str);
 	DHD_PRINT(("%s: Enter: TS(%s)\n", __FUNCTION__, dhd_suspend_resume_time_str));
 #else
-	DHD_RPM(("%s: Enter\n", __FUNCTION__));
+	DHD_PRINT(("%s: Enter\n", __FUNCTION__));
 #endif /* CUSTOMER_HW4_DEBUG */
 
 	/* Resture back current bar1 window */
@@ -1397,26 +1425,31 @@ static int dhdpcie_resume_dev(struct pci_dev *dev)
 		goto out;
 	}
 
-#ifdef OEM_ANDROID
+#ifdef DHD_PCIE_RESUME_DELAY_WAR
 	dev->state_saved = TRUE;
-#endif /* OEM_ANDROID */
+#endif /* DHD_PCIE_RESUME_DELAY_WAR  */
 
 	pci_restore_state(dev);
 
 	BCM_REFERENCE(pch);
+	dhdpcie_suspend_dump_rc_cfgregs(pch->bus, "AFTER_EP_RESUME");
 	dhdpcie_suspend_dump_cfgregs(pch->bus, "AFTER_EP_RESUME");
 
+#ifndef DHD_DEFER_L1SS_ENABLE_IN_RESUME
 	/*
-	 * Re-enable L1ss in Resume path. Implementation defalts to NOP
+	 * Re-enable L1ss in Resume path. Implementation defaults to NOP
 	 * If need override in the paltform file
+	 *
+	 * case1:
+	 * When DHD_DEFER_L1SS_ENABLE_IN_RESUME is defined, l1ss is enabled
+	 * from dhd_bus_handle_mb_data().
+	 *
+	 * case2:
+	 * when DHD_DEFER_L1SS_ENABLE_IN_RESUME is not defined, l1ss is enabled here
 	 */
-#ifdef DHD_ENABLE_L1SS_FROM_PM_COMPLETE
-	if (pch->bus->system_resume_in_progress == FALSE) {
-		dhd_plat_l1ss_ctrl(1);
-	}
-#else
 	dhd_plat_l1ss_ctrl(1);
-#endif /* DHD_ENABLE_L1SS_FROM_PM_COMPLETE */
+#endif /* DHD_DEFER_L1SS_ENABLE_IN_RESUME */
+
 
 out:
 	return err;
@@ -1430,7 +1463,7 @@ static int dhdpcie_resume_host_dev(dhd_bus_t *bus)
 	if (bcmerror < 0) {
 		DHD_ERROR(("%s: PCIe RC resume failed!!! (%d)\n",
 			__FUNCTION__, bcmerror));
-		bus->is_linkdown = 1;
+		dhd_bus_set_linkdown(bus->dhd, TRUE);
 #ifdef SUPPORT_LINKDOWN_RECOVERY
 #ifdef CONFIG_ARCH_MSM
 		bus->no_cfg_restore = 1;
@@ -1606,7 +1639,7 @@ static void dhdpcie_config_save_restore_coherent(dhd_bus_t *bus, bool state)
 
 int dhdpcie_pci_suspend_resume(dhd_bus_t *bus, bool state)
 {
-	int rc;
+	int rc = 0;
 
 	struct pci_dev *dev = bus->dev;
 
@@ -1620,12 +1653,28 @@ int dhdpcie_pci_suspend_resume(dhd_bus_t *bus, bool state)
 #endif /* !BCMPCIE_OOB_HOST_WAKE && !PCIE_OOB */
 		rc = dhdpcie_suspend_dev(dev);
 		if (!rc) {
-			dhdpcie_suspend_host_dev(bus);
+			if (!dhd_disable_l2_in_d3) {
+				rc = dhdpcie_suspend_host_dev(bus);
+				if (rc < 0) {
+					/*
+					 * RC suspend has failed,
+					 * keep the EP back to D0.
+					 */
+					dhdpcie_resume_dev(dev);
+				}
+			}
 		}
 	} else {
-		rc = dhdpcie_resume_host_dev(bus);
+		if (!dhd_disable_l2_in_d3) {
+			rc = dhdpcie_resume_host_dev(bus);
+		}
 		if (!rc) {
 			rc = dhdpcie_resume_dev(dev);
+			if (rc) {
+				dhd_bus_set_linkdown(bus->dhd, TRUE);
+			}
+		}
+		if (!rc) {
 			if (PCIECTO_ENAB(bus)) {
 				/* reinit CTO configuration
 				 * because cfg space got reset at D3 (PERST)
@@ -1811,6 +1860,7 @@ dhdpcie_pci_stop(struct pci_dev *pdev)
 	pm_runtime_get_noresume(&pdev->dev);
 	pm_runtime_get_noresume(&pdev->dev);
 #endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
+	dhd_plat_pm_runtime_exit(bus->dhd->plat_info);
 
 	if (bus) {
 		/*  Stop Runtime PM in pci_remove */
@@ -2233,7 +2283,7 @@ void dhdpcie_linkdown_cb(struct pci_dev *pdev)
 						DHD_ERROR(("%s: Event HANG send up "
 							"due to PCIe linkdown\n",
 							__FUNCTION__));
-						bus->is_linkdown = 1;
+						dhd_bus_set_linkdown(dhd, TRUE);
 						dhd->hang_reason =
 							HANG_REASON_PCIE_LINK_DOWN_RC_DETECT;
 						dhd_os_send_hang_message(dhd);
@@ -2343,7 +2393,7 @@ int dhdpcie_init(struct pci_dev *pdev)
 		}
 #endif /* DHD_SET_PCIE_DMA_MASK_FOR_GS101 */
 
-#ifdef BOARD_STB
+#ifdef BOARD_STB_BRCM
 #define DHD_PCIE_DMA_MASK_FOR_STB 64
 		if (DHD_DMA_SET_MASK(pdev, DMA_BIT_MASK(DHD_PCIE_DMA_MASK_FOR_STB)) ||
 			DHD_DMA_SET_COHERENT_MASK(pdev,
@@ -2352,7 +2402,7 @@ int dhdpcie_init(struct pci_dev *pdev)
 				__FUNCTION__, DHD_PCIE_DMA_MASK_FOR_STB));
 			return -EINVAL;
 		}
-#endif /* BOARD_STB */
+#endif /* BOARD_STB_BRCM */
 
 #ifdef DHD_WAKE_STATUS
 		/* Initialize pkt_wake_lock */
@@ -2496,6 +2546,7 @@ int dhdpcie_init(struct pci_dev *pdev)
 #endif /* WBRC && BCMDHD_MODULAR */
 
 		dhdpcie_init_succeeded = TRUE;
+		dhd_plat_pm_runtime_init(bus->dhd->plat_info, pdev);
 #if defined(CONFIG_ARCH_MSM) && defined(CONFIG_SEC_PCIE_L1SS)
 		sec_pcie_set_use_ep_loaded(bus->rc_dev);
 #endif /* CONFIG_ARCH_MSM && CONFIG_SEC_PCIE_L1SS */
@@ -2745,7 +2796,7 @@ dhdpcie_stop_host_dev(dhd_bus_t *bus)
 		return BCME_ERROR;
 	}
 
-	dhd_plat_pcie_suspend(bus->dhd->plat_info);
+	ret = dhd_plat_pcie_suspend(bus->dhd->plat_info);
 
 #ifdef CONFIG_ARCH_MSM
 #ifdef SUPPORT_LINKDOWN_RECOVERY
@@ -2838,7 +2889,11 @@ dhdpcie_enable_device(dhd_bus_t *bus)
 			bus->no_bus_init = TRUE;
 			/* Check if the PCIe link is down */
 			if (vid == (uint32)-1) {
+				/* set link down and call the api
+				 * just in case bus->dhd is not yet inited
+				 */
 				bus->is_linkdown = 1;
+				dhd_bus_set_linkdown(bus->dhd, TRUE);
 #ifdef SUPPORT_LINKDOWN_RECOVERY
 #ifdef CONFIG_ARCH_MSM
 				bus->no_cfg_restore = TRUE;
@@ -3590,6 +3645,7 @@ bool dhd_runtimepm_state(dhd_pub_t *dhd)
 			/* For making sure NET TX Queue active  */
 			dhd_bus_start_queue(bus);
 			DHD_GENERAL_UNLOCK(dhd, flags);
+
 			smp_wmb();
 			wake_up(&bus->rpm_queue);
 			DHD_RPM(("%s : runtime resume ended \n", __FUNCTION__));
@@ -3687,6 +3743,7 @@ bool dhdpcie_is_resume_done(dhd_pub_t *dhdp)
 	dhd_bus_t *bus = dhdp->bus;
 	return bus->runtime_resume_done;
 }
+
 #endif /* DHD_PCIE_RUNTIMEPM */
 
 struct device *dhd_bus_to_dev(dhd_bus_t *bus)
@@ -3698,6 +3755,11 @@ struct device *dhd_bus_to_dev(dhd_bus_t *bus)
 		return &pdev->dev;
 	else
 		return NULL;
+}
+
+void *dhd_bus_to_pdev(dhd_bus_t *bus)
+{
+	return (void *)bus->dev;
 }
 
 #ifdef DHD_FW_COREDUMP
@@ -3837,3 +3899,144 @@ dhd_bt_fw_dwnld_blob(void *wl_hdl, char *buf, size_t len)
 }
 #endif /* BT_FW_DWNLD */
 #endif /* WBRC */
+
+#ifdef GOOGLE_DAL_CORE
+static bool brcm_bus_rx(void *priv, u32 *cnt)
+{
+	return dhd_prot_process_msgbuf_rxcpl(
+		(dhd_pub_t *)priv, DHD_REGULAR_RING, cnt);
+}
+
+static int brcm_bus_tx(void *priv, void *pkt, u32 ifid)
+{
+	return dhd_prot_txdata((dhd_pub_t *)priv, pkt, ifid);
+}
+
+static bool brcm_bus_tx_cpl(void *priv, u32 *cnt)
+{
+	return dhd_prot_process_msgbuf_txcpl((dhd_pub_t *)priv, DHD_REGULAR_RING, cnt);
+}
+
+#ifdef GOOGLE_DAL_NOA_MODE
+int dhd_sync_back_pci_dev_state(void *bus, void *src)
+{
+	dhdpcie_info_t *pch;
+	struct pci_dev *pdev = ((dhd_bus_t *)bus)->dev;
+	struct pci_dev_reconcile_fields *state = (struct pci_dev_reconcile_fields *)src;
+
+	if (pdev == NULL || state == NULL) {
+		DHD_ERROR(("%s: Input is NULL\n", __func__));
+		return -ENODEV;
+	}
+
+	pch = pci_get_drvdata(pdev);
+
+	memcpy(pch->state, state->saved_state, state->saved_state_size);
+	pdev->is_busmaster = state->is_busmaster;
+	pdev->current_state = state->current_state;
+	if (state->enable_cnt) {
+		if (atomic_inc_return(&pdev->enable_cnt) > 1) {
+			atomic_dec_return(&pdev->enable_cnt);
+			DHD_ERROR(("%s: enable_cnt is already > 1\n", __func__));
+			return -EINVAL;
+		}
+	} else if (state->enable_cnt <= 0) {
+		if (atomic_dec_return(&pdev->enable_cnt) < 0) {
+			atomic_inc_return(&pdev->enable_cnt);
+			DHD_ERROR(("%s: enable_cnt is already 0\n", __func__));
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
+#endif /* GOOGLE_DAL_NOA_MODE */
+
+int
+BCMFASTPATH(dhd_prot_rxbuf_post)(dhd_pub_t *dhd, uint16 count, bool use_rsv_pktid);
+static int brcm_bus_rx_replenish(void *priv, u32 count, bool use_rsv_pkid)
+{
+	return dhd_prot_rxbuf_post((dhd_pub_t *)priv, count, use_rsv_pkid);
+}
+
+static int brcm_bus_start(void *priv)
+{
+	dhd_bus_t *bus = (dhd_bus_t *)priv;
+
+	dhdpcie_bus_intr_enable(bus);
+	if (dhdpcie_irq_disabled(bus)) {
+		dhdpcie_enable_irq(bus);
+	}
+	dhd_bus_start_queue(bus);
+
+	return 0;
+}
+
+static void brcm_bus_stop(void *priv)
+{
+	dhd_bus_t *bus = (dhd_bus_t *)priv;
+	dhdpcie_bus_intr_disable(bus);
+	dhdpcie_disable_irq(bus);
+	dhd_bus_stop_queue(bus);
+}
+
+static int brcm_bus_init(void *dev, void *priv)
+{
+	return 0;
+}
+
+static void brcm_bus_exit(void *priv)
+{
+	dhd_bus_t *bus = (dhd_bus_t *)priv;
+	if (bus->intr) {
+		dhdpcie_free_irq(bus);
+		bus->intr = false;
+	}
+}
+
+static int brcm_bus_request_irq(void *priv)
+{
+	dhd_bus_t *bus = (dhd_bus_t *)priv;
+	struct pci_dev *pdev = bus->dev;
+	dhdpcie_info_t *pch = pci_get_drvdata(bus->dev);
+
+	if (bus->intr) {
+		return 0;
+	}
+
+	if (bus->d2h_intr_method == PCIE_MSI) {
+		if (dhdpcie_enable_msi(pdev, 1, 1) < 0) {
+			DHD_ERROR(("%s: dhdpcie_enable_msi() failed\n", __FUNCTION__));
+			dhdpcie_disable_msi(pdev);
+			bus->d2h_intr_method = PCIE_INTX;
+		}
+	}
+
+	if (request_irq(pdev->irq, dhdpcie_isr, IRQF_SHARED,
+		pch->pciname, bus) < 0) {
+		DHD_ERROR(("%s: request_irq() failed\n", __FUNCTION__));
+		if (bus->d2h_intr_method == PCIE_MSI) {
+			dhdpcie_disable_msi(pdev);
+		}
+		return -EINVAL;
+	}
+	bus->intr = true;
+	bus->irq_registered = true;
+	return 0;
+}
+
+#ifndef GOOGLE_DAL_NOA_MODE
+struct platform_bus_ops *plat_ops;
+#endif /* GOOGLE_DAL_NOA_MODE */
+
+struct platform_bus_ops brcm_bus_ops = {
+	.init = brcm_bus_init,
+	.exit = brcm_bus_exit,
+	.start = brcm_bus_start,
+	.stop = brcm_bus_stop,
+	.request_irq = brcm_bus_request_irq,
+	.rx = brcm_bus_rx,
+	.rx_replenish = brcm_bus_rx_replenish,
+	.tx = brcm_bus_tx,
+	.tx_cpl = brcm_bus_tx_cpl,
+};
+#endif /* GOOGLE_DAL_CORE */

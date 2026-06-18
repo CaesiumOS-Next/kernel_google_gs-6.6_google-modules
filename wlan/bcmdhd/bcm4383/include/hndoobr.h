@@ -1,7 +1,7 @@
 /*
  * HND OOBR interface header
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -60,9 +60,9 @@ uint32 hnd_oobr_dump_op(si_t *sih, uchar *p, hnd_oobr_dump_op_t op);
 #define OOBR_EXT_RSRC_REQ_PERCORE_OFFSET 0x34u
 #define OOBR_EXT_RSRC_OFFSET 0x100u
 #define OOBR_EXT_RSRC_SHIFT 7u
-#define OOBR_EXT_RSRC_REQ_ADDR(oodr_base, core_idx) (uint32)((uintptr)(oodr_base) +\
+#define OOBR_EXT_RSRC_REQ_ADDR(oodr_base, core_idx) ((uint32)((uintptr)(oodr_base) +\
 	 OOBR_EXT_RSRC_OFFSET + ((core_idx) << OOBR_EXT_RSRC_SHIFT) +\
-	 OOBR_EXT_RSRC_REQ_PERCORE_OFFSET)
+	 OOBR_EXT_RSRC_REQ_PERCORE_OFFSET))
 
 typedef volatile struct hndoobr_percore_reg {
 	uint32 sourcesel[OOBR_INTR_PER_CONFREG];        /* 0x00 - 0x0c */
@@ -94,7 +94,7 @@ typedef volatile struct hndoobr_reg {
 	uint32 topintdestsel[4];                /* 0x30 - 0x3c */
 	uint32 topextrsrcmap[4];                /* 0x40 - 0x4c */
 	uint32 reserved2[44];                   /* 0x50 - 0xfc */
-	hndoobr_percore_reg_t percore_reg[1];   /* 0x100 */
+	hndoobr_percore_reg_t percore_reg[];    /* 0x100 */
 } hndoobr_reg_t;
 
 /*

@@ -73,6 +73,9 @@
 
 #define AOC_MONITOR_ONLINE_TIMEOUT_S 5
 
+#define AOC_WAKELOCK_PREFIX "aoc_"
+#define AOC_WAKELOCK_NAME_LENGTH (AOC_SERVICE_NAME_LENGTH + sizeof(AOC_WAKELOCK_PREFIX))
+
 DEFINE_MUTEX(aoc_service_lock);
 
 enum AOC_FW_STATE aoc_state;
@@ -579,6 +582,7 @@ static void aoc_fw_callback(const struct firmware *fw, void *ctx)
 	phys_addr_t sensor_heap = aoc_dram_translate_to_aoc(prvdata, prvdata->sensor_heap_base);
 	phys_addr_t playback_heap = aoc_dram_translate_to_aoc(prvdata, prvdata->audio_playback_heap_base);
 	phys_addr_t capture_heap = aoc_dram_translate_to_aoc(prvdata, prvdata->audio_capture_heap_base);
+	phys_addr_t tpu_offload_heap = aoc_dram_translate_to_aoc(prvdata, prvdata->tpu_offload_heap_base);
 	unsigned int i;
 	bool fw_signed = false, gsa_enabled = false;
 	int rc;
@@ -595,6 +599,8 @@ static void aoc_fw_callback(const struct firmware *fw, void *ctx)
 		{ .key = kAOCPlaybackHeapSize, .value = PLAYBACK_HEAP_SIZE },
 		{ .key = kAOCCaptureHeapAddress, .value = capture_heap},
 		{ .key = kAOCCaptureHeapSize, .value = CAPTURE_HEAP_SIZE },
+		{ .key = kAOCTpuOffloadHeapAddress, .value = tpu_offload_heap },
+		{ .key = kAOCTpuOffloadHeapSize, .value = TPU_OFFLOAD_HEAP_SIZE },
 		{ .key = kAOCForceVNOM, .value = force_vnom },
 		{ .key = kAOCDisableMM, .value = disable_mm },
 		{ .key = kAOCEnableUART, .value = enable_uart },
@@ -2630,7 +2636,14 @@ bool aoc_create_dma_buf_heaps(struct aoc_prvdata *prvdata)
 	phys_addr_t base = prvdata->dram_resource.start + resource_size(&prvdata->dram_resource);
 
 	if (resource_size(&prvdata->dram_resource) < SENSOR_DIRECT_HEAP_SIZE +
-			PLAYBACK_HEAP_SIZE + CAPTURE_HEAP_SIZE)
+			PLAYBACK_HEAP_SIZE + CAPTURE_HEAP_SIZE + TPU_OFFLOAD_HEAP_SIZE)
+		return false;
+
+	base -= TPU_OFFLOAD_HEAP_SIZE;
+	prvdata->tpu_offload_heap = aoc_create_dma_buf_heap(prvdata, "tpu_offload_heap",
+						       base, TPU_OFFLOAD_HEAP_SIZE);
+	prvdata->tpu_offload_heap_base = base;
+	if (IS_ERR(prvdata->tpu_offload_heap))
 		return false;
 
 	base -= SENSOR_DIRECT_HEAP_SIZE;
@@ -2763,6 +2776,7 @@ static int aoc_platform_probe(struct platform_device *pdev)
 	int rc = 0;
 	int i;
 	bool gsa_enabled;
+	char ws_name[AOC_WAKELOCK_NAME_LENGTH];
 
 	if (aoc_platform_device != NULL) {
 		dev_err(dev,
@@ -2982,7 +2996,8 @@ static int aoc_platform_probe(struct platform_device *pdev)
 
 	ret = sysfs_create_groups(&dev->kobj, aoc_groups);
 
-	prvdata->wakelock = wakeup_source_register(prvdata->dev, dev_name(prvdata->dev));
+	scnprintf(ws_name, sizeof(ws_name), "%s%s", AOC_WAKELOCK_PREFIX, dev_name(prvdata->dev));
+	prvdata->wakelock = wakeup_source_register(prvdata->dev, ws_name);
 
 	pr_debug("platform_probe matched\n");
 

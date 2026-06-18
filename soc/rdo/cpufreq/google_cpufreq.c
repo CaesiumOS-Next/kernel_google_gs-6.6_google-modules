@@ -656,7 +656,10 @@ static void unregister_vote_track(void)
 
 	for (int i = 0; i < nr_cpu_ids; ++i) {
 		policy = cpufreq_cpu_get(i);
-		if (i != policy->cpu) {
+		if (!policy)
+			continue;
+
+		if (policy->cpu != i) {
 			cpufreq_cpu_put(policy);
 			continue;
 		}
@@ -725,7 +728,14 @@ static int google_cpufreq_platform_probe(struct platform_device *pdev)
 
 	for (i = 0; i < nr_cpu_ids; ++i) {
 		policy = cpufreq_cpu_get(i);
-		if (i != policy->cpu) {
+		if (!policy) {
+			dev_info(dev,
+				 "cpufreq_cpu_get() for cpu (%d) doesn't return policy\n",
+				 i);
+			continue;
+		}
+
+		if (policy->cpu != i) {
 			cpufreq_cpu_put(policy);
 			continue;
 		}

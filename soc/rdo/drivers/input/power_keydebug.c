@@ -22,6 +22,7 @@
 #include <linux/sysrq.h>
 #include <linux/reboot.h>
 #include <soc/google/google-cdd.h>
+#include <linux/kernel-top.h>
 
 #define POWER_KEYDEBUG_NAME "power-keydebug"
 #define FORCE_POWER_DELAY 18000 /* millisecond */
@@ -30,9 +31,9 @@ struct long_press_work {
 	struct delayed_work dwork;
 	bool is_pressed;
 	spinlock_t lock;
+	struct kernel_top_context *ktop;
+	struct device *dev;
 };
-
-static struct long_press_work *power_button_work;
 
 static void long_press_work_func(struct work_struct *work)
 {
@@ -42,7 +43,10 @@ static void long_press_work_func(struct work_struct *work)
 	pr_debug("Power key long_press_work_func pressed=%d\n", button_work->is_pressed);
 	if (button_work->is_pressed) {
 		pr_info("Power key worker trigger\n");
-
+		if (button_work->ktop) {
+			kernel_top_print(button_work->ktop);
+			kernel_top_destroy(button_work->ktop);
+		}
 		pr_info("=======     Show D state tasks++   =======\n");
 		handle_sysrq('w');
 		pr_info("=======     Show D state tasks--   =======\n");
@@ -50,6 +54,12 @@ static void long_press_work_func(struct work_struct *work)
 		emergency_restart();
 	}
 }
+
+static struct long_press_work power_button_work = {
+	.dwork = __DELAYED_WORK_INITIALIZER(power_button_work.dwork, long_press_work_func, 0),
+	.is_pressed = false,
+	.lock = __SPIN_LOCK_UNLOCKED(power_button_work.lock),
+};
 
 // Called for each event from a connected input_dev
 static void key_power_handler_event(struct input_handle *handle, unsigned int type,
@@ -59,16 +69,16 @@ static void key_power_handler_event(struct input_handle *handle, unsigned int ty
 		unsigned long flags;
 		pr_devel("Power key event via input_handler: type=%u, code=%u, value=%d from %s\n",
 			type, code, value, handle->dev->name);
-		spin_lock_irqsave(&power_button_work->lock, flags);
-		if (value && !power_button_work->is_pressed) {
-			power_button_work->is_pressed = true;
-			schedule_delayed_work(&power_button_work->dwork,
+		spin_lock_irqsave(&power_button_work.lock, flags);
+		if (value && !power_button_work.is_pressed) {
+			power_button_work.is_pressed = true;
+			schedule_delayed_work(&power_button_work.dwork,
 						msecs_to_jiffies(FORCE_POWER_DELAY));
-		} else if (!value && power_button_work->is_pressed) {
-			power_button_work->is_pressed = false;
-			cancel_delayed_work_sync(&power_button_work->dwork);
+		} else if (!value && power_button_work.is_pressed) {
+			power_button_work.is_pressed = false;
+			cancel_delayed_work(&power_button_work.dwork);
 		}
-		spin_unlock_irqrestore(&power_button_work->lock, flags);
+		spin_unlock_irqrestore(&power_button_work.lock, flags);
 	}
 }
 
@@ -145,21 +155,13 @@ static int power_keydebug_probe(struct platform_device *pdev)
 {
 	int ret;
 	pr_info("Power key debug probe\n");
+	power_button_work.dev = &pdev->dev;
+	kernel_top_init(power_button_work.dev, &power_button_work.ktop);
 	ret = input_register_handler(&key_power_handler);
 	if (ret) {
 		pr_err("Failed to register input handler: %d\n", ret);
 		return ret;
 	}
-	power_button_work = kmalloc(sizeof(*power_button_work), GFP_KERNEL);
-	if (!power_button_work) {
-		pr_err("Failed to allocate memory for countdown work\n");
-		return -ENOMEM;
-	}
-
-	// Initialize the delayed work
-	INIT_DELAYED_WORK(&power_button_work->dwork, long_press_work_func);
-	power_button_work->is_pressed = false;
-	spin_lock_init(&power_button_work->lock);
 
 	return ret;
 }
@@ -167,17 +169,11 @@ static int power_keydebug_probe(struct platform_device *pdev)
 static int power_keydebug_remove(struct platform_device *pdev)
 {
 	input_unregister_handler(&key_power_handler);
-
-	if (power_button_work) {
-		if (cancel_delayed_work_sync(&power_button_work->dwork)) {
-			pr_info("Power button work cancelled before it could run again.\n");
-		} else {
-			pr_info("Power button work was not pending or finished executing.\n");
-		}
-		kfree(power_button_work);
-		power_button_work = NULL;
+	cancel_delayed_work_sync(&power_button_work.dwork);
+	if (power_button_work.ktop) {
+		kernel_top_destroy(power_button_work.ktop);
+		power_button_work.ktop = NULL;
 	}
-
 	return 0;
 }
 

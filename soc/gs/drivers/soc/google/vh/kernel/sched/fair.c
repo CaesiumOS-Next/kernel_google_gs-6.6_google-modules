@@ -17,7 +17,6 @@
 #include <uapi/linux/sched/types.h>
 
 #include "sched_priv.h"
-#include "sched_events.h"
 
 #if IS_ENABLED(CONFIG_PIXEL_EM)
 #include "../../include/pixel_em.h"
@@ -468,8 +467,10 @@ static inline unsigned long cpu_load(struct rq *rq)
 	return cfs_rq_load_avg(&rq->cfs);
 }
 
-/* Copied from 6.1 GKI, which is effectively the same as the refactored one on 6.6 */
-unsigned long cpu_util_cfs(int cpu)
+/*
+ * Returns actual util of the cpu without capping by cpu capacity.
+ */
+static inline unsigned long __cpu_util_cfs(int cpu)
 {
 	struct cfs_rq *cfs_rq;
 	unsigned long util;
@@ -482,6 +483,14 @@ unsigned long cpu_util_cfs(int cpu)
 			     READ_ONCE(cfs_rq->avg.util_est));
 	}
 
+	return util;
+}
+
+/* Copied from 6.1 GKI, which is effectively the same as the refactored one on 6.6 */
+unsigned long cpu_util_cfs(int cpu)
+{
+	unsigned long util = __cpu_util_cfs(cpu);
+
 	return min(util, capacity_orig_of(cpu));
 }
 
@@ -489,11 +498,6 @@ unsigned long cpu_util_cfs(int cpu)
 /*                       New Code Section                                    */
 /*****************************************************************************/
 // This part of code is new for this kernel, which are mostly helper functions.
-static inline bool get_task_spreading(struct task_struct *p)
-{
-	return vg[get_vendor_group(p)].task_spreading;
-}
-
 static inline bool get_auto_prefer_fit(struct task_struct *p)
 {
 	return vg[get_vendor_group(p)].auto_prefer_fit && p->prio <= THREAD_PRIORITY_TOP_APP_BOOST;
@@ -1127,14 +1131,6 @@ static bool task_fits_capacity(struct task_struct *p, int cpu)
 	if (cpu >= pixel_cluster_start_cpu[pixel_cluster_num - 1])
 		return true;
 
-	/*
-	 * Ignore uclamp if spreading the task
-	 */
-	if (get_task_spreading(p)) {
-		uclamp_min = uclamp_none(UCLAMP_MIN);
-		uclamp_max = uclamp_none(UCLAMP_MAX);
-	}
-
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)
 	/* clamp task utilization against its per-cpu group limit */
 	task_util = min_t(unsigned long, task_util, cap_scale(get_task_group_throttle(p),
@@ -1622,9 +1618,11 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 	int least_loaded_cpu = -1;
 	struct cpuidle_state *idle_state;
 	unsigned long unimportant_max_spare_cap = 0, idle_max_cap = 0;
+	unsigned long max_spare_cap_nr_running = UINT_MAX;
 	unsigned long cfs_load, min_load = ULONG_MAX;
 	bool prefer_fit = false;
 	const cpumask_t *preferred_idle_mask;
+	unsigned long task_util_capped = min(task_util_est(p), p_util_max);
 
 	rd = cpu_rq(this_cpu)->rd;
 
@@ -1652,6 +1650,7 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 		pd_most_unimportant_cpu = -1;
 		pd_best_packing_cpu = -1;
 		pd_least_cpu_importantce = SCHED_CAPACITY_SCALE << 2;
+		unsigned long rq_nr_running = 0;
 
 		for_each_cpu_and(i, perf_domain_span(pd), valid_mask ? valid_mask : p->cpus_ptr) {
 			if (i >= pixel_cpu_num)
@@ -1664,8 +1663,17 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 			is_idle = cpu_is_idle(i);
 			cpu_importance = READ_ONCE(cpu_rq(i)->uclamp[UCLAMP_MIN].value) +
 					   READ_ONCE(cpu_rq(i)->uclamp[UCLAMP_MAX].value);
-			wake_util = cpu_util_without(i, p, capacity);
 			next_util = cpu_util_next(i, p, i);
+
+			/*
+			 * When push lb is enabled be more stringent to allow
+			 * better distribution of tasks.
+			 */
+			if (static_branch_likely(&enable_ptick))
+				wake_util = next_util;
+			else
+				wake_util = cpu_util_without(i, p, capacity);
+
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)
 			group_capacity = cap_scale(get_task_group_throttle(p),
 					   arch_scale_cpu_capacity(i));
@@ -1683,6 +1691,10 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 #endif
 			task_fits = task_fits_capacity(p, i);
 			exit_lat = 0;
+
+			rq_nr_running = cpu_rq(i)->nr_running;
+			if (task_current(cpu_rq(i), p) || (task_on_rq_queued(p) && i == prev_cpu))
+				rq_nr_running--;
 
 			if (is_idle) {
 				idle_state = idle_get_state(cpu_rq(i));
@@ -1846,20 +1858,48 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 					cpumask_set_cpu(i, &cm[MAX_SPARE_CAP]);
 				} else if (spare_cap == target_max_spare_cap) {
 					/*
-					 * When spare capacity is the same, clear the choice
-					 * randomly based on task_util.
+					 * Pick the CPU with least amount of
+					 * running tasks first.
 					 */
-					if ((task_util_est(p) % 2))
+					if (rq_nr_running < max_spare_cap_nr_running) {
+						max_spare_cap_nr_running = rq_nr_running;
 						cpumask_clear(&cm[MAX_SPARE_CAP]);
-					cpumask_set_cpu(i, &cm[MAX_SPARE_CAP]);
+						cpumask_set_cpu(i, &cm[MAX_SPARE_CAP]);
+					} else if (rq_nr_running == max_spare_cap_nr_running) {
+						int most_spare_cap_cpu = cpumask_any(&cm[MAX_SPARE_CAP]);
+						unsigned long cap_i, cap_spare;
+
+						cap_i = capacity_of(i);
+						cap_spare = capacity_of(most_spare_cap_cpu);
+
+						if (cap_i > cap_spare) {
+							cpumask_clear(&cm[MAX_SPARE_CAP]);
+							cpumask_set_cpu(i, &cm[MAX_SPARE_CAP]);
+						}
+					}
 				}
 			} else { /* Below path is for non-prefer idle case */
 				if (spare_cap > target_max_spare_cap) {
 					target_max_spare_cap = spare_cap;
 					most_spare_cap_cpu = i;
-				} else if (spare_cap && spare_cap == target_max_spare_cap &&
-					   task_util_est(p) % 2) {
-					most_spare_cap_cpu = i;
+				} else if (spare_cap == target_max_spare_cap) {
+					/*
+					 * Pick the CPU with least amount of
+					 * running tasks first.
+					 */
+					if (rq_nr_running < max_spare_cap_nr_running) {
+						max_spare_cap_nr_running = rq_nr_running;
+						most_spare_cap_cpu = i;
+					} else if (rq_nr_running == max_spare_cap_nr_running) {
+
+						unsigned long cap_i, cap_spare;
+
+						cap_i = capacity_of(i);
+						cap_spare = capacity_of(most_spare_cap_cpu);
+
+						if (cap_i > cap_spare)
+							most_spare_cap_cpu = i;
+					}
 				}
 
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)
@@ -1874,12 +1914,12 @@ int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu,
 					continue;
 
 #if IS_ENABLED(CONFIG_USE_GROUP_THROTTLE)
-				if (spare_cap < min_t(unsigned long, task_util_est(p),
+				if (spare_cap < min_t(unsigned long, task_util_capped,
 				    cap_scale(get_task_group_throttle(p),
 					      arch_scale_cpu_capacity(i))))
 					continue;
 #else
-				if (spare_cap < task_util_est(p))
+				if (spare_cap < task_util_capped)
 					continue;
 #endif
 
@@ -2110,6 +2150,11 @@ void rvh_cpu_overutilized_pixel_mod(void *data, int cpu, int *overutilized)
 	unsigned long rq_util_min = uclamp_rq_get(cpu_rq(cpu), UCLAMP_MIN);
 	unsigned long rq_util_max = uclamp_rq_get(cpu_rq(cpu), UCLAMP_MAX);
 
+	if (static_branch_likely(&enable_ptick)) {
+		*overutilized = 0;
+		return;
+	}
+
 	*overutilized = !util_fits_cpu(cpu_util(cpu), rq_util_min, rq_util_max, cpu);
 }
 
@@ -2262,11 +2307,11 @@ uclamp_tg_restrict_pixel_mod(struct task_struct *p, enum uclamp_id clamp_id)
 	if (clamp_id == UCLAMP_MIN && in_suspend_resume)
 		value = max(value, vendor_sched_suspend_resume_boost);
 
-	// For uclamp min, if task has a valid per-task setting that is lower than or equal to its
-	// group value, increase the final uclamp value by 1. This would have effect only on
+	// For non-zero uclamp min, if task has a valid per-task setting that is lower than or equal
+	// to its group value, increase the final uclamp value by 1. This would have effect only on
 	// importance metrics which is used in task placement, and little effect on cpufreq.
 	if (clamp_id == UCLAMP_MIN && uc_req.value <= max(tg_min, vnd_min) && uc_req.user_defined
-		&& value < SCHED_CAPACITY_SCALE)
+		&& value < SCHED_CAPACITY_SCALE && uc_req.value != 0)
 		value = value + 1;
 
 	if (clamp_id == UCLAMP_MAX && !get_vendor_task_struct(p)->in_feec)
@@ -2314,7 +2359,6 @@ void initialize_vendor_group_property(void)
 	for (i = 0; i < VG_MAX; i++) {
 		vg[i].prefer_idle = false;
 		vg[i].prefer_high_cap = false;
-		vg[i].task_spreading = false;
 		vg[i].auto_prefer_fit = false;
 #if !IS_ENABLED(CONFIG_USE_VENDOR_GROUP_UTIL)
 		vg[i].group_throttle = max_val;
@@ -2622,7 +2666,8 @@ static inline void uclamp_fork_pixel_mod(struct task_struct *p, struct task_stru
 {
 	enum uclamp_id clamp_id;
 
-	if (likely(!get_adpf(orig, false) && !get_power_efficiency(p)))
+	if (likely(!get_adpf(orig, false) && !get_power_efficiency(p) &&
+	    !get_vendor_boost(orig)))
 		return;
 
 	for_each_clamp_id(clamp_id) {
@@ -2845,6 +2890,9 @@ void sched_newidle_balance_pixel_mod(void *data, struct rq *this_rq, struct rq_f
 	struct vendor_rq_struct *this_vrq = get_vendor_rq_struct(this_rq);
 	struct vendor_rq_struct *src_vrq;
 
+	if (static_branch_likely(&enable_ptick))
+		return;
+
 	/*
 	 * There is a task waiting to run. No need to search for one.
 	 * Return 0; the task will be enqueued when switching to idle.
@@ -2888,14 +2936,6 @@ void sched_newidle_balance_pixel_mod(void *data, struct rq *this_rq, struct rq_f
 		update_rq_clock(src_rq);
 
 		num_adpf_tasks = atomic_read(&src_vrq->num_adpf_tasks);
-
-		if (trace_clock_set_rate_enabled()) {
-			char trace_name[32] = {0};
-
-			scnprintf(trace_name, sizeof(trace_name), "lb_adpf_cpu%d", src_rq->cpu);
-			trace_clock_set_rate(trace_name, num_adpf_tasks,
-				raw_smp_processor_id());
-		}
 
 		/*
 		 * Don't bother if no latency sensitive tasks on src_rq or if
@@ -3112,6 +3152,8 @@ void rvh_dequeue_task_fair_pixel_mod(void *data, struct rq *rq, struct task_stru
 	if (!static_branch_unlikely(&enqueue_dequeue_ready))
 		return;
 
+	fair_remove_pushable_task(rq, p);
+
 	vp->state_dequeued = READ_ONCE(p->__state);
 
 	if (!task_on_rq_migrating(p) && !(vp->state_dequeued & TASK_UNINTERRUPTIBLE)) {
@@ -3282,3 +3324,249 @@ void update_task_real_cap(struct task_struct *p)
 	}
 }
 EXPORT_SYMBOL_GPL(update_task_real_cap);
+
+static inline bool task_stuck_on_cpu(struct task_struct *p, int cpu)
+{
+	unsigned long max_capa, util, uclamp_max;
+
+	/* Only consider tasks capped by uclamp_max */
+	uclamp_max = uclamp_eff_value_pixel_mod(p, UCLAMP_MAX);
+	if (uclamp_max == SCHED_CAPACITY_SCALE)
+		return false;
+
+	max_capa = min(capacity_of(cpu), uclamp_max);
+	util = max(task_util_est(p), task_runnable(p));
+	util = min(util, SCHED_CAPACITY_SCALE);
+
+	/*
+	 * Return true only if the task might not sleep/wakeup because of a low
+	 * compute capacity. Tasks, which wake up regularly, will be handled by
+	 * feec().
+	 */
+	return (util > max_capa);
+}
+
+static inline bool is_rd_overutilized(struct root_domain *rd)
+{
+	return !sched_energy_enabled() || READ_ONCE(rd->overutilized);
+}
+
+static inline bool is_rq_overloaded(struct rq *rq)
+{
+	return rq->nr_running > 1 && __cpu_util_cfs(cpu_of(rq)) > SCHED_CAPACITY_SCALE;
+}
+
+static inline bool is_latency_overloaded(struct task_struct *p, struct rq *rq)
+{
+	struct vendor_rq_struct *vrq = get_vendor_rq_struct(rq);
+
+	if (get_adpf(p, true) && atomic_read(&vrq->num_adpf_tasks) > 1)
+		return true;
+
+	return false;
+}
+
+static inline bool sched_energy_push_task(struct task_struct *p, struct rq *rq)
+{
+	if (p->nr_cpus_allowed == 1)
+		return false;
+
+	if (in_suspend_resume)
+		return false;
+
+	if (is_latency_overloaded(p, rq))
+		return true;
+
+	if (!task_fits_capacity(p, cpu_of(rq)))
+		return true;
+
+	if (is_rd_overutilized(rq->rd))
+		return false;
+
+	if (task_stuck_on_cpu(p, cpu_of(rq)))
+		return true;
+
+	if (is_rq_overloaded(rq))
+		return true;
+
+	return false;
+}
+
+int active_load_balance_cpu_stop(void *data);
+
+inline void check_pushable_task(struct task_struct *p, struct rq *rq)
+{
+	int new_cpu, cpu = cpu_of(rq);
+
+	if (!sched_energy_enabled())
+		return;
+
+	if (WARN_ON(!p))
+		return;
+
+	if (WARN_ON(!task_current(rq, p)))
+		return;
+
+	if (is_migration_disabled(p))
+		return;
+
+	/* If there are several task, wait for being put back */
+	if (rq->nr_running > 1)
+		return;
+
+	if (!sched_energy_push_task(p, rq))
+		return;
+
+	get_vendor_task_struct(p)->in_feec = true;
+	new_cpu = find_energy_efficient_cpu(p, cpu, NULL);
+	get_vendor_task_struct(p)->in_feec = false;
+
+	if (new_cpu == cpu || !cpu_active(new_cpu))
+		return;
+
+	/*
+	 * ->active_balance synchronizes accesses to
+	 * ->active_balance_work.  Once set, it's cleared
+	 * only after active load balance is finished.
+	 */
+	if (!rq->active_balance) {
+		rq->active_balance = 1;
+		rq->push_cpu = new_cpu;
+	} else
+		return;
+
+	raw_spin_rq_unlock(rq);
+	stop_one_cpu_nowait(cpu,
+		active_load_balance_cpu_stop, rq,
+		&rq->active_balance_work);
+	raw_spin_rq_lock(rq);
+}
+
+static inline int has_pushable_tasks(struct rq *rq)
+{
+	struct vendor_rq_struct *vrq = get_vendor_rq_struct(rq);
+
+	return !plist_head_empty(&vrq->pushable_tasks);
+}
+
+static struct task_struct *pick_next_pushable_fair_task(struct rq *rq)
+{
+	struct vendor_rq_struct *vrq = get_vendor_rq_struct(rq);
+	struct task_struct *p;
+
+	if (!has_pushable_tasks(rq))
+		return NULL;
+
+	p = plist_first_entry(&vrq->pushable_tasks,
+			      struct task_struct, pushable_tasks);
+
+	WARN_ON_ONCE(rq->cpu != task_cpu(p));
+	WARN_ON_ONCE(task_current(rq, p));
+	WARN_ON_ONCE(p->nr_cpus_allowed <= 1);
+	WARN_ON_ONCE(!task_on_rq_queued(p));
+
+	/*
+	 * Remove task from the pushable list as we try only once after that
+	 * the task has been put back in enqueued list.
+	 */
+	plist_del(&p->pushable_tasks, &vrq->pushable_tasks);
+
+	return p;
+}
+
+/*
+ * See if the non running fair tasks on this rq can be sent on other CPUs
+ * that fits better with their profile.
+ */
+static bool push_fair_task(struct rq *rq)
+{
+	struct task_struct *next_task;
+	int prev_cpu, new_cpu;
+	struct rq *new_rq;
+
+	next_task = pick_next_pushable_fair_task(rq);
+	if (!next_task)
+		return false;
+
+	if (is_migration_disabled(next_task))
+		return true;
+
+	/*
+	 * Is it still pushable? We might have done enough that it is no longer
+	 * pushable.
+	 */
+	if (!sched_energy_push_task(next_task, rq))
+		return true;
+
+	/* We might release rq lock */
+	get_task_struct(next_task);
+
+	prev_cpu = rq->cpu;
+
+	get_vendor_task_struct(next_task)->in_feec = true;
+	new_cpu = find_energy_efficient_cpu(next_task, prev_cpu, NULL);
+	get_vendor_task_struct(next_task)->in_feec = false;
+
+	if (new_cpu == prev_cpu)
+		goto out;
+
+	new_rq = cpu_rq(new_cpu);
+
+	if (double_lock_balance(rq, new_rq)) {
+		/* The task has already migrated in between */
+		if (task_cpu(next_task) != rq->cpu) {
+			double_unlock_balance(rq, new_rq);
+			goto out;
+		}
+
+		deactivate_task(rq, next_task, 0);
+		set_task_cpu(next_task, new_cpu);
+		activate_task(new_rq, next_task, 0);
+
+		resched_curr(new_rq);
+
+		double_unlock_balance(rq, new_rq);
+	}
+
+out:
+	put_task_struct(next_task);
+
+	return true;
+}
+
+static void push_fair_tasks(struct rq *rq)
+{
+	/* push_fair_task() will return true if it moved a fair task */
+	while (push_fair_task(rq))
+		;
+}
+
+static DEFINE_PER_CPU(struct balance_callback, fair_push_head);
+
+inline void fair_queue_pushable_tasks(struct rq *rq)
+{
+	if (!sched_energy_enabled() || !has_pushable_tasks(rq))
+		return;
+
+	queue_balance_callback(rq, &per_cpu(fair_push_head, rq->cpu), push_fair_tasks);
+}
+void fair_remove_pushable_task(struct rq *rq, struct task_struct *p)
+{
+	struct vendor_rq_struct *vrq = get_vendor_rq_struct(rq);
+
+	if (sched_energy_enabled())
+		plist_del(&p->pushable_tasks, &vrq->pushable_tasks);
+}
+
+void fair_add_pushable_task(struct rq *rq, struct task_struct *p)
+{
+	struct vendor_rq_struct *vrq = get_vendor_rq_struct(rq);
+
+	if (sched_energy_enabled() && task_on_rq_queued(p)) {
+		if (sched_energy_push_task(p, rq)) {
+			plist_del(&p->pushable_tasks, &vrq->pushable_tasks);
+			plist_node_init(&p->pushable_tasks, p->prio);
+			plist_add(&p->pushable_tasks, &vrq->pushable_tasks);
+		}
+	}
+}

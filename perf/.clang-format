@@ -64,11 +64,14 @@ DisableFormat: false
 ExperimentalAutoDetectBinPacking: false
 FixNamespaceComments: false
 
+ForEachMacros:
+# While technically not a for each macro, guard macros should follow the similar
+# bracing rules.
+  - 'scoped_guard'
 # Taken from:
 #   git grep -h '^#define [^[:space:]]*for_each[^[:space:]]*(' include/ tools/ \
 #   | sed "s,^#define \([^[:space:]]*for_each[^[:space:]]*\)(.*$,  - '\1'," \
 #   | LC_ALL=C sort -u
-ForEachMacros:
   - '__ata_qc_for_each'
   - '__bio_for_each_bvec'
   - '__bio_for_each_segment'

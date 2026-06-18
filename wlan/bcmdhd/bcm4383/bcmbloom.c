@@ -1,7 +1,7 @@
 /*
  * Bloom filter support
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -21,6 +21,11 @@
  * <<Broadcom-WL-IPTag/Dual:>>
  */
 
+#if defined(__linux__) && !defined(BCMDRIVER)
+// for 'uint'
+#define USE_TYPEDEF_DEFAULTS
+#endif
+
 #include <typedefs.h>
 #include <bcmdefs.h>
 
@@ -38,6 +43,9 @@
 #include <osl.h>
 #include <bcmutils.h>
 #else /* !BCMDRIVER */
+#if defined(__linux__) && !defined(BCMFUZZ)
+#include <strings.h>
+#endif
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -56,8 +64,8 @@ struct bcm_bloom_filter {
 	void *cb_ctx;
 	uint max_hash;
 	bcm_bloom_hash_t *hash;	/* array of hash functions */
-	uint filter_size; 		/* in bytes */
-	uint8 *filter; 			/* can be NULL for validate only */
+	uint filter_size;		/* in bytes */
+	uint8 *filter;			/* can be NULL for validate only */
 };
 
 /* public interface */

@@ -1,7 +1,7 @@
 /*
  * Wifi Virtual Interface implementaion
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -64,12 +64,6 @@
 	((RADIO_PWRSAVE_MAJOR_VER << RADIO_PWRSAVE_MAJOR_VER_SHIFT)| RADIO_PWRSAVE_MINOR_VER)
 #endif /* SUPPORT_AP_RADIO_PWRSAVE */
 
-#ifdef WLTDLS
-#define TDLS_TUNNELED_PRB_REQ	"\x7f\x50\x6f\x9a\04"
-#define TDLS_TUNNELED_PRB_RESP	"\x7f\x50\x6f\x9a\05"
-#define TDLS_MAX_IFACE_FOR_ENABLE 1
-#endif /* WLTDLS */
-
 /* HE flag defines */
 #define WL_HE_FEATURES_HE_AP		0x8
 #define WL_HE_FEATURES_HE_P2P		0x20
@@ -77,6 +71,17 @@
 
 /* customer requested aggr roaming value */
 #define WL_AGGR_ROAM_TRIGGER_VALUE      (-65)
+
+/* EHT defines */
+#define WL_EHT_FEATURES_STA_DISABLE	0x4u
+#define DHD_DISABLE_STA_EHT		BIT(0)
+#define DHD_ENABLE_STA_EHT		BIT(1)
+#define DHD_ENABLE_AP_EHT		BIT(2)
+
+/* EHT Capability Bitmask */
+#define EHT_FEATURES_EHT_AP         BIT(0)
+#define EHT_FEATURES_CRIT_UPDATE    BIT(1)
+
 
 extern bool wl_cfg80211_check_vif_in_use(struct net_device *ndev);
 
@@ -94,6 +99,15 @@ extern int wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg,
 #define CTG_TOKEN_IDX 13
 #define PKT_TOKEN_IDX 15
 #define IDLE_TOKEN_IDX 12
+
+struct wl_dump_survey {
+	u32 obss;
+	u32 ibss;
+	u32 no_ctg;
+	u32 no_pckt;
+	u32 tx;
+	u32 idle;
+};
 #endif /* WL_SUPPORT_ACS */
 
 extern s32 wl_cfg80211_dfs_ap_move(struct net_device *ndev, char *data,
@@ -129,11 +143,6 @@ extern s32 wl_cfg80211_handle_if_role_conflict(struct bcm_cfg80211 *cfg, wl_ifty
 #endif /* WL_IFACE_MGMT */
 
 extern s32 wl_get_vif_macaddr(struct bcm_cfg80211 *cfg, u16 wl_iftype, u8 *mac_addr);
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0))
-extern s32 wl_release_vif_macaddr(struct bcm_cfg80211 *cfg, const u8 *mac_addr, u16 wl_iftype);
-#else
-extern s32 wl_release_vif_macaddr(struct bcm_cfg80211 *cfg, u8 *mac_addr, u16 wl_iftype);
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0) */
 extern s32 wl_cfgvif_del_if(struct bcm_cfg80211 *cfg, struct net_device *primary_ndev,
 	struct wireless_dev *wdev, char *name);
 
@@ -213,8 +222,6 @@ extern s32 wl_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev, unsi
 #else
 extern s32 wl_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev);
 #endif /* LINUX_VERSION_CODE > KERNEL_VERSION(5, 19, 0) || WL_MLO_BKPORT */
-extern s32 wl_cfg80211_change_beacon(struct wiphy *wiphy, struct net_device *dev,
-	struct cfg80211_beacon_data *info);
 #else
 extern s32 wl_cfg80211_add_set_beacon(struct wiphy *wiphy, struct net_device *dev,
 	struct beacon_parameters *info);
@@ -249,8 +256,13 @@ wl_cfg80211_add_virtual_iface(struct wiphy *wiphy,
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 12, 0) */
 	struct vif_params *params);
 extern s32 wl_cfg80211_del_virtual_iface(struct wiphy *wiphy, bcm_struct_cfgdev *cfgdev);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0))
+extern s32 wl_cfg80211_change_beacon(struct wiphy *wiphy, struct net_device *dev,
+	struct cfg80211_ap_update *info);
+#else
 extern s32 wl_cfg80211_change_beacon(struct wiphy *wiphy, struct net_device *dev,
 	struct cfg80211_beacon_data *info);
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 7, 0) */
 
 extern s32 wl_get_auth_assoc_status(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 	const wl_event_msg_t *e, void *data);
@@ -285,10 +297,8 @@ chanspec_t wl_cfg80211_get_ap_bw_limited_chspec(struct bcm_cfg80211 *cfg,
 	uint32 band, chanspec_t candidate);
 int wl_cfg80211_set_softap_bw(struct bcm_cfg80211 *cfg, uint32 band, uint32 limit);
 #endif /* LIMIT_AP_BW */
-#ifdef WL_IDAUTH
 extern s32 wl_cfgvif_scb_authorized(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgdev,
 	const wl_event_msg_t *event, void *data);
-#endif /* WL_IDAUTH */
 #ifdef WL_MLO
 extern void wl_cfgvif_mlo_update_linkaddr(wl_mlo_config_v1_t *mlo_config);
 extern s32
@@ -297,9 +307,10 @@ wl_cfg80211_ml_ap_link_add(struct bcm_cfg80211 *cfg, struct wireless_dev *wdev,
 extern bool wl_cfgvif_mlo_is_primary_link(struct bcm_cfg80211 *cfg, u8 ifidx, u8 bsscfgidx);
 #endif /* WL_MLO */
 
-#ifdef BCN_PROT_AP
-s32 wl_cfgvif_set_bcnprot_mode(struct net_device *ndev, struct bcm_cfg80211 *cfg, s32 bssidx);
-#endif
+#if defined(BCN_PROT_AP) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0))
+s32 wl_cfgvif_set_bcnprot_mode(struct net_device *ndev,
+	struct bcm_cfg80211 *cfg, s32 bssidx, u32 bcn_prot);
+#endif /* BCN_PROT_AP && (LINUX_VER >= 5,7) */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
 void
@@ -317,8 +328,8 @@ s32 wl_cfgvif_get_channel(struct wiphy *wiphy,
 s32 wl_cfgvif_ml_link_update(struct bcm_cfg80211 *cfg, struct wireless_dev *wdev,
 	const wl_event_msg_t *e, void *data, enum wl_mlo_link_update state);
 extern s32 wl_cfgvif_persta_multilink(struct bcm_cfg80211 *cfg,
-		struct net_device *dev, u8 enable);
-extern s32 wl_cfgvif_set_multi_link(struct bcm_cfg80211 *cfg, u8 enable);
+		struct net_device *dev, bool enable);
+extern s32 wl_cfgvif_set_multi_link(struct bcm_cfg80211 *cfg, bool enable);
 extern s32 wl_cfgvif_get_multilink_status(struct bcm_cfg80211 *cfg,
 		struct net_device *dev, u8 *status);
 bool wl_cfgvif_bssid_match_found(struct bcm_cfg80211 *cfg, struct wireless_dev *wdev, u8 *mac_addr);
@@ -335,6 +346,12 @@ extern s32 wl_cfgvif_get_ml_scc_channel_array(struct bcm_cfg80211 *cfg,
 #if defined(KEEP_ALIVE) && defined(OEM_ANDROID)
 extern s32 wl_cfgvif_apply_default_keep_alive(struct net_device *ndev, struct bcm_cfg80211 *cfg);
 #endif /* KEEP_ALIVE && OEM_ANDROID */
+
+extern s32 wl_cfgvif_get_eht_features(struct net_device *dev, u32 *eht_feature_val);
+extern s32 wl_cfgvif_set_eht_features(struct net_device *dev, struct bcm_cfg80211 *cfg,
+	u32 eht_mask);
+
+extern void wl_cfgvif_sta_multilink_config(struct bcm_cfg80211 *cfg, wl_assoc_state_t assoc_state);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
 extern s32 wl_cfgvif_update_assoc_fail_status(struct bcm_cfg80211 *cfg,
 	struct net_device *ndev, const wl_event_msg_t *e);
@@ -346,4 +363,10 @@ extern s32 wl_cfgvif_interface_ops(struct bcm_cfg80211 *cfg,
 extern void wl_cfgvif_enable_aggressive_roam(struct bcm_cfg80211 *cfg, struct net_device *dev,
 	bool enable);
 #endif /* WL_AGGRESSIVE_ROAM */
+extern int wl_cfgvif_dump_survey(struct wiphy *wiphy, struct net_device *ndev,
+	int idx, struct survey_info *info);
+
+int wl_set_ant_config(struct net_device *dev, uint param);
+int wl_get_ant_config(struct net_device *dev, void *param);
+
 #endif /* _wl_cfgvif_h_ */

@@ -241,231 +241,6 @@ inline u8 to_vs_display_id(struct vs_dc *dc, struct drm_crtc *crtc)
 }
 
 #if IS_ENABLED(CONFIG_DEBUG_FS)
-static struct drm_vs_color last_crtc_crc[DC_DISPLAY_NUM];
-
-void vs_crtc_set_last_crc(u32 crtc_id, struct drm_vs_color value)
-{
-	last_crtc_crc[crtc_id].a = value.a;
-	last_crtc_crc[crtc_id].r = value.r;
-	last_crtc_crc[crtc_id].g = value.g;
-	last_crtc_crc[crtc_id].b = value.b;
-}
-
-static int vs_dc_put_display_crc_result(struct seq_file *s)
-{
-	struct drm_crtc *crtc = s->private;
-	struct vs_crtc_state *crtc_state = to_vs_crtc_state(crtc->state);
-
-	seq_printf(s, "crtc[%u]: %s\n", crtc->base.id, crtc->name);
-
-	seq_printf(s, "\tenable: %d\n", crtc_state->crc.enable);
-	seq_printf(s, "\tpos setting instructions:\n\t\tpos\t\tid\n\t\tBLD\t\t0\
-	\n\t\tPOST_PROC\t1\n\t\tOFIFO_IN\t2\n\t\tOFIFO_OUT\t3\n\t\tWB\t\t4\n");
-	seq_printf(s, "\tpos-id = %d\n", crtc_state->crc.pos);
-	if (crtc_state->crc.pos == VS_DISP_CRC_OFIFO_OUT) {
-		seq_printf(s, "\talpha-seed= [0x%x, 0x%x]\n", crtc_state->crc.seed[0].a,
-			   crtc_state->crc.seed[1].a);
-		seq_printf(s, "\tred-seed= [0x%x, 0x%x]\n", crtc_state->crc.seed[0].r,
-			   crtc_state->crc.seed[1].r);
-		seq_printf(s, "\tgreen-seed= [0x%x, 0x%x]\n", crtc_state->crc.seed[0].g,
-			   crtc_state->crc.seed[1].g);
-		seq_printf(s, "\tblue-seed= [0x%x, 0x%x]\n", crtc_state->crc.seed[0].b,
-			   crtc_state->crc.seed[1].b);
-
-		seq_printf(s, "\talpha-crc= [0x%x, 0x%x]\n", crtc_state->crc.result[0].a,
-			   crtc_state->crc.result[1].a);
-		seq_printf(s, "\tred-crc= [0x%x, 0x%x]\n", crtc_state->crc.result[0].r,
-			   crtc_state->crc.result[1].r);
-		seq_printf(s, "\tgreen-crc= [0x%x, 0x%x]\n", crtc_state->crc.result[0].g,
-			   crtc_state->crc.result[1].g);
-		seq_printf(s, "\tblue-crc= [0x%x, 0x%x]\n", crtc_state->crc.result[0].b,
-			   crtc_state->crc.result[1].b);
-	} else {
-		seq_printf(s, "\talpha-seed= [0x%x]\n", crtc_state->crc.seed[0].a);
-		seq_printf(s, "\tred-seed= [0x%x]\n", crtc_state->crc.seed[0].r);
-		seq_printf(s, "\tgreen-seed= [0x%x]\n", crtc_state->crc.seed[0].g);
-		seq_printf(s, "\tblue-seed= [0x%x]\n", crtc_state->crc.seed[0].b);
-
-		seq_printf(s, "\talpha-crc= [0x%x]\n", crtc_state->crc.result[0].a);
-		seq_printf(s, "\tred-crc= [0x%x]\n", crtc_state->crc.result[0].r);
-		seq_printf(s, "\tgreen-crc= [0x%x]\n", crtc_state->crc.result[0].g);
-		seq_printf(s, "\tblue-crc= [0x%x]\n", crtc_state->crc.result[0].b);
-	}
-
-	seq_printf(s, "\tlast-alpha-crc= [0x%x]\n", last_crtc_crc[drm_crtc_index(crtc)].a);
-	seq_printf(s, "\tlast-red-crc= [0x%x]\n", last_crtc_crc[drm_crtc_index(crtc)].r);
-	seq_printf(s, "\tlast-green-crc= [0x%x]\n", last_crtc_crc[drm_crtc_index(crtc)].g);
-	seq_printf(s, "\tlast-blue-crc= [0x%x]\n", last_crtc_crc[drm_crtc_index(crtc)].b);
-
-	return 0;
-}
-
-static ssize_t vs_dc_set_display_crc_state(struct drm_crtc *crtc, const char __user *ubuf,
-					   size_t len)
-{
-	struct vs_crtc_state *crtc_state = to_vs_crtc_state(crtc->state);
-	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
-	unsigned long value;
-	char buf[256], *cur = buf;
-
-	buf[len] = '\0';
-
-	if (!vs_crtc->funcs->set_crc)
-		return -EINVAL;
-
-	if (len > sizeof(buf) - 1)
-		return -EINVAL;
-
-	if (copy_from_user(buf, ubuf, len))
-		return -EFAULT;
-
-	cur = strstr(buf, "enable:");
-	if (cur) {
-		cur += 7;
-		value = simple_strtoul(cur, NULL, 10);
-		crtc_state->crc.enable = value;
-	} else {
-		return -EINVAL;
-	}
-
-	cur = strstr(buf, "pos:");
-	if (cur) {
-		cur += 4;
-		value = simple_strtoul(cur, NULL, 10);
-		crtc_state->crc.pos = value;
-	}
-
-	if (crtc_state->crc.pos == VS_DISP_CRC_OFIFO_OUT) {
-		cur = strstr(buf, "a-seed0:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].a = value;
-		}
-		cur = strstr(buf, "a-seed1:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[1].a = value;
-		}
-
-		cur = strstr(buf, "r-seed0:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].r = value;
-		}
-		cur = strstr(buf, "r-seed1:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[1].r = value;
-		}
-
-		cur = strstr(buf, "g-seed0:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].g = value;
-		}
-		cur = strstr(buf, "g-seed1:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[1].g = value;
-		}
-
-		cur = strstr(buf, "b-seed0:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].b = value;
-		}
-		cur = strstr(buf, "b-seed1:");
-		if (cur) {
-			cur += 8;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[1].b = value;
-		}
-	} else {
-		cur = strstr(buf, "a-seed:");
-		if (cur) {
-			cur += 7;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].a = value;
-		}
-
-		cur = strstr(buf, "r-seed:");
-		if (cur) {
-			cur += 7;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].r = value;
-		}
-
-		cur = strstr(buf, "g-seed:");
-		if (cur) {
-			cur += 7;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].g = value;
-		}
-
-		cur = strstr(buf, "b-seed:");
-		if (cur) {
-			cur += 7;
-			value = simple_strtoul(cur, NULL, 16);
-			crtc_state->crc.seed[0].b = value;
-		}
-	}
-
-	return len;
-}
-
-static void vs_dc_set_display_crc(struct device *dev, struct drm_crtc *crtc,
-				  const char __user *ubuf, size_t len)
-{
-	struct vs_dc *dc = dev_get_drvdata(dev);
-	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
-	struct drm_crtc_state *state = vs_crtc->base.state;
-	struct vs_crtc_state *crtc_state = to_vs_crtc_state(state);
-	struct vs_display_info *display_info;
-	u8 hw_id;
-
-	struct dc_hw_disp_crc crc;
-
-	if (vs_dc_set_display_crc_state(crtc, ubuf, len) != len) {
-		pr_err("%s: parse crc parameter error.\n", __func__);
-		return;
-	}
-
-	display_info = (struct vs_display_info *)&dc->hw.info->displays[vs_crtc->id];
-	if (!display_info) {
-		pr_err("%s: Invalid vs_crtc index.\n", __func__);
-		return;
-	}
-
-	if (!display_info->crc) {
-		pr_info("%s: vs_crtc[%u] does not support crc.\n", __func__, vs_crtc->id);
-		return;
-	}
-
-	if (crtc_state->crc.pos > VS_DISP_CRC_OFIFO_OUT) {
-		pr_err("%s: Invalid crc pos.\n", __func__);
-		return;
-	}
-
-	hw_id = display_info->id;
-
-	crc.enable = crtc_state->crc.enable;
-	crc.pos = crtc_state->crc.pos;
-	if (!crc.enable) {
-		dc_hw_set_display_crc(&dc->hw, hw_id, &crc);
-		return;
-	}
-
-	memcpy(&crc.seed, &crtc_state->crc.seed, sizeof(crtc_state->crc.seed));
-	dc_hw_set_display_crc(&dc->hw, hw_id, &crc);
-}
-
 static int vs_dc_show_display_pattern_config(struct seq_file *s)
 {
 	struct drm_crtc *crtc = s->private;
@@ -474,6 +249,7 @@ static int vs_dc_show_display_pattern_config(struct seq_file *s)
 	seq_printf(s, "crtc[%u]: %s\n", crtc->base.id, crtc->name);
 
 	seq_printf(s, "\tenable: %d\n", crtc_state->pattern.enable);
+	seq_printf(s, "\tdelayed: %d\n", crtc_state->pattern.delayed);
 	seq_printf(s, "\tpos setting instructions:\n\t\tpos\t\tid\n\t\tBLD\t\t0\
 			\n\t\tPOST_PROC\t1\n\t\tOFIFO\t\t2\n");
 	seq_printf(s, "\tpos-id = %d\n", crtc_state->pattern.pos);
@@ -516,6 +292,15 @@ static ssize_t vs_dc_parse_display_pattern_config(struct vs_crtc_state *crtc_sta
 		crtc_state->pattern.enable = value;
 	} else {
 		return -EINVAL;
+	}
+
+	cur = strstr(buf, "delayed:");
+	if (cur) {
+		cur += 8;
+
+		value = simple_strtoul(cur, NULL, 10);
+
+		crtc_state->pattern.delayed = value;
 	}
 
 	cur = strstr(buf, "pos:");
@@ -585,21 +370,14 @@ static ssize_t vs_dc_parse_display_pattern_config(struct vs_crtc_state *crtc_sta
 	return len;
 }
 
-static void vs_dc_set_display_pattern(struct drm_crtc *crtc, const char __user *ubuf, size_t len)
+static void vs_dc_enable_display_pattern(struct drm_crtc *crtc)
 {
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct vs_dc *dc = dev_get_drvdata(vs_crtc->dev);
 	struct vs_crtc_state *crtc_state = to_vs_crtc_state(crtc->state);
 	struct vs_display_info *display_info;
-	struct dc_hw_pattern pattern = crtc_state->pattern;
+	struct dc_hw_pattern *pattern = &crtc_state->pattern;
 	u16 width = 0, height = 0;
-	u8 hw_id;
-
-	/* parse display pattern config */
-	if (vs_dc_parse_display_pattern_config(crtc_state, ubuf, len) != len) {
-		pr_err("%s: parse display pattern config error.\n", __func__);
-		return;
-	}
 
 	display_info = (struct vs_display_info *)&dc->hw.info->displays[vs_crtc->id];
 	if (!display_info) {
@@ -612,17 +390,12 @@ static void vs_dc_set_display_pattern(struct drm_crtc *crtc, const char __user *
 		return;
 	}
 
-	hw_id = display_info->id;
-
-	if (pattern.pos > VS_DISP_TP_OFIFO) {
+	if (pattern->pos > VS_DISP_TP_OFIFO) {
 		pr_err("%s: Invalid test pattern pos.\n", __func__);
 		return;
 	}
 
-	if (!pattern.enable)
-		return dc_hw_set_display_pattern(&dc->hw, hw_id, &pattern);
-
-	if (pattern.mode > VS_CURSOR_PATRN) {
+	if (pattern->mode > VS_CURSOR_PATRN) {
 		pr_err("%s: Invalid test pattern mode.\n", __func__);
 		return;
 	}
@@ -630,35 +403,64 @@ static void vs_dc_set_display_pattern(struct drm_crtc *crtc, const char __user *
 	width = dc->hw.display[vs_crtc->id].mode.h_active;
 	height = dc->hw.display[vs_crtc->id].mode.v_active;
 
-	if (pattern.mode == VS_CURSOR_PATRN &&
-	    (pattern.rect.x > width || pattern.rect.y > height)) {
+	if (pattern->mode == VS_CURSOR_PATRN &&
+	    (pattern->rect.x > width || pattern->rect.y > height)) {
 		pr_err("%s: Coordinate of cursor out of range.\n", __func__);
 		return;
-	} else if ((pattern.mode == VS_COLOR_BAR_H || pattern.mode == VS_RMAP_H) &&
-		   pattern.rect.h > height) {
+	} else if ((pattern->mode == VS_COLOR_BAR_H || pattern->mode == VS_RMAP_H) &&
+		   pattern->rect.h > height) {
 		pr_err("%s: Horizontal color pattern h out of range.\n", __func__);
 		return;
-	} else if ((pattern.mode == VS_COLOR_BAR_V || pattern.mode == VS_RMAP_V) &&
-		   pattern.rect.w > width) {
+	} else if ((pattern->mode == VS_COLOR_BAR_V || pattern->mode == VS_RMAP_V) &&
+		   pattern->rect.w > width) {
 		pr_err("%s: Vertical color pattern w out of range.\n", __func__);
 		return;
-	} else if ((pattern.mode == VS_BLACK_WHITE_H || pattern.mode == VS_BLACK_WHITE_SQR) &&
-		   (pattern.rect.h < 1 || pattern.rect.h > 256)) {
+	} else if ((pattern->mode == VS_BLACK_WHITE_H || pattern->mode == VS_BLACK_WHITE_SQR) &&
+		   (pattern->rect.h < 1 || pattern->rect.h > 256)) {
 		pr_err("%s: Horizontal black white pattern out of range.\n", __func__);
 		return;
-	} else if (pattern.mode == VS_BLACK_WHITE_V &&
-		   (pattern.rect.w < 1 || pattern.rect.w > 256)) {
+	} else if (pattern->mode == VS_BLACK_WHITE_V &&
+		   (pattern->rect.w < 1 || pattern->rect.w > 256)) {
 		pr_err("%s: Vertical black white pattern out of range.\n", __func__);
 		return;
 	}
 
-	if (pattern.mode == VS_RMAP_H)
-		pattern.ramp_step = 65535 / width * 2048;
-	else if (pattern.mode == VS_RMAP_V)
-		pattern.ramp_step = 65535 / height * 2048;
+	if (pattern->mode == VS_RMAP_H)
+		pattern->ramp_step = 65535 / width * 2048;
+	else if (pattern->mode == VS_RMAP_V)
+		pattern->ramp_step = 65535 / height * 2048;
 
-	dc_hw_set_display_pattern(&dc->hw, hw_id, &pattern);
+	dc_hw_set_display_pattern(&dc->hw, vs_crtc->id, pattern);
 }
+
+static void vs_dc_disable_display_pattern(struct drm_crtc *crtc)
+{
+	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
+	struct vs_dc *dc = dev_get_drvdata(vs_crtc->dev);
+	struct vs_crtc_state *crtc_state = to_vs_crtc_state(crtc->state);
+	struct dc_hw_pattern *pattern = &crtc_state->pattern;
+
+	dc_hw_clear_display_pattern(&dc->hw, vs_crtc->id, pattern);
+}
+
+static void vs_dc_set_display_pattern(struct drm_crtc *crtc, const char __user *ubuf, size_t len)
+{
+	struct vs_crtc_state *crtc_state = to_vs_crtc_state(crtc->state);
+
+	/* parse display pattern config */
+	if (vs_dc_parse_display_pattern_config(crtc_state, ubuf, len) != len) {
+		pr_err("%s: parse display pattern config error.\n", __func__);
+		return;
+	}
+
+	if (!crtc_state->pattern.delayed) {
+		if (crtc_state->pattern.enable)
+			vs_dc_enable_display_pattern(crtc);
+		else
+			vs_dc_disable_display_pattern(crtc);
+	}
+}
+
 #endif /* CONFIG_DEBUG_FS */
 
 static void vs_dc_display_set_mode(struct device *dev, struct drm_crtc *crtc,
@@ -751,28 +553,28 @@ static void vs_dc_display_set_mode(struct device *dev, struct drm_crtc *crtc,
 	dc_hw_setup_display_mode(&dc->hw, vs_crtc->id, &display);
 }
 
-static void dc_fabrt_boost_kwork(struct kthread_work *work)
+static void dc_freq_boost_kwork(struct kthread_work *work)
 {
 	struct vs_crtc *vs_crtc = container_of(work, struct vs_crtc, fboost_work);
 	int ret;
 	struct device *dev = vs_crtc->dev;
 	struct vs_dc *dc = dev_get_drvdata(dev);
 
-	if (!dc->fabrt_devfreq)
+	if (!dc->boost_fab_devfreq && !dc->boost_core_devfreq)
 		return;
 
-	DPU_ATRACE_BEGIN("DPU Boost_FABRT");
-	vs_qos_set_fabrt_boost(&vs_crtc->base);
+	DPU_ATRACE_BEGIN("DPU Boost_FREQ");
+	vs_qos_set_freq_boost(&vs_crtc->base);
 
 	ret = wait_event_interruptible_timeout(
-		vs_crtc->fboost_wait_q, READ_ONCE(vs_crtc->fboost_state) == VS_FABRT_BOOST_RESTORE,
+		vs_crtc->fboost_wait_q, READ_ONCE(vs_crtc->fboost_state) == VS_FREQ_BOOST_RESTORE,
 		msecs_to_jiffies(20));
-	DPU_ATRACE_BEGIN("RESTORE FABRT ret = %d", ret);
+	DPU_ATRACE_BEGIN("RESTORE FREQ ret = %d", ret);
 
-	vs_qos_clear_fabrt_boost(&vs_crtc->base);
-	WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_INIT);
-	DPU_ATRACE_END("RESTORE FABRT");
-	DPU_ATRACE_END("DPU Boost_FABRT");
+	vs_qos_clear_freq_boost(&vs_crtc->base);
+	WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_INIT);
+	DPU_ATRACE_END("RESTORE FREQ");
+	DPU_ATRACE_END("DPU Boost_FREQ");
 }
 
 static void vs_dc_enable(struct device *dev, struct drm_crtc *crtc,
@@ -788,7 +590,7 @@ static void vs_dc_enable(struct device *dev, struct drm_crtc *crtc,
 	struct vs_crtc_state *vs_crtc_state = to_vs_crtc_state(crtc->state);
 	const struct drm_vs_r2y_config *r2y_config = NULL;
 	u8 display_id = to_vs_display_id(dc, crtc);
-	bool need_boost_fabrt;
+	bool need_boost_freq;
 
 	DPU_ATRACE_BEGIN(__func__);
 	/*
@@ -822,21 +624,28 @@ static void vs_dc_enable(struct device *dev, struct drm_crtc *crtc,
 
 	vs_qos_set_qos_config(dev, crtc);
 
-	need_boost_fabrt = (READ_ONCE(vs_crtc->fboost_state) == VS_FABRT_BOOST_PENDING);
-	if (need_boost_fabrt) {
-		WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_BOOSTING);
+	need_boost_freq = (READ_ONCE(vs_crtc->fboost_state) == VS_FREQ_BOOST_PENDING);
+	if (need_boost_freq) {
+		WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_BOOSTING);
 		kthread_queue_work(vs_crtc->fboost_worker, &vs_crtc->fboost_work);
 	}
+
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	/* enable delayed test pattern */
+	if (vs_crtc_state->pattern.enable && vs_crtc_state->pattern.delayed)
+		vs_dc_enable_display_pattern(crtc);
+#endif
 
 	dc_hw_display_commit(&dc->hw, display_id);
 	/* in case of video mode, turn on timing engine during enable */
 	if (!(vs_crtc_state->output_mode & VS_OUTPUT_MODE_CMD)) {
 		dc_hw_enable_shadow_register(&dc->hw, display_id, true);
+		vs_crtc->first_frame_trigger = true;
 		dc_hw_start_trigger(&dc->hw, display_id, crtc);
 	}
 
-	if (need_boost_fabrt) {
-		WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_RESTORE);
+	if (need_boost_freq) {
+		WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_RESTORE);
 		wake_up_interruptible(&vs_crtc->fboost_wait_q);
 	}
 
@@ -848,13 +657,14 @@ static bool vs_dc_display_is_idle(struct device *dev, struct drm_crtc *crtc)
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct vs_dc *dc = dev_get_drvdata(dev);
 	struct dc_hw_display *display = &dc->hw.display[vs_crtc->id];
-	u32 position;
+	u32 position = 0;
 	u32 hpos, vpos, vres;
 
 	if (!vs_crtc->funcs->get_crtc_scanout_position)
 		return false;
 
-	vs_crtc->funcs->get_crtc_scanout_position(dev, crtc, &position);
+	if (vs_crtc->funcs->get_crtc_scanout_position(dev, crtc, &position))
+		return false;
 
 	hpos = position & 0xffff;
 	vpos = (position >> 16) & 0xffff;
@@ -882,6 +692,12 @@ static void vs_dc_disable(struct device *dev, struct drm_crtc *crtc,
 	int ret;
 	int old_te_count;
 	bool missing_fd_int = false;
+
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	/* disable delayed test pattern */
+	if (vs_crtc_state->pattern.enable && vs_crtc_state->pattern.delayed)
+		vs_dc_disable_display_pattern(crtc);
+#endif
 
 	dc_hw_disable_trigger(&dc->hw, vs_crtc->id);
 
@@ -916,11 +732,6 @@ static void vs_dc_disable(struct device *dev, struct drm_crtc *crtc,
 	if (vs_crtc->frame_transfer_pending) {
 		vs_crtc_record_frame_timeout(vs_crtc, old_te_count, old_state,
 					     msecs_to_jiffies(FRAME_DONE_TIMEOUT_MS), true);
-
-		atomic_set(&vs_crtc->frames_pending, 0);
-		DPU_ATRACE_INT_PID_FMT(atomic_read(&vs_crtc->frames_pending), vs_crtc->trace_pid,
-				       "frames_pending[%u]", crtc->index);
-		vs_crtc->frame_transfer_pending = false;
 		atomic_inc(&vs_crtc->frame_done_timeout);
 	} else if (missing_fd_int) {
 		vs_dc_update_irq_statuses(dc);
@@ -929,6 +740,11 @@ static void vs_dc_disable(struct device *dev, struct drm_crtc *crtc,
 			 crtc->name, dc->enabled ? "enabled" : "disabled");
 		atomic_inc(&vs_crtc->frame_done_missing);
 	}
+
+	vs_crtc->frame_transfer_pending = false;
+	atomic_set(&vs_crtc->frames_pending, 0);
+	DPU_ATRACE_INT_PID_FMT(atomic_read(&vs_crtc->frames_pending), vs_crtc->trace_pid,
+			       "frames_pending[%u]", crtc->index);
 
 	if (is_vid_mode && !vs_dc_display_is_idle(dev, crtc))
 		dev_WARN(dev, "still running after wait (%d)\n", ret);
@@ -1022,6 +838,7 @@ static void update_display_blur_mask(struct vs_dc *dc, u8 id, struct vs_crtc_sta
 		struct dc_hw_fb fb = { 0 };
 		struct drm_framebuffer *drm_fb = crtc_state->blur_mask;
 		dma_addr_t dma_addr[MAX_NUM_PLANES] = { 0 };
+
 		dma_addr[0] = vs_fb_get_dma_addr(drm_fb, 0);
 
 		fb.address = (u64)dma_addr[0];
@@ -1043,6 +860,7 @@ static void update_display_brightness_mask(struct vs_dc *dc, u8 id,
 		struct dc_hw_fb fb = { 0 };
 		struct drm_framebuffer *drm_fb = crtc_state->brightness_mask;
 		dma_addr_t dma_addr[MAX_NUM_PLANES] = { 0 };
+
 		dma_addr[0] = vs_fb_get_dma_addr(drm_fb, 0);
 
 		fb.address = (u64)dma_addr[0];
@@ -1719,6 +1537,7 @@ static void dc_wait_earliest_process_time(struct drm_crtc *crtc, struct drm_atom
 		new_crtc_state = crtc->state;
 		te_freq = gs_drm_mode_te_freq(&new_crtc_state->mode);
 	}
+	DPU_ATRACE_INSTANT_PID_FMT(current->tgid, "vsync:%d", te_freq);
 
 	vsync_period_ns = mult_frac(1000, 1000 * 1000, te_freq);
 	expected_process_duration_ns = mult_frac(vsync_period_ns, 3, 4);
@@ -1744,8 +1563,8 @@ static void dc_wait_earliest_process_time(struct drm_crtc *crtc, struct drm_atom
 			pr_warn("expected present time seems incorrect(now %llu, earliest %llu)\n",
 				now, earliest_process_time);
 		}
-		DPU_ATRACE_BEGIN("wait for earliest present (vsync:%d, delay %dus)",
-				  te_freq, delay_until_process);
+		DPU_ATRACE_BEGIN("wait for earliest present (delay %dus)",
+			delay_until_process);
 		usleep_range(delay_until_process, delay_until_process + 10);
 		DPU_ATRACE_END("wait for earliest process time");
 	}
@@ -1758,7 +1577,7 @@ static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_a
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 	struct vs_crtc_state *vs_crtc_state = to_vs_crtc_state(crtc->state);
 	unsigned long flags;
-	bool need_boost_fabrt;
+	bool need_boost_freq;
 
 	trace_disp_commit_begin(display_id, crtc->state);
 	/* TBD !
@@ -1775,9 +1594,9 @@ static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_a
 
 	vs_qos_set_qos_config(dev, crtc);
 
-	need_boost_fabrt = (READ_ONCE(vs_crtc->fboost_state) == VS_FABRT_BOOST_PENDING);
-	if (need_boost_fabrt) {
-		WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_BOOSTING);
+	need_boost_freq = (READ_ONCE(vs_crtc->fboost_state) == VS_FREQ_BOOST_PENDING);
+	if (need_boost_freq) {
+		WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_BOOSTING);
 		kthread_queue_work(vs_crtc->fboost_worker, &vs_crtc->fboost_work);
 	}
 
@@ -1785,9 +1604,10 @@ static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_a
 	dc_fbc_commit(dc, display_id);
 	dc_hw_plane_commit(&dc->hw, display_id);
 	dc_hw_display_commit(&dc->hw, display_id);
+	dc_hw_wb_commit(&dc->hw, display_id);
 
-	if (need_boost_fabrt) {
-		WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_RESTORE);
+	if (need_boost_freq) {
+		WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_RESTORE);
 		wake_up_interruptible(&vs_crtc->fboost_wait_q);
 	}
 
@@ -1806,6 +1626,7 @@ static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_a
 
 	DPU_ATRACE_INT_PID_FMT(atomic_read(&vs_crtc->frames_pending), vs_crtc->trace_pid,
 			       "frames_pending[%u]", crtc->index);
+	vs_crtc->first_frame_trigger = true;
 	dc_hw_start_trigger(&dc->hw, display_id, crtc);
 	spin_unlock_irqrestore(&dc->int_lock, flags);
 	trace_disp_commit_done(display_id, vs_crtc_state->output_id, vs_crtc);
@@ -1891,16 +1712,6 @@ static void update_wb_point(struct vs_dc *dc, u8 display_id, u8 wb_id, u32 wb_po
 	dc_hw_update_display_wb(&dc->hw, display_id, &wb);
 }
 
-static void update_wb_stall(struct vs_dc *dc, u8 wb_id)
-{
-	const struct vs_wb_info *wb_info = &dc->hw.info->write_back[wb_id];
-
-	if (wb_info->wb_stall)
-		dc_hw_set_wb_stall(&dc->hw, true);
-	else
-		dev_dbg(dc->hw.dev, "%s: wb_stall not supported on wb[%d].\n", __func__, wb_id);
-}
-
 static void vs_dc_conf_writeback(struct vs_writeback_connector *wb_connector,
 				 struct drm_framebuffer *fb)
 {
@@ -1925,8 +1736,6 @@ static void vs_dc_conf_writeback(struct vs_writeback_connector *wb_connector,
 
 	update_wb_point(dc, vs_crtc->id, wb_connector->id, vs_wb_state->wb_point);
 
-	update_wb_stall(dc, wb_connector->id);
-
 	for (i = 0; i < wb_connector->properties.num; i++) {
 		ret = vs_dc_update_drm_property(dc, wb_connector->id, &vs_wb_state->drm_states[i],
 						wb->states.items[i].proto, &wb->states.items[i],
@@ -1938,8 +1747,6 @@ static void vs_dc_conf_writeback(struct vs_writeback_connector *wb_connector,
 							    wb->states.items[i].enable,
 							    wb->states.items[i].dirty);
 	}
-
-	dc_hw_setup_wb(&dc->hw, wb_connector->id);
 
 	dc_hw_config_wb_status(&dc->hw, wb_connector->id, true);
 
@@ -1956,19 +1763,22 @@ static void vs_dc_disable_writeback(struct vs_writeback_connector *wb_connector)
 	struct vs_dc *dc = dev_get_drvdata(dev);
 	struct dc_hw_fb wb_fb = { 0 };
 	struct dc_hw_display_wb wb = { 0 };
+	u8 hw_id = wb_connector->id;
 
 	wb.enable = false;
-	wb.wb_id = wb_connector->id;
+	wb.wb_id = hw_id;
 
 	DPU_ATRACE_BEGIN("%s crtc_attached: %u", __func__, !!wb_connector->crtc);
 	if (wb_connector->crtc)
 		dc_hw_update_display_wb(&dc->hw, wb_connector->crtc->id, &wb);
 
+	/* disable WB_FB configuration */
 	wb_fb.enable = false;
-	dc_hw_update_wb_fb(&dc->hw, wb_connector->id, &wb_fb);
+	dc_hw_update_wb_fb(&dc->hw, hw_id, &wb_fb);
+	dc_hw_config_wb_status(&dc->hw, hw_id, true);
 
-	dc_hw_setup_wb(&dc->hw, wb_connector->id);
-	dc_hw_config_wb_status(&dc->hw, wb_connector->id, true);
+	/* program WB hardware */
+	dc_hw_setup_wb(&dc->hw, hw_id);
 	DPU_ATRACE_END("%s crtc_attached: %u", __func__, !!wb_connector->crtc);
 }
 
@@ -2137,8 +1947,6 @@ const struct vs_crtc_funcs dc_crtc_funcs = {
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	.show_pattern_config = vs_dc_show_display_pattern_config,
 	.set_pattern = vs_dc_set_display_pattern,
-	.set_crc = vs_dc_set_display_crc,
-	.show_crc = vs_dc_put_display_crc_result,
 #endif /* CONFIG_DEBUG_FS */
 	.config = vs_dc_conf_display,
 	.enable_vblank = vs_dc_enable_vblank,
@@ -2294,16 +2102,22 @@ static int be_bind(struct device *dev, struct device *master, void *data)
 
 		vs_dc_display_debugfs_init(dev, dc, dc_info, hw_id);
 
-		WRITE_ONCE(crtc->fboost_state, VS_FABRT_BOOST_INIT);
+		WRITE_ONCE(crtc->fboost_state, VS_FREQ_BOOST_INIT);
 
-		/* create fabrt boosting thread once the boost_fabrt_freq is set */
-		if (dc->boost_fabrt_freq != 0) {
+		/* create fab boosting thread once the boost_fab_freq or boost_core_freq is set */
+		if (is_boost_freq_enabled(dc)) {
 			struct sched_param param = { .sched_priority = MAX_RT_PRIO - 1 };
 
 			init_waitqueue_head(&crtc->fboost_wait_q);
-			crtc->fboost_worker = kthread_create_worker(0, "crtc%d_boost_fabrt", i);
+			crtc->fboost_worker = kthread_create_worker(0, "crtc%d_boost_freq", i);
+			if (IS_ERR(crtc->fboost_worker)) {
+				dev_err(dev, "Failed to create fboost worker (%pe)\n",
+					crtc->fboost_worker);
+				ret = PTR_ERR(crtc->fboost_worker);
+				goto err_cleanup_crtcs;
+			}
 			sched_setscheduler_nocheck(crtc->fboost_worker->task, SCHED_FIFO, &param);
-			kthread_init_work(&crtc->fboost_work, dc_fabrt_boost_kwork);
+			kthread_init_work(&crtc->fboost_work, dc_freq_boost_kwork);
 		}
 	}
 

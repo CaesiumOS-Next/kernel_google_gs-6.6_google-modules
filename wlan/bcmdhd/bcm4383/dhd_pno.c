@@ -2,7 +2,7 @@
  * Broadcom Dongle Host Driver (DHD)
  * Prefered Network Offload and Wi-Fi Location Service(WLS) code.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -81,8 +81,8 @@
 #define COMPLETION_WAIT_QUEUE_ACTIVE(wait_queue) waitqueue_active(wait_queue)
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0) */
 
-#ifdef CUSTOM_PREFIX
-#define PNO_PRINT_PREFIX "[%s]"CUSTOM_PREFIX, OSL_GET_RTCTIME()
+#ifdef LOG_CUSTOM_PREFIX_AND_RTC
+#define PNO_PRINT_PREFIX "[%s]"LOG_CUSTOM_PREFIX_AND_RTC, OSL_GET_RTCTIME()
 #define PNO_PRINT_SYSTEM_TIME pr_cont(PNO_PRINT_PREFIX)
 #define PNO_CONS_ONLY(args)     \
 do {    \
@@ -92,7 +92,7 @@ do {    \
 #else
 #define PNO_PRINT_SYSTEM_TIME
 #define PNO_CONS_ONLY(args) do { printf args;} while (0)
-#endif /* CUSTOM_PREFIX */
+#endif /* LOG_CUSTOM_PREFIX_AND_RTC */
 
 #define NULL_CHECK(p, s, err)  \
 do { \
@@ -2147,7 +2147,7 @@ dhd_pno_set_for_gscan(dhd_pub_t *dhd, struct dhd_pno_gscan_params *gscan_params)
 	}
 
 	gscan_param_size = sizeof(wl_pfn_gscan_cfg_t) +
-	          (num_buckets_to_fw - 1) * sizeof(wl_pfn_gscan_ch_bucket_cfg_t);
+		(num_buckets_to_fw) * sizeof(wl_pfn_gscan_ch_bucket_cfg_t);
 	pfn_gscan_cfg_t = (wl_pfn_gscan_cfg_t *) MALLOCZ(dhd->osh, gscan_param_size);
 
 	if (!pfn_gscan_cfg_t) {
@@ -3133,9 +3133,6 @@ _dhd_pno_get_for_batch(dhd_pub_t *dhd, char *buf, int bufsize, int reason)
 	uint16 fwstatus = PFN_INCOMPLETE;
 	uint16 fwcount;
 
-	NULL_CHECK(dhd, "dhd is NULL", err);
-	NULL_CHECK(dhd->pno_state, "pno_state is NULL", err);
-
 	/* The static asserts below guarantee the v1 and v2 net_info and subnet_info
 	 * structures are compatible in size and SSID offset, allowing v1 to be safely
 	 * used in the code below except for lscanresults fields themselves
@@ -3144,6 +3141,9 @@ _dhd_pno_get_for_batch(dhd_pub_t *dhd, char *buf, int bufsize, int reason)
 	STATIC_ASSERT(sizeof(wl_pfn_net_info_v1_t) == sizeof(wl_pfn_net_info_v2_t));
 	STATIC_ASSERT(sizeof(wl_pfn_lnet_info_v1_t) == sizeof(wl_pfn_lnet_info_v2_t));
 	STATIC_ASSERT(sizeof(wl_pfn_subnet_info_v1_t) == sizeof(wl_pfn_subnet_info_v2_t));
+
+	NULL_CHECK(dhd, "dhd is NULL", err);
+	NULL_CHECK(dhd->pno_state, "pno_state is NULL", err);
 
 	DHD_PNO(("%s enter\n", __FUNCTION__));
 	_pno_state = PNO_GET_PNOSTATE(dhd);
@@ -4437,7 +4437,7 @@ dhd_handle_hotlist_scan_evt(dhd_pub_t *dhd, const void *event_data,
 
 		tm_spec = ktime_to_timespec64(ktime_get_boottime());
 		malloc_size = sizeof(gscan_results_cache_t) +
-			((fwcount - 1) * sizeof(wifi_gscan_result_t));
+			(fwcount * sizeof(wifi_gscan_result_t));
 		gscan_hotlist_cache =
 			(gscan_results_cache_t *)MALLOC(dhd->osh, malloc_size);
 		if (!gscan_hotlist_cache) {

@@ -16,7 +16,7 @@ static unsigned long bl1_common_poll_interval_ms = 5;
 module_param(bl1_common_poll_interval_ms, ulong, 0664);
 MODULE_PARM_DESC(bl1_common_poll_interval_ms, "Polling interval when downloading BL1");
 
-enum fw_err uwb_flash_bl1_img(struct u100_ctx *u100_ctx, uint8_t *buff, uint32_t buff_len)
+static enum fw_err uwb_flash_bl1_img(struct u100_ctx *u100_ctx, uint8_t *buff, uint32_t buff_len)
 {
 	return uwb_flash_img(u100_ctx, buff, buff_len, MAX_APDU_DATA_LEN, false,
 				bl1_initial_poll_interval_ms, bl1_common_poll_interval_ms, true);

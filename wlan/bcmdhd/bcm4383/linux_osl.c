@@ -1,7 +1,7 @@
 /*
  * Linux OS Independent Layer
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -27,7 +27,7 @@
 #include <bcmendian.h>
 #include <linuxver.h>
 #include <bcmdefs.h>
-
+#include <bcmstdlib_s.h>
 #if defined(__ARM_ARCH_7A__) && !defined(DHD_USE_COHERENT_MEM_FOR_RING)
 #include <asm/cacheflush.h>
 #endif /* __ARM_ARCH_7A__ && !DHD_USE_COHERENT_MEM_FOR_RING */
@@ -52,9 +52,27 @@
 #endif /* BCM_OBJECT_TRACE */
 #include "linux_osl_priv.h"
 
+#ifdef AXI_TIMEOUTS_NIC
+#include "hal_dngl_bp.h"
+#endif
+
 #define PCI_CFG_RETRY		10	/* PR15065: retry count for pci cfg accesses */
 
 #define DUMPBUFSZ 1024
+
+struct osl_timer {
+	timer_list_compat_t	timer;
+	void			(*fn)(void *);
+	void			*arg;	/**< argument to fn */
+	uint32			ms;	/* Time in millisec */
+	bool			periodic;
+	bool			set;	/* If set timer is active */
+	uint8			PAD[2];
+	struct osl_timer	*next;	/* list of osl timers */
+#ifdef BCMDBG
+	char			*name; /* Desription of the timer */
+#endif
+};
 
 #if defined(NICBUILD) && defined(WL_MACDBG)
 /* TODO: This buffer size is good enough for register dump
@@ -70,11 +88,12 @@
 #endif
 #endif /* NICBUILD && WL_MACDBG */
 
-#if defined(CUSTOMER_HW4_DEBUG) || defined(CUSTOMER_HW2_DEBUG) || defined(CUSTOMER_HW7_DEBUG)
+#if defined(CUSTOMER_HW4_DEBUG) || defined(CUSTOMER_HW2_DEBUG) || \
+	defined(CUSTOMER_HW7_DEBUG) || defined(XRAPI_COMMON)
 uint32 g_assert_type = 1; /* By Default not cause Kernel Panic */
 #else
 uint32 g_assert_type = 0; /* By Default Kernel Panic */
-#endif /* CUSTOMER_HW4_DEBUG || CUSTOMER_HW2_DEBUG || CUSTOMER_HW7_DEBUG */
+#endif /* CUSTOMER_HW4_DEBUG || CUSTOMER_HW2_DEBUG || CUSTOMER_HW7_DEBUG || XRAPI_COMMON */
 
 module_param(g_assert_type, int, 0);
 
@@ -323,6 +342,7 @@ void* osl_get_bus_handle(osl_t *osh)
 void
 osl_detach(osl_t *osh)
 {
+	osl_timer_t *t, *next;
 	if (osh == NULL)
 		return;
 
@@ -348,6 +368,17 @@ osl_detach(osl_t *osh)
 	atomic_sub(1, &osh->cmn->refcount);
 	if (atomic_read(&osh->cmn->refcount) == 0) {
 			kfree(osh->cmn);
+	}
+
+	/* free timers */
+	for (t = osh->timers; t; t = next) {
+		next = t->next;
+#ifdef BCMDBG
+		if (t->name) {
+			MFREE(osh, t->name, strlen(t->name) + 1);
+		}
+#endif
+		MFREE(osh, t, sizeof(*t));
 	}
 	kfree(osh);
 }
@@ -407,20 +438,6 @@ osl_pci_read_config(osl_t *osh, uint offset, uint size)
 	/* only 4byte access supported */
 	ASSERT(size == 4);
 
-#ifdef NIC_REG_ACCESS_LEGACY
-		/*
-		 * If the Config Write is to update the BAR0 window, ensure that
-		 * the address is cached and updated in osl_reg_access_pcie_window.bp_addr
-		 * One could call R_REG, W_REG and the NIC_REG_ACCESS_LEGACY option ensures
-		 * that the BAR window value is cached. But one could directly call
-		 * OSL_PCI_WRITE_CONFIG to update BAR windows, in that case too, bp_addr
-		 * should be updated.
-		 */
-		if ((offset == PCI_BAR0_WIN) && (val != osl_reg_access_pcie_window.bp_addr)) {
-			osl_reg_access_pcie_window.bp_addr = val;
-		}
-#endif /* NIC_REG_ACCESS_LEGACY */
-
 	do {
 		pci_read_config_dword(osh->pdev, offset, &val);
 		if (val != 0xffffffff)
@@ -456,8 +473,22 @@ osl_pci_write_config(osl_t *osh, uint offset, uint size, uint val)
 		 */
 		if (offset != PCI_BAR0_WIN && offset != PCI_BAR1_WIN)
 			break;
-		if (osl_pci_read_config(osh, offset, size) == val)
+		if (osl_pci_read_config(osh, offset, size) == val) {
+#ifdef NIC_REG_ACCESS_LEGACY
+			/*
+			 * If the Config Write is to update the BAR0 window, ensure that
+			 * the address is cached and updated in osl_reg_access_pcie_window.bp_addr
+			 * One could call R_REG, W_REG and the NIC_REG_ACCESS_LEGACY option ensures
+			 * that the BAR window value is cached. But one could directly call
+			 * OSL_PCI_WRITE_CONFIG to update BAR windows, in that case too, bp_addr
+			 * should be updated.
+			 */
+			if (offset == PCI_BAR0_WIN) {
+				osl_reg_access_pcie_window.bp_addr = val;
+			}
+#endif /* NIC_REG_ACCESS_LEGACY */
 			break;
+		}
 	} while (retry--);
 
 #ifdef BCMDBG
@@ -1622,7 +1653,7 @@ osl_systztime_us(void)
 	return tzusec;
 }
 
-#ifdef CUSTOM_PREFIX
+#ifdef LOG_CUSTOM_PREFIX_AND_RTC
 char *
 osl_get_rtctime(void)
 {
@@ -1638,7 +1669,7 @@ osl_get_rtctime(void)
 			tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec/NSEC_PER_USEC);
 	return timebuf;
 }
-#endif /* CUSTOM_PREFIX */
+#endif /* LOG_CUSTOM_PREFIX_AND_RTC */
 
 uint64
 osl_getcycles(void)
@@ -1997,6 +2028,53 @@ osl_os_image_size(void *image)
 
 /* Linux Kernel: File Operations: end */
 
+/* Reads the register and check for possible AXI errors.
+ * The value read could indeed be 0xFFs or due to errors.
+ */
+#if defined(AXI_TIMEOUTS_NIC)
+inline void
+osl_bpt_rreg(osl_t *osh, ulong addr, volatile void *v, ulong r, uint size, bool *chk_rdsts)
+{
+	bool verify = FALSE;
+	BCM_REFERENCE(r);
+	switch (size) {
+	case sizeof(uint8):
+		*(volatile uint8 *)v = readb((volatile uint8 *)(addr));
+		if (*(volatile uint8 *)v == 0xFFu)
+			verify = TRUE;
+		break;
+	case sizeof(uint16):
+		*(volatile uint16 *)v = readw((volatile uint16 *)(addr));
+		if (*(volatile uint16 *)v == 0xFFFFu)
+			verify = TRUE;
+		break;
+	case sizeof(uint32):
+		*(volatile uint32 *)v = readl((volatile uint32 *)(addr));
+		if (*(volatile uint32 *)v == 0xFFFFFFFFu)
+			verify = TRUE;
+		break;
+	case sizeof(uint64):
+		*(volatile uint64 *)v = *((volatile uint64 *)(addr));
+		if (*(volatile uint64 *)v == 0xFFFFFFFFFFFFFFFFu)
+			verify = TRUE;
+		break;
+	}
+	if (verify) {
+		*chk_rdsts = TRUE;
+	}
+}
+
+/* Check and handle for any axi errors seen on current register read */
+void
+osl_bpt_chk_rreg_status(bool read_st)
+{
+	/* log and clear the axi wrapper registers */
+	if (read_st) {
+		(void)hal_dngl_bp_clear_timeout();
+	}
+}
+#endif /* AXI_TIMEOUTS_NIC */
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
 void
 timer_cb_compat(struct timer_list *tl)
@@ -2006,29 +2084,80 @@ timer_cb_compat(struct timer_list *tl)
 }
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0) */
 
+static void
+osl_timer_main(ulong data)
+{
+	osl_timer_t *t = (osl_timer_t *)data;
+
+	if (t->set && (!timer_pending(&t->timer))) {
+		if (t->periodic) {
+			/* Periodic timer can't be a zero delay */
+			ASSERT(t->ms != 0);
+#if defined(BCMSLTGT)
+			timer_expires(&t->timer) = jiffies + (((t->ms * HZ) / 1000u) * htclkratio);
+
+#else
+			/* See the comment in the similar logic in osl_timer_add in this file but
+			 * note in this case of re-programming a periodic timer, there has
+			 * been a conscious decision to still add the +1 adjustment.  We want
+			 * to guarantee that two consecutive callbacks are always AT LEAST the
+			 * requested ms delay apart, even if this means the callbacks might "drift"
+			 * from even the rounded ms to jiffy HZ period.
+			 */
+			timer_expires(&t->timer) = jiffies + (((t->ms * HZ) + 999u) / 1000u) + 1u;
+#endif
+			add_timer(&t->timer);
+			t->set = TRUE;
+		} else {
+			t->set = FALSE;
+		}
+		if (t->fn) {
+			t->fn(t->arg);
+		}
+	}
+}
+
+/* In OSL timer callback API contxt is already passed as an arg,
+ * there is nothing to derive so just reusing the same.
+ */
+void *
+osl_timer_get_ctx(void *arg)
+{
+	return (arg);
+}
+
 /* timer apis */
 /* Note: All timer api's are thread unsafe and should be protected with locks by caller */
+
+/* Create a osl timer, init and return timer if succeeds. */
+osl_timer_t *
+osl_timer_create(osl_t *osh, const char *name, void (*fn)(void *arg), void *arg)
+{
+	osl_timer_t *t, *ret = NULL;
+
+	t = osl_timer_init(osh, name, fn, arg);
+	if (t != NULL) {
+		ret = t;
+	} else {
+		OSL_PRINT(("osl_timer_create: out of memory, malloced %d bytes\n", MALLOCED(osh)));
+	}
+	return ret;
+}
 
 osl_timer_t *
 osl_timer_init(osl_t *osh, const char *name, void (*fn)(void *arg), void *arg)
 {
 	osl_timer_t *t;
 	BCM_REFERENCE(fn);
-	if ((t = MALLOCZ(NULL, sizeof(osl_timer_t))) == NULL) {
+
+	if ((t = MALLOCZ(osh, sizeof(osl_timer_t))) == NULL) {
 		OSL_PRINT(("osl_timer_init: out of memory, malloced %d bytes\n",
 			(int)sizeof(osl_timer_t)));
 		return (NULL);
 	}
 	bzero(t, sizeof(osl_timer_t));
-	if ((t->timer = MALLOCZ(NULL, sizeof(timer_list_compat_t))) == NULL) {
-		OSL_PRINT(("osl_timer_init: malloc failed\n"));
-		MFREE(NULL, t, sizeof(osl_timer_t));
-		return (NULL);
-	}
-
-	t->set = TRUE;
 #ifdef BCMDBG
-	if ((t->name = MALLOCZ(NULL, strlen(name) + 1)) != NULL) {
+	if ((t->name = MALLOCZ(osh, strlen(name) + 1)) != NULL) {
 		strcpy(t->name, name);
 	}
 #endif
@@ -2037,34 +2166,70 @@ osl_timer_init(osl_t *osh, const char *name, void (*fn)(void *arg), void *arg)
 	 * void pointer is compatible with ulong.
 	 */
 	GCC_DIAGNOSTIC_PUSH_SUPPRESS_FN_TYPE();
+	init_timer_compat(&t->timer, osl_timer_main, t);
 
-	init_timer_compat(t->timer, (linux_timer_fn)fn, arg);
-
+	t->fn = fn;
+	t->arg = arg;
+	t->next = osh->timers;
+	osh->timers = t;
 	return (t);
 }
 
-void
+bool
 osl_timer_add(osl_t *osh, osl_timer_t *t, uint32 ms, bool periodic)
 {
 	if (t == NULL) {
-		OSL_PRINT(("%s: Timer handle is NULL\n", __FUNCTION__));
-		return;
+		OSL_PRINT(("osl_timer_add: Timer handle is NULL\n"));
+		return FALSE;
 	}
-	ASSERT(!t->set);
 
-	t->set = TRUE;
-	if (periodic) {
-		OSL_PRINT(("Periodic timers are not supported by Linux timer apis\n"));
+	/* Delay can't be zero for a periodic timer */
+	ASSERT(periodic == 0 || ms != 0);
+
+	t->ms = ms;
+	t->periodic = (bool) periodic;
+
+	/* This case happens in passive mode */
+	/* if timer has been added, Just return w/ updated behavior */
+	if (t->set) {
+		return TRUE;
 	}
+
 #if defined(BCMSLTGT)
-	timer_expires(t->timer) = jiffies + ms*HZ/1000*htclkratio;
+	timer_expires(&t->timer) = jiffies + (((ms * HZ) / 1000u) * htclkratio);
 #else
-	timer_expires(t->timer) = jiffies + ms*HZ/1000;
+	/* Make sure that you meet the guarantee of ms delay before
+	 * calling the function. You must consider both rounding to
+	 * HZ and the fact that the next jiffy might be imminent,
+	 * e.g. the timer interrupt is only a us away.
+	 */
+	if (ms == 0) {
+		/* Zero is special - no HZ rounding up necessary nor
+		 * accounting for an imminent timer tick.  Just use
+		 * the current jiffies value.
+		 */
+		timer_expires(&t->timer) = jiffies;
+	} else {
+		/* In converting ms to HZ, round up. Example: with HZ=250
+		 * and thus a 4 ms jiffy/tick, round a 3 ms request to
+		 * 1 jiffy, i.e. 4 ms.	In addition because the timer
+		 * tick might occur imminently, you must add an extra
+		 * jiffy/tick to guarantee the 3 ms request.
+		 */
+		timer_expires(&t->timer) = jiffies + (((ms * HZ) + 999u) / 1000u) + 1u;
+	}
 #endif /* defined(BCMSLTGT) */
 
-	add_timer(t->timer);
+	add_timer(&t->timer);
+	t->set = TRUE;
 
-	return;
+	return TRUE;
+}
+
+void
+osl_timer_add_us(osl_t *osh, osl_timer_t *t, uint us, bool periodic)
+{
+	(void)osl_timer_add(osh, t, us, periodic);
 }
 
 void
@@ -2079,12 +2244,12 @@ osl_timer_update(osl_t *osh, osl_timer_t *t, uint32 ms, bool periodic)
 	}
 	t->set = TRUE;
 #if defined(BCMSLTGT)
-	timer_expires(t->timer) = jiffies + ms*HZ/1000*htclkratio;
+	timer_expires(&t->timer) = jiffies + (((ms * HZ) / 1000u) * htclkratio);
 #else
-	timer_expires(t->timer) = jiffies + ms*HZ/1000;
+	timer_expires(&t->timer) = jiffies + ((ms * HZ) / 1000u);
 #endif /* defined(BCMSLTGT) */
 
-	mod_timer(t->timer, timer_expires(t->timer));
+	mod_timer(&t->timer, timer_expires(&t->timer));
 
 	return;
 }
@@ -2095,24 +2260,61 @@ osl_timer_update(osl_t *osh, osl_timer_t *t, uint32 ms, bool periodic)
 bool
 osl_timer_del(osl_t *osh, osl_timer_t *t)
 {
+	bool ret = TRUE;
 	if (t == NULL) {
-		OSL_PRINT(("%s: Timer handle is NULL\n", __FUNCTION__));
-		return (FALSE);
+		OSL_PRINT(("osl_timer_del: Timer handle is NULL\n"));
+		ret = FALSE;
+		goto exit;
 	}
 	if (t->set) {
 		t->set = FALSE;
-		if (t->timer) {
-			del_timer(t->timer);
-			MFREE(NULL, t->timer, sizeof(timer_list_compat_t));
-		}
+		if (!del_timer(&t->timer)) {
 #ifdef BCMDBG
-		if (t->name) {
-			MFREE(NULL, t->name, strlen(t->name) + 1);
-		}
+			OSL_PRINT(("osl_timer_del: Deleted inactive timer %s.\n", t->name));
 #endif
-		MFREE(NULL, t, sizeof(osl_timer_t));
+			ret = FALSE;
+		}
 	}
-	return (TRUE);
+exit:
+	return ret;
+}
+
+void
+osl_timer_free(osl_t *osh, osl_timer_t *t)
+{
+	osl_timer_t *tmp;
+
+	/* delete the timer in case it is active */
+	if (t) {
+		osl_timer_del(osh, t);
+	}
+
+	if (osh->timers == t) {
+		osh->timers = osh->timers->next;
+#ifdef BCMDBG
+		if (t->name)
+			MFREE(osh, t->name, strlen(t->name) + 1);
+#endif
+		MFREE(osh, t, sizeof(osl_timer_t));
+		return;
+
+	}
+
+	tmp = osh->timers;
+	while (tmp) {
+		if (tmp->next == t) {
+			tmp->next = t->next;
+#ifdef BCMDBG
+			if (t->name) {
+				MFREE(osh, t->name, strlen(t->name) + 1);
+			}
+#endif
+			MFREE(osh, t, sizeof(osl_timer_t));
+			return;
+		}
+		tmp = tmp->next;
+	}
+
 }
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0))
@@ -2425,7 +2627,7 @@ osl_get_fatal_logbuf_end(osl_t *osh, uint32 size, uint32 *alloced)
 }
 
 int
-osl_create_directory(char *pathname, int mode)
+osl_create_directory(const char *pathname, int mode)
 {
 	struct path path;
 	struct dentry *dentry;
@@ -2453,4 +2655,72 @@ exit:
 	done_path_create(&path, dentry);
 	return err ? BCME_ERROR : BCME_OK;
 }
+
+/* Returns the pid of a the userspace process running with the given name */
+struct task_struct *
+_get_task_info(const char *pname)
+{
+	struct task_struct *task;
+
+	if (!pname) {
+		return NULL;
+	}
+
+	for_each_process(task) {
+		if (strcmp(pname, task->comm) == 0) {
+			return task;
+		}
+	}
+
+	return NULL;
+}
+
+int
+osl_send_sig_info(int signo, int arg, struct task_struct *tsk)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 9)
+	struct kernel_siginfo sinfo;
+#else
+	struct siginfo sinfo;
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 9) */
+
+	bzero(&sinfo, sizeof(sinfo));
+
+	sinfo.si_signo = signo;
+	sinfo.si_code = SI_QUEUE;
+	sinfo.si_int = arg;
+
+	return send_sig_info(signo, &sinfo, tsk);
+}
+
+uint
+osl_ctx_push(osl_t *osh, void *ptr)
+{
+	BCM_REFERENCE(osh);
+	BCM_REFERENCE(ptr);
+	return 0u;
+}
+
+void
+osl_ctx_pop(osl_t *osh, uint flag)
+{
+	BCM_REFERENCE(osh);
+	BCM_REFERENCE(flag);
+}
+
+uint
+osl_ctx_copy(osl_t *osh, uintptr *out, uint sz)
+{
+	BCM_REFERENCE(osh);
+	BCM_REFERENCE(out);
+	BCM_REFERENCE(sz);
+	return 0u;
+}
+
+void
+osl_ctx_enab(osl_t *osh)
+{
+	BCM_REFERENCE(osh);
+}
+
 #endif /* NICBUILD && WL_MACDBG */

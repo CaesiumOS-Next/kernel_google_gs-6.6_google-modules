@@ -133,13 +133,13 @@ static fwtp_error_code_t fwtp_google_gdmc_send_message(struct fwtp_if *fwtp_if,
 		dev_err(fwtp_google_gdmc_dev->base.dev,
 			"FWTP message data size %d too big for message buffer size %d.\n",
 			(int)tx_msg_data_size, (int)msg_buffer_size);
-		return -EINVAL;
+		return kFwtpErrBadLen;
 	}
 	if (msg_buffer_size > fwtp_google_gdmc_dev->dma_size) {
 		dev_err(fwtp_google_gdmc_dev->base.dev,
 			"FWTP message of size %d too big for DMA buffer of size %zu.\n",
 			(int)msg_buffer_size, fwtp_google_gdmc_dev->dma_size);
-		return -EINVAL;
+		return kFwtpErrBadLen;
 	}
 
 	/* Encapsulate the FWTP message into a GDMC FWTP message. */
@@ -162,7 +162,7 @@ static fwtp_error_code_t fwtp_google_gdmc_send_message(struct fwtp_if *fwtp_if,
 	if (ret < 0) {
 		dev_err(fwtp_google_gdmc_dev->base.dev,
 			"Failed to send message with error %d\n", ret);
-		return ret;
+		return kFwtpErrIo;
 	}
 
 	/* Return the received response message. */
@@ -171,7 +171,7 @@ static fwtp_error_code_t fwtp_google_gdmc_send_message(struct fwtp_if *fwtp_if,
 		dev_err(fwtp_google_gdmc_dev->base.dev,
 			"Received message of size %d too big for message buffer of size %d.\n",
 			(int)local_rx_msg_data_size, (int)msg_buffer_size);
-		return -EIO;
+		return kFwtpErrIo;
 	}
 	memcpy(msg_buffer, fwtp_google_gdmc_dev->dma_base,
 	       local_rx_msg_data_size);
@@ -391,6 +391,14 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto out;
 	}
+	fwtp_google_gdmc_dev->debugfs_root =
+		debugfs_create_dir(dev_name(dev), NULL);
+	if (!fwtp_google_gdmc_dev->debugfs_root) {
+		dev_err(dev,
+			"Failed to create a debugfs directory for GDMC.\n");
+		ret = -ENOENT;
+		goto out;
+	}
 
 	/* Initialize the base FWTP device. */
 	fwtp_dev = &(fwtp_google_gdmc_dev->base);
@@ -400,6 +408,7 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 	fwtp_dev->printer_ctx.name = "gdmc";
 	fwtp_dev->log_enabled = true;
 	fwtp_dev->ftrace_enabled = true;
+	fwtp_dev->root_debugfs = fwtp_google_gdmc_dev->debugfs_root;
 	ret = fwtp_dev_init(fwtp_dev);
 	if (ret) {
 		dev_err(dev,
@@ -408,24 +417,14 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	/*
-	 * Create the debugfs directory used to request logging of GDMC
-	 * tracepoints.
-	 */
-	fwtp_google_gdmc_dev->debugfs_root =
-		debugfs_create_dir(dev_name(dev), NULL);
-	if (fwtp_google_gdmc_dev->debugfs_root) {
-		debugfs_create_file(
-			"request_poll", 0220,
-			fwtp_google_gdmc_dev->debugfs_root,
-			fwtp_google_gdmc_dev,
-			&google_gdmc_tracepoint_debugfs_fops_tracepoint_poll);
-		debugfs_create_file(
-			"request_subscribe", 0220,
-			fwtp_google_gdmc_dev->debugfs_root,
-			fwtp_google_gdmc_dev,
-			&google_gdmc_tracepoint_debugfs_fops_tracepoint_subscribe);
-	}
+	debugfs_create_file("request_poll", 0220,
+			    fwtp_google_gdmc_dev->debugfs_root,
+			    fwtp_google_gdmc_dev,
+			    &google_gdmc_tracepoint_debugfs_fops_tracepoint_poll);
+	debugfs_create_file(
+		"request_subscribe", 0220, fwtp_google_gdmc_dev->debugfs_root,
+		fwtp_google_gdmc_dev,
+		&google_gdmc_tracepoint_debugfs_fops_tracepoint_subscribe);
 
 out:
 	/* Clean up. */

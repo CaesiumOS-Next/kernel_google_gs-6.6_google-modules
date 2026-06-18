@@ -2,7 +2,7 @@
  * Broadcom Dongle Host Driver (DHD), Linux-specific network interface
  * Basically selected code segments from usb-cdc.c and usb-rndis.c
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -29,6 +29,7 @@
 #include <dhd_dbg.h>
 #include <dhd_linux_priv.h>
 #include <dhd_proto.h>
+#include <bcmstdlib_s.h>
 #if defined(WL_BAM)
 #include <wl_bam.h>
 #endif	/* WL_BAM */
@@ -38,6 +39,13 @@
 #ifdef WL_CFG80211
 #include <wl_cfg80211.h>
 #endif /* WL_CFG80211 */
+
+#ifdef DHD_SSSR_DUMP
+#include <dhd_pcie_sssr_dump.h>
+#endif /* DHD_SSSR_DUMP */
+#ifdef DHD_DMPD
+#include <dhd_dmpd.h>
+#endif /* DHD_DMPD */
 
 #ifdef SHOW_LOGTRACE
 extern dhd_pub_t *g_dhd_pub;
@@ -831,6 +839,33 @@ set_fis_enab(struct dhd_info *dev, const char *buf, size_t count)
 
 	return count;
 }
+
+static ssize_t
+set_fis_recover(struct dhd_info *dev, const char *buf, size_t count)
+{
+	unsigned long onoff;
+	dhd_info_t *dhd = (dhd_info_t *)dev;
+	dhd_pub_t *dhdp;
+
+	if (!dhd) {
+		DHD_ERROR(("%s: dhd is NULL\n", __FUNCTION__));
+		return count;
+	}
+	dhdp = &dhd->pub;
+
+	onoff = bcm_strtoul(buf, NULL, 10);
+
+	sscanf(buf, "%lu", &onoff);
+	if (onoff != 0 && onoff != 1) {
+		return -EINVAL;
+	}
+
+	dhdp->iovar_timeout_occured = TRUE;
+	dhdpcie_fis_recover(dhdp);
+	dhd_bus_fis_dump(dhdp);
+
+	return count;
+}
 #endif /* DHD_SSSR_DUMP */
 
 #define FMT_BUFSZ	32
@@ -931,6 +966,7 @@ typedef struct wl_pwrstats_sysfs {
 	uint64	l1_2_dur_us;
 	uint64	l2_cnt;
 	uint64	l2_dur_us;
+	uint64	shallow_dur_ms;
 } wl_pwrstats_sysfs_t;
 
 uint64 last_delta;
@@ -938,6 +974,7 @@ wl_pwrstats_sysfs_t accumstats = {0, };
 wl_pwrstats_sysfs_t laststats = {0, };
 static const char pwrstr_cnt[] = "count:";
 static const char pwrstr_dur[] = "duration_usec:";
+static const char pwrstr_dur_ms[] = "duration_msec:";
 static const char pwrstr_ts[] = "last_entry_timestamp_usec:";
 
 ssize_t print_pwrstats_cum(char *buf)
@@ -986,6 +1023,9 @@ ssize_t print_pwrstats_cum(char *buf)
 		accumstats.l2_cnt);
 	ret += scnprintf(buf + ret, PAGE_SIZE - ret, "%s 0x%0llx\n", pwrstr_dur,
 		accumstats.l2_dur_us);
+	ret += scnprintf(buf + ret, PAGE_SIZE - ret, "shallow_state:\n");
+	ret += scnprintf(buf + ret, PAGE_SIZE - ret, "%s 0x%0llx\n", pwrstr_dur_ms,
+		accumstats.shallow_dur_ms);
 
 	return ret;
 }
@@ -1100,7 +1140,7 @@ show_pwrstats_path(struct dhd_info *dev, char *buf)
 
 	/* Check version */
 	pwrstats = (wl_pwrstats_t *) iovar_buf;
-	if (dtoh16(pwrstats->version) != WL_PWRSTATS_VERSION) {
+	if (dtoh16(pwrstats->version) > WL_PWRSTATS_VERSION_4) {
 		DHD_PRINT(("PWRSTATS Version mismatch\n"));
 		goto done;
 	}
@@ -1127,12 +1167,13 @@ show_pwrstats_path(struct dhd_info *dev, char *buf)
 		switch (type) {
 		case WL_PWRSTATS_TYPE_PCIE:
 		{
-			wl_pwr_pcie_stats_t *stats =
-				(wl_pwr_pcie_stats_t *)p_data;
+			wl_pwr_pcie_stats_t *stats = (wl_pwr_pcie_stats_t *)p_data;
+			u32 pcie_stats_len = sizeof(wl_pwr_pcie_stats_t);
+			u32 pcie_stat_v3_len = sizeof(wl_pwr_pcie_stats_v3_t);
 
-			if (taglen < sizeof(wl_pwr_pcie_stats_t)) {
+			if (taglen < pcie_stats_len) {
 				DHD_ERROR(("Short len for %d: %d < %d\n",
-					type, taglen, (int)sizeof(wl_pwr_pcie_stats_t)));
+					type, taglen, (int)pcie_stats_len));
 				goto done;
 			}
 
@@ -1150,6 +1191,11 @@ show_pwrstats_path(struct dhd_info *dev, char *buf)
 			pwrstats_sysfs.l1_2_dur_us = dtoh32(stats->pcie.l1_2_usecs);
 			pwrstats_sysfs.l2_cnt = dtoh32(stats->pcie.l2_cnt);
 			pwrstats_sysfs.l2_dur_us = dtoh32(stats->pcie.l2_usecs);
+			if (stats->len == pcie_stat_v3_len) {
+				wl_pwr_pcie_stats_v3_t *stats_v3 =
+					(wl_pwr_pcie_stats_v3_t *)p_data;
+				pwrstats_sysfs.shallow_dur_ms = dtoh32(stats_v3->pcie.shallow_dur);
+			}
 		}
 		break;
 
@@ -1237,6 +1283,8 @@ show_pwrstats_path(struct dhd_info *dev, char *buf)
 			TRUE);
 	update_pwrstats_cum(&accumstats.l2_dur_us, &laststats.l2_dur_us,
 			&pwrstats_sysfs.l2_dur_us, TRUE);
+	update_pwrstats_cum(&accumstats.shallow_dur_ms, &laststats.shallow_dur_ms,
+			&pwrstats_sysfs.shallow_dur_ms, TRUE);
 
 	ret = print_pwrstats_cum(buf);
 done:
@@ -1358,6 +1406,8 @@ static struct dhd_attr dhd_attr_sssr_enab =
 	__ATTR(sssr_enab, 0660, show_sssr_enab, set_sssr_enab);
 static struct dhd_attr dhd_attr_fis_enab =
 	__ATTR(fis_enab, 0660, show_fis_enab, set_fis_enab);
+static struct dhd_attr dhd_attr_fis_recover =
+	__ATTR(fis_recover, 0660, NULL, set_fis_recover);
 #endif /* DHD_SSSR_DUMP */
 
 static struct dhd_attr dhd_attr_firmware_path =
@@ -2414,7 +2464,7 @@ show_force_wl_reg_on(struct dhd_info *dhd, char *buf)
 		DHD_ERROR(("%s: dhd is NULL\n", __FUNCTION__));
 		return ret;
 	}
-	val =  dhd->pub.force_wl_reg_off ? 0 : 1;
+	val = dhd_plat_get_wlan_reg_on_gpio();
 	ret = scnprintf(buf, PAGE_SIZE - 1, "%d\n", val);
 	DHD_PRINT(("%s: show_force_wl_reg_on: %d\n", __FUNCTION__, val));
 	return ret;
@@ -2471,6 +2521,7 @@ set_dump_rxpktidmap(struct dhd_info *dhd, const char *buf, size_t count)
 static struct dhd_attr dhd_attr_dump_rxpktidmap =
 __ATTR(dump_rxpktidmap, 0660, show_dump_rxpktidmap, set_dump_rxpktidmap);
 #endif /* DHD_DUMP_RXPKTIDMAP */
+
 
 #ifdef DHD_AGGR_WI
 #define DHD_SYSFS_AGGR_WI_ENAB_FILE_MODE (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)
@@ -2758,7 +2809,7 @@ static struct dhd_attr dhd_attr_wl_dbg_level =
 __ATTR(wl_dbg_level, 0660, show_wl_debug_level, set_wl_debug_level);
 #endif /* WL_CFG80211 */
 
-#if defined(DHD_FILE_DUMP_EVENT) && defined(DHD_FW_COREDUMP)
+#if (defined(DHD_FILE_DUMP_EVENT) || defined(DHD_DMPD)) && defined(DHD_FW_COREDUMP)
 #define DUMP_TRIGGER	1
 
 static ssize_t
@@ -2816,7 +2867,7 @@ exit:
 
 static struct dhd_attr dhd_attr_dump_in_progress =
 __ATTR(dump_in_progress, 0660, show_dhd_dump_in_progress, set_dhd_dump_in_progress);
-#endif /* DHD_FILE_DUMP_EVENT && DHD_FW_COREDUMP */
+#endif /* (DHD_FILE_DUMP_EVENT || DHD_DMPD) && defined(DHD_FW_COREDUMP) */
 
 #ifdef DHD_DUMP_START_COMMAND
 static ssize_t
@@ -2887,6 +2938,139 @@ set_arp_print(struct dhd_info *dev, const char *buf, size_t count)
 
 static struct dhd_attr dhd_attr_arp_print =
 __ATTR(arp_print, 0660, show_arp_print, set_arp_print);
+
+#ifdef DHD_DMPD
+static ssize_t
+dmpd_dbgring_status_show(struct dhd_info *dev, char *buf)
+{
+	return dmpd_get_dbgring_status_to_str(buf, PAGE_SIZE);
+}
+
+static struct dhd_attr dhd_attr_dmpd_dbgring_status =
+__ATTR(dmpd_dbgring_status, 0660,
+	dmpd_dbgring_status_show, NULL);
+
+static ssize_t
+dmpd_log_max_size_show(struct dhd_info *dev, char *buf)
+{
+	int value = dmpd_get_max_log_size();
+	return sprintf(buf, "%u\n", value);
+}
+
+static ssize_t
+dmpd_log_max_size_store(struct dhd_info *dev, const char *buf, size_t count)
+{
+	u32 value;
+	int ret;
+
+	ret = kstrtou32(buf, 10, &value);
+	if (ret) {
+		DHD_ERROR(("%s: conv failed value:%u\n", __func__, value));
+		return ret;
+	}
+
+	ret = dmpd_set_max_log_size(value);
+	if (ret) {
+		return ret;
+	}
+
+	return count;
+}
+
+static struct dhd_attr dhd_attr_dmpd_log_size =
+__ATTR(max_chipset_log_size, 0660,
+	dmpd_log_max_size_show, dmpd_log_max_size_store);
+
+static ssize_t
+dmpd_log_level_show(struct dhd_info *dev, char *buf)
+{
+	int value = dmpd_get_log_level();
+	return sprintf(buf, "%u\n", value);
+}
+
+static ssize_t
+dmpd_log_level_store(struct dhd_info *dev, const char *buf, size_t count)
+{
+	u32 value;
+	int ret;
+
+	ret = kstrtou32(buf, 10, &value);
+	if (ret) {
+		DHD_ERROR(("%s: conv failed value:%u\n", __func__, value));
+		return ret;
+	}
+
+	ret = dmpd_set_log_level(value);
+	if (ret) {
+		return ret;
+	}
+
+	return count;
+}
+
+static struct dhd_attr dhd_attr_dmpd_log_level =
+__ATTR(dmpd_log_level, 0660, dmpd_log_level_show, dmpd_log_level_store);
+
+static ssize_t
+dmpd_dbgring_interval_show(struct dhd_info *dev, char *buf)
+{
+	int value = dmpd_get_log_interval();
+	return sprintf(buf, "%u\n", value);
+}
+
+static ssize_t
+dmpd_dbgring_interval_store(struct dhd_info *dev, const char *buf, size_t count)
+{
+	u32 value;
+	int ret;
+
+	ret = kstrtou32(buf, 10, &value);
+	if (ret) {
+		DHD_ERROR(("%s: conv failed value:%u\n", __func__, value));
+		return ret;
+	}
+
+	ret = dmpd_set_log_interval(value);
+	if (ret) {
+		return ret;
+	}
+
+	return count;
+}
+
+static struct dhd_attr dhd_attr_dmpd_dbgring_interval =
+__ATTR(dmpd_dbgring_interval, 0660, dmpd_dbgring_interval_show, dmpd_dbgring_interval_store);
+
+static ssize_t
+dmpd_dbgring_threshold_show(struct dhd_info *dev, char *buf)
+{
+	int value = dmpd_get_log_threshold();
+	return sprintf(buf, "%u\n", value);
+}
+
+static ssize_t
+dmpd_dbgring_threshold_store(struct dhd_info *dev, const char *buf, size_t count)
+{
+	u32 value;
+	int ret;
+
+	ret = kstrtou32(buf, 10, &value);
+	if (ret) {
+		DHD_ERROR(("%s: conv failed value:%u\n", __func__, value));
+		return ret;
+	}
+
+	ret = dmpd_set_log_threshold(value);
+	if (ret) {
+		return ret;
+	}
+
+	return count;
+}
+
+static struct dhd_attr dhd_attr_dmpd_dbgring_threshold =
+__ATTR(dmpd_dbgring_threshold, 0660, dmpd_dbgring_threshold_show, dmpd_dbgring_threshold_store);
+#endif /* DHD_DMPD */
 
 /* Attribute object that gets registered with "wifi" kobject tree */
 static struct attribute *default_file_attrs[] = {
@@ -2967,6 +3151,7 @@ static struct attribute *default_file_attrs[] = {
 #ifdef DHD_SSSR_DUMP
 	&dhd_attr_sssr_enab.attr,
 	&dhd_attr_fis_enab.attr,
+	&dhd_attr_fis_recover.attr,
 #endif /* DHD_SSSR_DUMP */
 	&dhd_attr_firmware_path.attr,
 	&dhd_attr_nvram_path.attr,
@@ -2985,9 +3170,9 @@ static struct attribute *default_file_attrs[] = {
 #if defined(WL_CFG80211)
 	&dhd_attr_wl_dbg_level.attr,
 #endif /* WL_CFG80211 */
-#if defined(DHD_FILE_DUMP_EVENT) && defined(DHD_FW_COREDUMP)
+#if (defined(DHD_FILE_DUMP_EVENT) || defined(DHD_DMPD)) && defined(DHD_FW_COREDUMP)
 	&dhd_attr_dump_in_progress.attr,
-#endif /* DHD_FILE_DUMP_EVENT && DHD_FW_COREDUMP */
+#endif /* (DHD_FILE_DUMP_EVENT || DHD_DMPD) && DHD_FW_COREDUMP */
 #ifdef DHD_DUMP_START_COMMAND
 	&dhd_attr_dump_start_command.attr,
 #endif /* DHD_DUMP_START_COMMAND */
@@ -3016,6 +3201,13 @@ static struct attribute *default_file_attrs[] = {
 #endif /* PCIE_FULL_DONGLE */
 	&dhd_attr_tcm_test_mode.attr,
 	&dhd_attr_arp_print.attr,
+#ifdef DHD_DMPD
+	&dhd_attr_dmpd_log_level.attr,
+	&dhd_attr_dmpd_log_size.attr,
+	&dhd_attr_dmpd_dbgring_status.attr,
+	&dhd_attr_dmpd_dbgring_interval.attr,
+	&dhd_attr_dmpd_dbgring_threshold.attr,
+#endif /* DHD_DMPD */
 	NULL
 };
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
@@ -4090,7 +4282,7 @@ static struct kobj_attribute hdm_wlan_attr =
 	__ATTR(hdm_wlan_loader, 0660, NULL, hdm_load_module);
 
 void
-dhd_hdm_wlan_sysfs_init()
+dhd_hdm_wlan_sysfs_init(void)
 {
 	DHD_PRINT(("export hdm_wlan_loader\n"));
 	if (sysfs_create_file(kernel_kobj, &hdm_wlan_attr.attr)) {

@@ -5,8 +5,14 @@ ifneq ($(CONFIG_DEBUG_FS),)
 wonder-y += debugfs.o
 endif
 
-all:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
+M ?= $(shell pwd)
 
-clean:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
+#EXTRA_CFLAGS += -I$(KERNEL_SRC)/../google-modules/wlan/wonder
+
+ccflags-y := $(EXTRA_CFLAGS)
+
+modules modules_install clean:
+	$(MAKE) -C $(KERNEL_SRC) M=$(M) W=1 \
+    $(KBUILD_OPTIONS) EXTRA_CFLAGS="$(EXTRA_CFLAGS)" KBUILD_EXTRA_SYMBOLS="$(EXTRA_SYMBOLS)" $(@)
+

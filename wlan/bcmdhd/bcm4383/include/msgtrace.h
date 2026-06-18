@@ -1,7 +1,7 @@
 /*
  * Trace messages sent over HBUS
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -51,7 +51,7 @@ typedef BWL_PRE_PACKED_STRUCT struct msgtrace_hdr {
 	uint32  discarded_printf; /* Number of discarded printf because of trace overflow */
 } BWL_POST_PACKED_STRUCT msgtrace_hdr_t;
 
-#define MSGTRACE_HDRLEN 	sizeof(msgtrace_hdr_t)
+#define MSGTRACE_HDRLEN	sizeof(msgtrace_hdr_t)
 
 /* This marks the end of a packed structure section. */
 #include <packed_section_end.h>

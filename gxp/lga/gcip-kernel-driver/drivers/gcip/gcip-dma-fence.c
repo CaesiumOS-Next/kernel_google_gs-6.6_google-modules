@@ -2,7 +2,7 @@
 /*
  * GCIP support of DMA fences.
  *
- * Copyright (C) 2023 Google LLC
+ * Copyright (C) 2023-2026 Google LLC
  */
 
 #include <linux/bitops.h>
@@ -67,36 +67,96 @@ static const char *sync_status_str(int status)
 	return "active";
 }
 
-struct gcip_dma_fence_manager *gcip_dma_fence_manager_create(struct device *dev)
+struct gcip_dma_fence_manager *gcip_dma_fence_manager_create(struct device *dev, char *driver_name)
 {
 	struct gcip_dma_fence_manager *mgr = devm_kzalloc(dev, sizeof(*mgr), GFP_KERNEL);
 
 	if (!mgr)
 		return ERR_PTR(-ENOMEM);
 
-	INIT_LIST_HEAD(&mgr->fence_list_head);
+	INIT_LIST_HEAD(&mgr->fence_list);
 	spin_lock_init(&mgr->fence_list_lock);
+	strscpy(mgr->driver_name, driver_name, GCIP_FENCE_DRIVER_NAME_LEN);
 	mgr->dev = dev;
 
 	return mgr;
 }
 
-const char *gcip_dma_fence_get_timeline_name(struct dma_fence *fence)
+static void gcip_dma_fence_manager_add_fence(struct gcip_dma_fence_manager *mgr,
+					     struct gcip_dma_fence *gfence)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&mgr->fence_list_lock, flags);
+	list_add_tail(&gfence->list_node, &mgr->fence_list);
+	spin_unlock_irqrestore(&mgr->fence_list_lock, flags);
+}
+
+static void gcip_dma_fence_manager_del_fence(struct gcip_dma_fence_manager *mgr,
+					     struct gcip_dma_fence *gfence)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&mgr->fence_list_lock, flags);
+	list_del(&gfence->list_node);
+	spin_unlock_irqrestore(&mgr->fence_list_lock, flags);
+}
+
+void gcip_dma_fence_manager_show(struct gcip_dma_fence_manager *mgr, struct seq_file *s,
+				 void (*fence_show)(struct gcip_dma_fence *, struct seq_file *))
+{
+	struct gcip_dma_fence *gfence;
+	unsigned long flags;
+
+	spin_lock_irqsave(&mgr->fence_list_lock, flags);
+	list_for_each_entry(gfence, &mgr->fence_list, list_node) {
+		if (fence_show)
+			fence_show(gfence, s);
+		else
+			gcip_dma_fence_show(gfence, s);
+	}
+	spin_unlock_irqrestore(&mgr->fence_list_lock, flags);
+}
+
+static const char *gcip_dma_fence_get_driver_name(struct dma_fence *fence)
+{
+	struct gcip_dma_fence *gfence = to_gfence(fence);
+
+	return gfence->mgr->driver_name;
+}
+
+static const char *gcip_dma_fence_get_timeline_name(struct dma_fence *fence)
 {
 	struct gcip_dma_fence *gfence = to_gfence(fence);
 
 	return gfence->timeline_name;
 }
 
-bool gcip_dma_fence_always_true(struct dma_fence *fence)
+static bool gcip_dma_fence_enable_signaling(struct dma_fence *fence)
 {
 	return true;
 }
 
+static void gcip_dma_fence_release(struct dma_fence *fence)
+{
+	struct gcip_dma_fence *gfence = to_gfence(fence);
+
+	if (gfence->release)
+		gfence->release(gfence);
+	else
+		gcip_dma_fence_exit(gfence);
+}
+
+const struct dma_fence_ops gcip_dma_fence_ops = {
+	.get_driver_name = gcip_dma_fence_get_driver_name,
+	.get_timeline_name = gcip_dma_fence_get_timeline_name,
+	.enable_signaling = gcip_dma_fence_enable_signaling,
+	.release = gcip_dma_fence_release,
+};
+
 int gcip_dma_fence_init(struct gcip_dma_fence_manager *mgr, struct gcip_dma_fence *gfence,
 			struct gcip_dma_fence_data *data)
 {
-	unsigned long flags;
 	int fd;
 	struct sync_file *sync_file;
 	int ret;
@@ -104,55 +164,48 @@ int gcip_dma_fence_init(struct gcip_dma_fence_manager *mgr, struct gcip_dma_fenc
 	strscpy(gfence->timeline_name, data->timeline_name, GCIP_FENCE_TIMELINE_NAME_LEN);
 
 	spin_lock_init(&gfence->lock);
-	INIT_LIST_HEAD(&gfence->fence_list);
+	INIT_LIST_HEAD(&gfence->list_node);
 	gfence->mgr = mgr;
+	gfence->release = data->release;
 
-	dma_fence_init(&gfence->fence, data->ops, &gfence->lock, dma_fence_context_alloc(1),
-		       data->seqno);
-	GCIP_DMA_FENCE_LIST_LOCK(mgr, flags);
-	list_add_tail(&gfence->fence_list, &mgr->fence_list_head);
-	GCIP_DMA_FENCE_LIST_UNLOCK(mgr, flags);
+	dma_fence_init(&gfence->fence, &gcip_dma_fence_ops, &gfence->lock,
+		       dma_fence_context_alloc(1), data->seqno);
 
-	if (data->after_init) {
-		ret = data->after_init(gfence);
-		if (ret) {
-			dev_err(mgr->dev, "DMA fence init failed on after_init: %d", ret);
-			goto err_put_fence;
-		}
-	}
+	gcip_dma_fence_manager_add_fence(mgr, gfence);
+
 	fd = get_unused_fd_flags(O_CLOEXEC);
 	if (fd < 0) {
 		ret = fd;
 		dev_err(mgr->dev, "Failed to get FD: %d", ret);
-		goto err_put_fence;
+		goto err_manager_del_fence;
 	}
+
 	sync_file = sync_file_create(&gfence->fence);
 	if (!sync_file) {
 		dev_err(mgr->dev, "Failed to create sync file");
 		ret = -ENOMEM;
 		goto err_put_fd;
 	}
+
 	/* sync_file holds the reference to fence, so we can drop our reference. */
 	dma_fence_put(&gfence->fence);
 
 	fd_install(fd, sync_file->file);
 	data->fence = fd;
+
 	return 0;
 
 err_put_fd:
 	put_unused_fd(fd);
-err_put_fence:
-	dma_fence_put(&gfence->fence);
+err_manager_del_fence:
+	gcip_dma_fence_manager_del_fence(gfence->mgr, gfence);
+
 	return ret;
 }
 
 void gcip_dma_fence_exit(struct gcip_dma_fence *gfence)
 {
-	unsigned long flags;
-
-	GCIP_DMA_FENCE_LIST_LOCK(gfence->mgr, flags);
-	list_del(&gfence->fence_list);
-	GCIP_DMA_FENCE_LIST_UNLOCK(gfence->mgr, flags);
+	gcip_dma_fence_manager_del_fence(gfence->mgr, gfence);
 }
 
 int gcip_dma_fence_status(int fence, int *status)

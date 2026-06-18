@@ -163,6 +163,7 @@ err:
 static void encoder_unbind(struct device *dev, struct device *master, void *data)
 {
 	struct simple_encoder *simple = dev_get_drvdata(dev);
+
 	drm_encoder_cleanup(&simple->encoder);
 }
 

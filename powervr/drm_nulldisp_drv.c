@@ -112,7 +112,7 @@
 
 #include "kernel_compatibility.h"
 
-MODULE_IMPORT_NS(DMA_BUF);
+MODULE_IMPORT_NS(COMPAT_DMA_BUF);
 
 #define DRIVER_NAME "nulldisp"
 #define DRIVER_DESC "Imagination Technologies Null DRM Display Driver"
@@ -966,7 +966,7 @@ nulldisp_connector_helper_get_modes(struct drm_connector *connector)
 
 static enum drm_mode_status
 nulldisp_connector_helper_mode_valid(struct drm_connector *connector,
-				     struct drm_display_mode *mode)
+				     DRM_DISPLAY_MODE *mode)
 {
 	/*
 	 * This function is called on each gathered mode (e.g. via EDID)

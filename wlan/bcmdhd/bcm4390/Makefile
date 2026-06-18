@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2025, Broadcom.
+# Copyright (C) 2026, Broadcom.
 #
 #      Unless you and Broadcom execute a separate written software license
 # agreement governing use of this software, this software is licensed to you
@@ -46,7 +46,6 @@ ifneq ($(KERNEL_SRC),)
   endif
   EXTRA_CFLAGS+="-Wno-missing-prototypes"
 endif
-
 
 # Define and "all" target, which isn't really needed but doesn't hurt.
 all: modules

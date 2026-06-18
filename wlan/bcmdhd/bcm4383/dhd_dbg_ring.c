@@ -1,7 +1,7 @@
 /*
  * DHD debug ring API and structures - implementation
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -539,6 +539,23 @@ dhd_dbg_ring_config(dhd_dbg_ring_t *ring, int log_level, uint32 threshold)
 	ring->log_level = log_level;
 	ring->threshold = MIN(threshold, DBGRING_FLUSH_THRESHOLD(ring));
 
+	DHD_DBG_RING_UNLOCK(ring->lock, flags);
+
+	return BCME_OK;
+}
+
+int
+dhd_dbg_ring_set_sched_pull(dhd_dbg_ring_t *ring, bool flag)
+{
+	unsigned long flags = 0;
+
+	if (!ring) {
+		DHD_ERROR(("ring addr is null\n"));
+		return BCME_BADADDR;
+	}
+
+	DHD_DBG_RING_LOCK(ring->lock, flags);
+	ring->sched_pull = flag;
 	DHD_DBG_RING_UNLOCK(ring->lock, flags);
 
 	return BCME_OK;

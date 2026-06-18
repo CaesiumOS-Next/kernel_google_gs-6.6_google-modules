@@ -1,7 +1,7 @@
 /*
  * Driver O/S-independent utility routines
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -20,6 +20,14 @@
  *
  * <<Broadcom-WL-IPTag/Dual:>>
  */
+
+// For strict C17 Posix 2008 target builds, enable bzero()
+#define _GNU_SOURCE 1
+
+#if defined(__linux__) && !defined(BCMDRIVER)
+// for 'uint'
+#define USE_TYPEDEF_DEFAULTS
+#endif
 
 #include <typedefs.h>
 #include <bcmdefs.h>
@@ -43,6 +51,9 @@
 
 #else /* !BCMDRIVER */
 
+#if defined(__linux__) && !defined(BCMFUZZ)
+#include <strings.h>
+#endif
 #include <stdio.h>
 #include <string.h>
 #include <bcmutils.h>
@@ -123,6 +134,16 @@ BCMRAMFN(privacy_addrmask_get)(void)
 }
 #endif /* PRIVACY_MASK */
 
+#if defined(PRIORITIZE_ARP)
+/* default value is set at NC/TID=7 */
+uint8 prio_arp = PRIO_8021D_NC;
+#endif
+
+int BCMACCESSOR_RAMFN(bcm_get_last_err)(void)
+{
+	return BCME_LAST;
+}
+
 #ifdef BCMDRIVER
 
 #ifndef BCM_ARM_BACKTRACE
@@ -144,32 +165,21 @@ void (*const BCMPOST_TRAP_RODATA(print_btrace_int_fn))(int depth, uint32 pc, uin
 /* Forward declarations */
 static int getintvararray_internal(char *vars, const char *name, int index);
 static int getintvararraysize_internal(char *vars, const char *name);
-static
-#ifndef ATE_BUILD
-const
-#endif
-char * getvar_internal(char *vars, const char *name);
+static const char *getvar_internal(char *vars, const char *name);
 static int getintvar_internal(char *vars, const char *name);
 
 /*
  * Search the name=value vars for a specific one and return its value.
  * Returns NULL if not found.
  */
-#ifndef ATE_BUILD
-const
-#endif
-char *
+const char *
 getvar(char *vars, const char *name)
 {
 	NVRAM_RECLAIM_CHECK(name);
 	return getvar_internal(vars, name);
 }
 
-static
-#ifndef ATE_BUILD
-const
-#endif
-char *
+static const char *
 getvar_internal(char *vars, const char *name)
 {
 	char *s;
@@ -397,6 +407,15 @@ end:
 }
 #endif /* BCM_BOOTLOADER */
 
+#if defined(WLC_NVRAMSIG)
+int
+getvarsig(const uint8 **sig, uint *ssize, const char **var, int *vsize, uint idx)
+{
+	NVRAM_RECLAIM_CHECK("getvarsig");
+	return nvram_get_sig(sig, ssize, var, vsize, idx);
+}
+#endif /* WLC_NVRAMSIG */
+
 #if defined(BCMNVRAMR) || defined (BCMNVRAMW)
 /* Search for token in comma separated token-string */
 static int
@@ -531,7 +550,7 @@ BCMFASTPATH(pktsegcnt)(osl_t *osh, void *p)
 			cnt++;
 		}
 #ifdef BCMLFRAG
-		if (BCMLFRAG_ENAB() && PKTISFRAG(osh, p)) {
+		if (BCMLFRAG_ENAB() && PKTISTXFRAG(osh, p)) {
 				cnt += PKTFRAGTOTNUM(osh, p);
 		}
 #endif /* BCMLFRAG */
@@ -723,9 +742,9 @@ struct bcm_sm_log_info {
 	 * TODO: any issue with packing?
 	 */
 	uint8 *state;		/* Logger data: State number */
-	uint8 *event;		/* Logger data: State number */
+	uint8 *event;		/* Logger data: Event number */
 	void **call_site;	/* Logger data: Caller address */
-	uint32 *time_stamp;	/* Logger data: Caller address */
+	uint32 *time_stamp;	/* Logger data: Time stamp */
 	void *data;		/* Logger data: Module specific data */
 };
 
@@ -740,7 +759,7 @@ struct bcm_sm_log_info {
  *
  * @return Returns the pointer to logger instance
  */
-void *
+bcm_sm_log_info_t *
 bcm_sm_logger_init(osl_t *osh, uint32 flags, uint32 num_entries, uint32 module_entry_sz)
 {
 	bcm_sm_log_info_t *bsli;
@@ -758,7 +777,7 @@ bcm_sm_logger_init(osl_t *osh, uint32 flags, uint32 num_entries, uint32 module_e
 
 		if (flags & BCM_SM_LOG_FLAG_EVENT_PRESENT) {
 			bsli->event = MALLOCZ(osh, (num_entries * sizeof(*bsli->state)));
-			if (!bsli->state) {
+			if (!bsli->event) {
 				goto fail;
 			}
 		}
@@ -782,20 +801,29 @@ bcm_sm_logger_init(osl_t *osh, uint32 flags, uint32 num_entries, uint32 module_e
 	return bsli;
 
 fail:
-	MFREE(osh, bsli, sizeof(*bsli));
-	MFREE(osh, bsli->state, (num_entries * sizeof(*bsli->state)));
-	MFREE(osh, bsli->event, (num_entries * sizeof(*bsli->event)));
-	MFREE(osh, bsli->call_site, (num_entries * sizeof(*bsli->call_site)));
-	MFREE(osh, bsli->time_stamp, (num_entries * sizeof(*bsli->time_stamp)));
-	MFREE(osh, bsli->data, (num_entries * (num_entries * module_entry_sz)));
-
+	bcm_sm_logger_deinit(osh, bsli);
 	return NULL;
+}
+
+void
+bcm_sm_logger_deinit(osl_t *osh, bcm_sm_log_info_t *bsli)
+{
+	if (bsli == NULL) {
+		return;
+	}
+
+	MFREE(osh, bsli->state, (bsli->num_entries * sizeof(*bsli->state)));
+	MFREE(osh, bsli->event, (bsli->num_entries * sizeof(*bsli->event)));
+	MFREE(osh, bsli->call_site, (bsli->num_entries * sizeof(*bsli->call_site)));
+	MFREE(osh, bsli->time_stamp, (bsli->num_entries * sizeof(*bsli->time_stamp)));
+	MFREE(osh, bsli->data, (bsli->num_entries * bsli->module_entry_sz));
+	MFREE(osh, bsli, sizeof(*bsli));
 }
 
 /**
  * @brief Logs the state info in a given logger instance.
  *
- * @param[in] bcmli	 Pointer to logger instance
+ * @param[in] bcmli	Pointer to logger instance
  * @param[in] state      State number (supports upto 255)
  * @param[in] event      Event number (supports upto 255)
  * @param[in] call_site  Caller address
@@ -807,10 +835,6 @@ bcm_sm_log(bcm_sm_log_info_t *bsli, uint32 state, uint32 event, void *call_site)
 {
 	uint32 idx = bsli->idx;
 	void *data;
-
-	if (state > 255u) {
-		OSL_SYS_HALT();
-	}
 
 	bsli->state[idx] = (uint8) state;
 	bsli->call_site[idx] = call_site;
@@ -1271,8 +1295,10 @@ BCMFASTPATH(pktsetprio)(void *pkt, bool update_vtag)
 		 * congested scenarios with traffic, ARP packets may not get chance
 		 * for transmission leading to disconnection. so prioritize it.
 		 */
-		priority = PRIO_8021D_NC;
-		rc = PKTPRIO_DSCP;
+		if (prio_arp) {
+			priority = prio_arp;
+			rc = PKTPRIO_DSCP;
+		}
 #endif /* PRIORITIZE_ARP */
 #if defined(WLTDLS)
 	} else if (eh->ether_type == hton16(ETHER_TYPE_89_0D)) {
@@ -1527,9 +1553,9 @@ const char *
 BCMRAMFN(bcmerrorstr)(int bcmerror)
 {
 	/* check if someone added a bcmerror code but forgot to add errorstring */
-	ASSERT(ABS(BCME_LAST) == (ARRAYSIZE(bcmerrorstrtable) - 1));
+	STATIC_ASSERT(ABS(BCME_LAST) == (ARRAYSIZE(bcmerrorstrtable) - 1));
 
-	if (bcmerror > 0 || bcmerror < BCME_LAST) {
+	if (bcmerror > 0 || bcmerror < bcm_get_last_err()) {
 		snprintf(bcm_undeferrstr, sizeof(bcm_undeferrstr), "Undefined error %d", bcmerror);
 		return bcm_undeferrstr;
 	}
@@ -2693,11 +2719,9 @@ dll_pool_dump(dll_pool_t * dll_pool_p, dll_elem_dump elem_dump)
 	}
 }
 #endif /* BCMDBG */
-
 #endif /* BCMDRIVER */
 
 #if defined(BCMDRIVER) || defined(WL_UNITTEST)
-
 #ifndef DONGLEBUILD
 /* triggers bcm_bprintf to print to kernel log */
 bool bcm_bprintf_bypass = FALSE;
@@ -2939,8 +2963,7 @@ bcm_find_vendor_ie(const  void *tlvs, uint tlvs_len, const char *voui, uint8 *ty
 		ie_len = ie->len;
 		if ((ie->id == DOT11_MNG_VS_ID) &&
 		    (ie_len >= (DOT11_OUI_LEN + type_len)) &&
-		    !memcmp(ie->data, voui, DOT11_OUI_LEN))
-		{
+		    !memcmp(ie->data, voui, DOT11_OUI_LEN)) {
 			/* compare optional type */
 			if (type_len == 0 ||
 			    !memcmp(((const char *)ie->data) + DOT11_OUI_LEN, type, type_len)) {
@@ -2959,7 +2982,7 @@ bcm_find_vendor_ie(const  void *tlvs, uint tlvs_len, const char *voui, uint8 *ty
 
 /* Masking few bytes of MAC address per customer in all prints/eventlogs. */
 int
-BCMRAMFN(bcm_addrmask_set)(int enable)
+bcm_addrmask_set(int enable)
 {
 #ifdef PRIVACY_MASK
 	struct ether_addr *privacy = privacy_addrmask_get();
@@ -2972,8 +2995,7 @@ BCMRAMFN(bcm_addrmask_set)(int enable)
 			privacy->octet[3] = 0;
 		privacy->octet[0] = privacy->octet[5] = 0xff;
 		privacy->octet[4] = 0x0f;
-	} else
-	{
+	} else {
 		/* No masking. All are 0xff. */
 		eacopy(&ether_bcast, privacy);
 	}
@@ -2983,7 +3005,6 @@ BCMRAMFN(bcm_addrmask_set)(int enable)
 	BCM_REFERENCE(enable);
 	return BCME_UNSUPPORTED;
 #endif /* PRIVACY_MASK */
-
 }
 
 int
@@ -3005,7 +3026,7 @@ bcm_addrmask_get(int *val)
 }
 
 uint64
-BCMRAMFN(bcm_ether_ntou64)(const struct ether_addr *ea)
+bcm_ether_ntou64(const struct ether_addr *ea)
 {
 	uint64 mac;
 	struct ether_addr addr;
@@ -3028,11 +3049,10 @@ BCMRAMFN(bcm_ether_ntou64)(const struct ether_addr *ea)
 char *
 bcm_ether_ntoa(const struct ether_addr *ea, char *buf)
 {
-	static const char hex[] =
-	  {
-		  '0', '1', '2', '3', '4', '5', '6', '7',
-		  '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
-	  };
+	static const char hex[] = {
+		'0', '1', '2', '3', '4', '5', '6', '7',
+		'8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
+	};
 	const uint8 *octet = ea->octet;
 	char *p = buf;
 	int i;
@@ -4381,7 +4401,7 @@ static const uint32 BCMPOST_TRAP_RODATA(crc32_table)[256] = {
  * accumulating over multiple pieces.
  */
 uint32
-BCMPOSTTRAPRAMFN(hndcrc32)(const uint8 *pdata, uint nbytes, uint32 crc)
+BCMPOSTTRAPFN(hndcrc32)(const uint8 *pdata, uint nbytes, uint32 crc)
 {
 	const uint8 *pend;
 	pend = pdata + nbytes;
@@ -5039,8 +5059,10 @@ prhex(const char *msg, const uchar *buf, uint nbytes)
 	int nchar;
 	uint i;
 
-	if (msg && (msg[0] != '\0'))
+	if (msg && (msg[0] != '\0')) {
+		printf("%s (len=%u):\n", msg, nbytes);
 		printf("%s:\n", msg);
+	}
 
 	p = line;
 	for (i = 0; i < nbytes; i++) {
@@ -5080,6 +5102,9 @@ static const char *crypto_algo_names[] = {
 	"UNDEF",
 	"UNDEF",
 
+#ifdef BCMWAPI_WAI
+	"WAPI",
+#endif /* BCMWAPI_WAI */
 
 #ifndef BCMWAPI_WAI
 	"UNDEF",
@@ -5670,9 +5695,9 @@ bcm_sub_64(uint32* r_hi, uint32* r_lo, uint32 offset)
 }
 
 int
-BCMRAMFN(valid_bcmerror)(int e)
+valid_bcmerror(int e)
 {
-	return ((e <= 0) && (e >= BCME_LAST));
+	return ((e <= 0) && (e >= bcm_get_last_err()));
 }
 
 #ifdef DEBUG_COUNTER
@@ -6426,7 +6451,11 @@ BCMATTACHFN(initvars_table)(osl_t *osh, char *start, char *end, char **vars,
 
 	/* do it only when there is more than just the null string */
 	if (c > 1) {
+#if defined(BCMSDIODEV_ENABLED)
+		char *vp = MALLOC_NOPERSIST(osh, c);
+#else
 		char *vp = MALLOCZ(osh, c);
+#endif
 		ASSERT(vp != NULL);
 		if (!vp)
 			return BCME_NOMEM;

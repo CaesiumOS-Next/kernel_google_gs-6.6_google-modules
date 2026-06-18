@@ -5,7 +5,7 @@
  *
  * Definitions subject to change without notice.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -296,7 +296,7 @@ typedef struct dhd_pktgen {
 
 /* Type of test packets to use */
 #define DHD_PKTGEN_ECHO		1 /* Send echo requests */
-#define DHD_PKTGEN_SEND 	2 /* Send discard packets */
+#define DHD_PKTGEN_SEND		2 /* Send discard packets */
 #define DHD_PKTGEN_RXBURST	3 /* Request dongle send N packets */
 #define DHD_PKTGEN_RECV		4 /* Continuous rx from continuous tx dongle */
 #endif /* SDTEST */
@@ -383,6 +383,13 @@ typedef struct debug_buf_dest_stat {
 } debug_buf_dest_stat_t;
 
 
+#ifdef DHD_FWTRACE
+/* firmware trace information */
+typedef struct dhd_fwtrace_info {
+	uint32 val;	/* value which specifies firmware trace ON/OFF */
+	uint8 filename[32]; /* 32 bytes for filename */
+} dhd_fwtrace_info_t;
+#endif /* DHD_FWTRACE */
 
 /* devreset */
 #define DHD_DEVRESET_VERSION 1
@@ -418,6 +425,14 @@ typedef struct dhd_tx_profile_protocol {
 #define DHD_MAX_PROFILES	(1u)	/* ucode only supports 1 profile atm */
 
 #endif /* defined(DHD_TX_PROFILE) */
+
+/* Pkt LLC get return structure */
+struct dhd_pkt_llc_st {
+	unsigned int len;
+	char buf[];
+};
+
+#define DHD_MAX_PKT_LLC_PAYLOAD_LEN	32u /* Max configurable LLC header len */
 
 typedef struct dhd_loglevel_data {
 	uint32 type;

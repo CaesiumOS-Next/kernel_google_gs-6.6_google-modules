@@ -18,6 +18,7 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 
+#include <gcip/gcip-dma-fence.h>
 #include <gcip/gcip-fence-array.h>
 #include <iif/iif-fence.h>
 
@@ -69,8 +70,6 @@ struct edgetpu_device_group {
 	 * when ref_count becomes zero.
 	 */
 	refcount_t ref_count;
-	/* Group ID number for info/debugging purposes. */
-	uint group_id;
 	struct edgetpu_dev *etdev;	/* the device opened by the client */
 	/*
 	 * Whether mailbox attaching and detaching have effects on this group.
@@ -79,16 +78,6 @@ struct edgetpu_device_group {
 	 */
 	bool mailbox_detachable;
 	bool mailbox_attached;
-	/*
-	 * Whether group->etdev is inaccessible.
-	 * Some group operations will access device CSRs. If the device is known to be
-	 * inaccessible (typically not powered on) then set this field to true to
-	 * prevent HW interactions.
-	 *
-	 * Is not protected by @lock because this is only written when releasing the
-	 * client of this group.
-	 */
-	bool dev_inaccessible;
 	/* Virtual context ID to be sent to the firmware. */
 	u16 vcid;
 
@@ -132,6 +121,8 @@ struct edgetpu_device_group {
 	 * @lock must also be held for reading or writing whenever @dma_fence_lock is held.
 	 */
 	struct mutex dma_fence_lock;
+	/* The DMA fence manager for this group. */
+	struct gcip_dma_fence_manager *gfence_mgr;
 
 	/*
 	 * Used to synchronize any mapping operations for this device group.
@@ -243,7 +234,7 @@ static inline uint edgetpu_group_get_fatal_errors_locked(struct edgetpu_device_g
 static inline int edgetpu_group_errno(struct edgetpu_device_group *group)
 {
 	if (edgetpu_device_group_is_errored(group)) {
-		etdev_err(group->etdev, "group %u error status 0x%x\n", group->group_id,
+		etdev_err(group->etdev, "client %s error status 0x%x\n", group->client->name,
 			  edgetpu_group_get_fatal_errors_locked(group));
 		return -ECANCELED;
 	}
@@ -269,7 +260,10 @@ void edgetpu_device_group_put(struct edgetpu_device_group *group);
  * Creates a device group for @client.
  *
  * @client must not already have created a group.
- * @client->group will be set as the returned group on success.
+ * @client->group will be set as the returned group with status EDGETPU_DEVICE_GROUP_READY on
+ * success. If creation fails at edgetpu_device_group_finish_setup(), @client->group will be set as
+ * the returned group with status EDGETPU_DEVICE_GROUP_DISBANDED and will be properly cleaned up
+ * when the client is removed.
  *
  * Call edgetpu_device_group_put() when the returned group is not needed.
  *
@@ -281,10 +275,10 @@ edgetpu_device_group_create(struct edgetpu_client *client, const struct edgetpu_
 
 /*
  * Disband the device group @client created.
- * The group will be marked as "disbanded".
+ * The group will be marked as "disbanded". The client will hold a reference to the disbanded group
+ * until the client is removed.
  *
  * @client->group will be removed from @client->etdev->groups.
- * @client->group will be set as NULL.
  */
 void edgetpu_device_group_disband(struct edgetpu_client *client);
 

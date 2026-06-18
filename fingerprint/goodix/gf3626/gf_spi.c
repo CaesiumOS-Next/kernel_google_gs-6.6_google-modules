@@ -27,6 +27,8 @@
 #include <linux/regulator/consumer.h>
 #include <linux/of_gpio.h>
 #include <linux/timer.h>
+#include <linux/jiffies.h>
+#include <linux/refcount.h>
 #include <linux/notifier.h>
 #include <linux/fb.h>
 #include <linux/pm_qos.h>
@@ -42,11 +44,13 @@
 #include <linux/platform_device.h>
 #endif
 
+
 #define VER_MAJOR 1
 #define VER_MINOR 2
 #define PATCH_LEVEL 13
 
-#define WAKELOCK_HOLD_TIME 5000 /* in ms */
+#define IRQ_WAKELOCK_HOLD_TIME_MS 2000 /* in ms */
+#define SPI_WAKELOCK_TIME_MS 5000 /* ms*/
 
 #define GF_SPIDEV_NAME "goodix,fingerprint"
 /* device name after register in character */
@@ -83,6 +87,102 @@ static struct gf_key_map maps[] = {
 #endif
 };
 
+/**
+ * timed_wakelock_acquire() - Acquire a wakelock and set a timeout.
+ * @tw:   Pointer to the timed_wakelock struct.
+ * @msec: The timeout for the wakelock in milliseconds.
+ *
+ * This function acquires the wakelock if it's not already active, increments
+ * a reference counter, and sets (or resets) a timer to automatically release
+ * the wakelock after the specified timeout. This prevents the wakelock from
+ * being held indefinitely.
+ */
+static void timed_wakelock_acquire(struct timed_wakelock *tw,
+	unsigned int msec)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&tw->lock, flags);
+
+	if (!refcount_inc_not_zero(&tw->active_count)) {
+		/* Refcount was 0, acquire wakelock */
+		refcount_set(&tw->active_count, 1);
+		__pm_stay_awake(tw->ws);
+	}
+	/* Set/reset the timer to the desired expiration. */
+	mod_timer(&tw->timer, jiffies + msecs_to_jiffies(msec));
+	spin_unlock_irqrestore(&tw->lock, flags);
+}
+/**
+ * timed_wakelock_release() - Release a wakelock.
+ * @tw:            Pointer to the timed_wakelock struct.
+ * @force_release: If true, the wakelock is released immediately, ignoring the
+ *                 reference count.
+ *
+ * This function decrements the wakelock's reference count. The wakelock is
+ * only fully released (and the timeout timer cancelled) if the count reaches
+ * zero or if a forced release is requested.
+ */
+static void timed_wakelock_release(struct timed_wakelock *tw, bool force_release)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&tw->lock, flags);
+	if (refcount_read(&tw->active_count) == 0) {
+		/* Wakelock already released, do nothing. */
+	} else if (refcount_dec_and_test(&tw->active_count) || force_release) {
+		del_timer(&tw->timer);
+		__pm_relax(tw->ws);
+		refcount_set(&tw->active_count, 0);
+	}
+	spin_unlock_irqrestore(&tw->lock, flags);
+}
+/**
+ * timed_wakelock_timeout() - Timer callback to release a wakelock.
+ * @t: Pointer to the timer_list struct.
+ *
+ * This function is the callback executed when the timer expires. It forces
+ * the release of the associated wakelock to ensure it is not held indefinitely.
+ */
+static void timed_wakelock_timeout(struct timer_list *t)
+{
+	struct timed_wakelock *tw = from_timer(tw, t, timer);
+
+	pr_debug("%s timer expired\n", tw->ws->name);
+	timed_wakelock_release(tw, true);
+}
+/**
+ * init_timed_wakelock() - Initialize a timed wakelock.
+ * @tw:   Pointer to the timed_wakelock struct to be initialized.
+ * @name: The name for the wakeup source.
+ *
+ * This function initializes the components of a timed_wakelock struct,
+ * including registering a new wakeup source, setting up the timer, and
+ * initializing the spinlock and reference counter.
+ */
+static void init_timed_wakelock(struct timed_wakelock *tw, const char *name)
+{
+	tw->ws = wakeup_source_register(NULL, name);
+	timer_setup(&tw->timer, timed_wakelock_timeout, 0);
+	refcount_set(&tw->active_count, 0);
+	spin_lock_init(&tw->lock);
+}
+/**
+ * cleanup_timed_wakelock() - Clean up a timed wakelock.
+ * @tw: Pointer to the timed_wakelock struct to be cleaned up.
+ *
+ * This function releases the resources associated with a timed wakelock. It
+ * ensures the timer is deleted and the wakeup source is unregistered.
+ */
+static void cleanup_timed_wakelock(struct timed_wakelock *tw)
+{
+	if (!tw->ws)
+		return;
+	del_timer_sync(&tw->timer);
+	wakeup_source_unregister(tw->ws);
+	tw->ws = NULL;
+}
+
 static void gf_enable_irq(struct gf_dev *gf_dev)
 {
 	if (gf_dev->irq_enabled) {
@@ -91,7 +191,8 @@ static void gf_enable_irq(struct gf_dev *gf_dev)
 	}
 
 	enable_irq(gf_dev->irq);
-	enable_irq_wake(gf_dev->irq);
+	if (device_may_wakeup(&gf_dev->spi->dev))
+		enable_irq_wake(gf_dev->irq);
 	gf_dev->irq_enabled = 1;
 }
 
@@ -102,8 +203,9 @@ static void gf_disable_irq(struct gf_dev *gf_dev)
 		return;
 	}
 
+	if (device_may_wakeup(&gf_dev->spi->dev))
+		disable_irq_wake(gf_dev->irq);
 	disable_irq(gf_dev->irq);
-	disable_irq_wake(gf_dev->irq);
 	gf_dev->irq_enabled = 0;
 }
 
@@ -315,7 +417,7 @@ static irqreturn_t gf_irq(int irq, void *handle)
 #if defined(GF_NETLINK_ENABLE)
 	char msg = GF_NET_EVENT_IRQ;
 
-	__pm_wakeup_event(fp_wakeup_source, WAKELOCK_HOLD_TIME);
+	__pm_wakeup_event(fp_wakeup_source, IRQ_WAKELOCK_HOLD_TIME_MS);
 	sendnlmsg(&msg);
 #elif defined(GF_FASYNC)
 	struct gf_dev *gf_dev = &gf;
@@ -471,7 +573,7 @@ static long gf_ioctl_handler(struct file *filp, unsigned int cmd, unsigned long 
 #else
 			pr_debug("doesn't support control clock!\n");
 #endif
-			pm_wakeup_event(&gf_dev->spi->dev, WAKELOCK_HOLD_TIME);
+			timed_wakelock_acquire(&gf_dev->ioctl_wakelock, SPI_WAKELOCK_TIME_MS);
 
 			if (IS_ENABLED(USE_PLATFORM_BUS)) {
 				rpm_res = pm_runtime_resume_and_get(&gf_dev->spi_pinctrl_pdev->dev);
@@ -491,7 +593,7 @@ static long gf_ioctl_handler(struct file *filp, unsigned int cmd, unsigned long 
 			if (IS_ENABLED(USE_PLATFORM_BUS))
 				pm_runtime_put(&gf_dev->spi_pinctrl_pdev->dev);
 
-			pm_relax(&gf_dev->spi->dev);
+			timed_wakelock_release(&gf_dev->ioctl_wakelock, false);
 			break;
 
 		case GF_IOC_ENABLE_POWER:
@@ -749,6 +851,7 @@ static int gf_probe(struct platform_device *pdev)
 		dev_err(&gf_dev->spi->dev, "Failed to register input device\n");
 		goto error_input;
 	}
+	init_timed_wakelock(&gf_dev->ioctl_wakelock, "gf_spi_wakelock");
 
 #ifdef AP_CONTROL_CLK
 	pr_debug("Get the clk resource.\n");
@@ -826,6 +929,7 @@ error_fb:
 error_ws:
 	wakeup_source_unregister(fp_wakeup_source);
 error_fp_ws:
+	cleanup_timed_wakelock(&gf_dev->ioctl_wakelock);
 #ifdef AP_CONTROL_CLK
 	gfspi_ioctl_clk_disable(gf_dev);
 gfspi_probe_clk_enable_failed:
@@ -853,6 +957,7 @@ static int gf_remove(struct platform_device *pdev)
 	fb_unregister_client(&gf_dev->notifier);
 	wakeup_source_unregister(fp_wakeup_source);
 	device_init_wakeup(&gf_dev->spi->dev, false);
+	cleanup_timed_wakelock(&gf_dev->ioctl_wakelock);
 	if (gf_dev->input)
 		input_unregister_device(gf_dev->input);
 	input_free_device(gf_dev->input);

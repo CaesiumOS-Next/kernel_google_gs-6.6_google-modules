@@ -17,7 +17,9 @@
 #include <linux/pm_runtime.h>
 #include <linux/types.h>
 
+#if IS_ENABLED(CONFIG_GOOGLE_MEM_QOS)
 #include <mem-qos/google_qos_box_reg_api.h>
+#endif
 
 #include "edgetpu-config.h"
 #include "edgetpu-device-group.h"
@@ -39,10 +41,6 @@
 /* WDT KEY PIN */
 #define WDT_KEY_PIN		0xA55AA55A
 #endif /* EDGETPU_USE_HW_WDT */
-
-/* LpmControlCsr bits */
-#define LPM_CTRL_LPMCTLPWRSTATE		BIT(0)
-#define LPM_CTRL_TPUPOWEROFF		BIT(5)
 
 #define SHUTDOWN_DELAY_US_MIN 200
 #define SHUTDOWN_DELAY_US_MAX 200
@@ -266,7 +264,7 @@ void edgetpu_soc_pm_dump_block_state(struct edgetpu_dev *etdev)
 
 static int mitigation_response_en_get(void *data, u64 *val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	*val = etdev->soc_data->bcl_mitigation.mitigation_response_en;
 	return 0;
@@ -274,7 +272,7 @@ static int mitigation_response_en_get(void *data, u64 *val)
 
 static int mitigation_response_en_set(void *data, u64 val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	etdev->soc_data->bcl_mitigation.mitigation_response_en = val;
 	etdev_info(etdev, "Set MITIGATION_RESPONSE_EN=%#llx\n", val);
@@ -284,7 +282,7 @@ static int mitigation_response_en_set(void *data, u64 val)
 
 static int mitigation_response_type_get(void *data, u64 *val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	*val = etdev->soc_data->bcl_mitigation.mitigation_response_type;
 	return 0;
@@ -292,7 +290,7 @@ static int mitigation_response_type_get(void *data, u64 *val)
 
 static int mitigation_response_type_set(void *data, u64 val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	etdev->soc_data->bcl_mitigation.mitigation_response_type = val;
 	etdev_info(etdev, "Set MITIGATION_RESPONSE_TYPE=%#llx\n", val);
@@ -302,7 +300,7 @@ static int mitigation_response_type_set(void *data, u64 val)
 
 static int mitigation_response_hyst_get(void *data, u64 *val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	*val = etdev->soc_data->bcl_mitigation.mitigation_response_hyst;
 	return 0;
@@ -310,7 +308,7 @@ static int mitigation_response_hyst_get(void *data, u64 *val)
 
 static int mitigation_response_hyst_set(void *data, u64 val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	etdev->soc_data->bcl_mitigation.mitigation_response_hyst = val;
 	etdev_info(etdev, "Set MITIGATION_RESPONSE_HYST=%#llx\n", val);
@@ -320,7 +318,7 @@ static int mitigation_response_hyst_set(void *data, u64 val)
 
 static int mitigation_div_2_ratio_get(void *data, u64 *val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	*val = etdev->soc_data->bcl_mitigation.div_2_ratio;
 	return 0;
@@ -328,7 +326,7 @@ static int mitigation_div_2_ratio_get(void *data, u64 *val)
 
 static int mitigation_div_2_ratio_set(void *data, u64 val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	etdev->soc_data->bcl_mitigation.div_2_ratio = val;
 	etdev_info(etdev, "Set DIV_2_RATIO=%#llx\n", val);
@@ -338,7 +336,7 @@ static int mitigation_div_2_ratio_set(void *data, u64 val)
 
 static int mitigation_div_4_ratio_get(void *data, u64 *val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	*val = etdev->soc_data->bcl_mitigation.div_4_ratio;
 	return 0;
@@ -346,7 +344,7 @@ static int mitigation_div_4_ratio_get(void *data, u64 *val)
 
 static int mitigation_div_4_ratio_set(void *data, u64 val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	etdev->soc_data->bcl_mitigation.div_4_ratio = val;
 	etdev_info(etdev, "Set DIV_4_RATIO=%#llx\n", val);
@@ -356,7 +354,7 @@ static int mitigation_div_4_ratio_set(void *data, u64 val)
 
 static int mitigation_fll_step_down_mux_get(void *data, u64 *val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	*val = etdev->soc_data->bcl_mitigation.mitigation_fll_step_down_mux;
 	return 0;
@@ -364,7 +362,7 @@ static int mitigation_fll_step_down_mux_get(void *data, u64 *val)
 
 static int mitigation_fll_step_down_mux_set(void *data, u64 val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	etdev->soc_data->bcl_mitigation.mitigation_fll_step_down_mux = val;
 	etdev_info(etdev, "Set MITIGATION_FLL_STEP_DOWN_MUX=%#llx\n", val);
@@ -374,7 +372,7 @@ static int mitigation_fll_step_down_mux_set(void *data, u64 val)
 
 static int thermal_heavy_mitigation_div_ratio_get(void *data, u64 *val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	*val = etdev->soc_data->bcl_mitigation.thermal_heavy_mitigation_div_ratio;
 	return 0;
@@ -382,7 +380,7 @@ static int thermal_heavy_mitigation_div_ratio_get(void *data, u64 *val)
 
 static int thermal_heavy_mitigation_div_ratio_set(void *data, u64 val)
 {
-	struct edgetpu_dev *etdev = (typeof(etdev))data;
+	struct edgetpu_dev *etdev = data;
 
 	etdev->soc_data->bcl_mitigation.thermal_heavy_mitigation_div_ratio = val;
 	etdev_info(etdev, "Set THERMAL_HEAVY_MITIGATION_DIV_RATIO=%#llx\n", val);
@@ -485,6 +483,7 @@ void edgetpu_soc_thermal_exit(struct edgetpu_dev *etdev)
 
 int edgetpu_soc_check_supplier_devices(struct device *dev)
 {
+#if IS_ENABLED(CONFIG_GOOGLE_MEM_QOS)
 	int num_qos_boxes;
 	int i;
 	int ret;
@@ -524,6 +523,7 @@ int edgetpu_soc_check_supplier_devices(struct device *dev)
 		ret = google_qos_box_vc_map_cfg_read(qos_box, &vc_map_cfg_val);
 		dev_dbg(dev, "QoS box %s cfg = %#0x (ret=%d)", qos_box_name, vc_map_cfg_val, ret);
 	}
+#endif /* IS_ENABLED(CONFIG_GOOGLE_MEM_QOS) */
 
 	return 0;
 }

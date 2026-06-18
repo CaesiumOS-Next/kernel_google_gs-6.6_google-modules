@@ -2,7 +2,7 @@
  * Broadcom Dongle Host Driver (DHD),
  * Linux-specific network interface for receive(rx) path
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -62,7 +62,11 @@
 #include <linux/rtc.h>
 #include <linux/namei.h>
 #include <asm/uaccess.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0))
+#include <linux/unaligned.h>
+#else
 #include <asm/unaligned.h>
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0) */
 #include <dhd_linux_priv.h>
 
 #include <epivers.h>
@@ -494,6 +498,11 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 			RX_PKTFREE(dhdp->osh, eh->ether_type, pktbuf, FALSE);
 			continue;
 		}
+		if (ifp->llc_enabled && ifp->llc_hdr) {
+			if (ntoh16(eh->ether_type) < ETHER_TYPE_MIN) {
+				dhd_generic_llc_to_eth_hdr(dhdp, ifidx, eh, pktbuf);
+			}
+		}
 
 		/* Dropping only data packets before registering net device to avoid kernel panic */
 #ifndef PROP_TXSTATUS_VSDB
@@ -705,6 +714,9 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 			if (ETHER_ISUCAST(eh->ether_dhost)) {
 				if (dhd_find_sta(dhdp, ifidx, (void *)eh->ether_dhost)) {
 					dhdp->rx_forward++; /* Local count */
+#ifdef GOOGLE_DAL_CORE
+					DHD_PKT_SET_FORWARD(pktbuf, 1);
+#endif /* GOOGLE_DAL_CORE */
 					dhd_sendpkt(dhdp, ifidx, pktbuf);
 					continue;
 				}
@@ -795,10 +807,18 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan)
 		skb->len = len;
 
 		/* TODO: re-look into dropped packets. */
+#ifdef DHD_PKT_MON_DUAL_STA
+		DHD_DBG_PKT_MON_RX(dhdp, ifidx, skb, FRAME_TYPE_ETHERNET_II, FALSE);
+#else
 		DHD_DBG_PKT_MON_RX(dhdp, skb, FRAME_TYPE_ETHERNET_II, FALSE);
+#endif /* DHD_PKT_MON_DUAL_STA */
+
 		if (ntoh16(skb->protocol) == ETHER_TYPE_BRCM) {
 			DHD_LOG_ROUTE_EVENTS(dhdp->logger, skb, skb->len);
 		}
+
+		DHD_LOG_PKT(dhdp->logger, LOG_TYPE_DATA_PKT, skb, skb->len);
+
 		/* Strip header, count, deliver upward */
 		skb_pull(skb, ETH_HLEN);
 
@@ -1370,6 +1390,14 @@ void
 dhd_rx_mon_pkt(dhd_pub_t *dhdp, host_rxbuf_cmpl_t *msg, void *pkt, int ifidx)
 {
 	dhd_info_t *dhd = (dhd_info_t *)dhdp->info;
+
+	if (dhdp->monitor_iface_up == FALSE) {
+		DHD_PRINT(("%s monitor iface is down. dropping the monitor packet\n", __func__));
+		dhd_prhex("[monitor_packet_dump]", (char *)PKTDATA(dhdp->osh, pkt),
+			MIN(PKTLEN(dhdp->osh, pkt), 64), DHD_ERROR_VAL);
+		PKTFREE(dhdp->osh, pkt, FALSE);
+		return;
+	}
 #ifdef HOST_RADIOTAP_CONV
 	if (dhd->host_radiotap_conv) {
 		uint16 len = 0, offset = 0;

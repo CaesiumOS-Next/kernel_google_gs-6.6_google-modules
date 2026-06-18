@@ -9,6 +9,7 @@ ddk_module(
     ]) + [
         "dw-mipi-dsi2h.c",
         "dw-mipi-dsi2h-debugfs.c",
+        "dw-mipi-dsi2h-sysfs.c",
     ],
     out = "mipi-dsi2h.ko",
     copts = [

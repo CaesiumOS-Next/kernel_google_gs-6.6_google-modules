@@ -1,7 +1,7 @@
 /*
  * EVENT_LOG system definitions
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -83,8 +83,15 @@
  * In such case, ecounters could be mapped to any set that host
  * configures. They may or may not use set 5.
  */
-#define EVENT_LOG_SET_5			(5u)
-#define EVENT_LOG_SET_ECOUNTERS		(EVENT_LOG_SET_5)
+#define EVENT_LOG_SET_5				(5u)
+#define EVENT_LOG_SET_ECOUNTERS			(EVENT_LOG_SET_5)
+#ifndef EVENT_LOG_SET_ECOUNTER_NUM_BLOCKS
+#define EVENT_LOG_SET_ECOUNTER_NUM_BLOCKS	(2u)
+#endif
+#ifndef EVENT_LOG_SET_ECOUNTER_BLOCK_SIZE
+#define EVENT_LOG_SET_ECOUNTER_BLOCK_SIZE	(EVENT_LOG_MAX_BLOCK_SIZE)
+#endif
+
 #define EVENT_LOG_SET_6			(6u)
 #define EVENT_LOG_SET_7			(7u)
 
@@ -171,14 +178,14 @@
 #define EVENT_LOG_SET_PHY_PERIODIC_BLOCK_SIZE	(EVENT_LOG_MAX_BLOCK_SIZE)
 #endif
 
-/* set 15: RTE entity */
-#define EVENT_LOG_SET_RTE		(15u)
-#ifndef EVENT_LOG_SET_RTE_NUM_BLOCKS
-#define EVENT_LOG_SET_RTE_NUM_BLOCKS	(2u)
+/* set 15: Extended PHY logs */
+#define EVENT_LOG_SET_PHY_EXT_LOGS		(15u)
+#ifndef EVENT_LOG_SET_PHY_EXT_LOGS_NUM_BLOCKS
+#define EVENT_LOG_SET_PHY_EXT_LOGS_NUM_BLOCKS	(2u)
 #endif
 
-#ifndef EVENT_LOG_SET_RTE_BLOCK_SIZE
-#define EVENT_LOG_SET_RTE_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_512B)
+#ifndef EVENT_LOG_SET_PHY_EXT_LOGS_BLOCK_SIZE
+#define EVENT_LOG_SET_PHY_EXT_LOGS_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_1K)
 #endif
 
 /* set 16: Malloc and free logging */
@@ -334,11 +341,11 @@
 /* set 33: CHRE related logging */
 #define EVENT_LOG_SET_CHRE              (33u)
 #ifndef EVENT_LOG_SET_CHRE_NUM_BLOCKS
-#define EVENT_LOG_SET_CHRE_NUM_BLOCKS	(4u)
+#define EVENT_LOG_SET_CHRE_NUM_BLOCKS	(2u)
 #endif
 
 #ifndef EVENT_LOG_SET_CHRE_BLOCK_SIZE
-#define EVENT_LOG_SET_CHRE_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_1K)
+#define EVENT_LOG_SET_CHRE_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_512B)
 #endif
 
 /* set 34: CHRE chatty */
@@ -356,32 +363,35 @@
 /* set 35: Shdow log sets for coex cpu */
 #define EVENT_LOG_SET_COEX_SHADOW_INFO		(35u)
 #ifndef EVENT_LOG_SET_COEX_SHADOW_INFO_NUM_BLOCKS
-#define EVENT_LOG_SET_COEX_SHADOW_INFO_NUM_BLOCKS	(2u)
+#define EVENT_LOG_SET_COEX_SHADOW_INFO_NUM_BLOCKS	(4u)
 #endif
 
+/* Coex event log shadow set block size must be the same for all shadow sets and also
+ * the same between wlan and coex firmware
+ */
 #ifndef EVENT_LOG_SET_COEX_SHADOW_INFO_BLOCK_SIZE
-#define EVENT_LOG_SET_COEX_SHADOW_INFO_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_512B)
+#define EVENT_LOG_SET_COEX_SHADOW_INFO_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_256B)
 #endif
 
 /* set 36 */
 #define EVENT_LOG_SET_COEX_SHADOW_ERR		(36u)
 #ifndef EVENT_LOG_SET_COEX_SHADOW_ERR_NUM_BLOCKS
-#define EVENT_LOG_SET_COEX_SHADOW_ERR_NUM_BLOCKS	(2u)
+#define EVENT_LOG_SET_COEX_SHADOW_ERR_NUM_BLOCKS	(4u)
 #endif
 
 #ifndef EVENT_LOG_SET_COEX_SHADOW_ERR_BLOCK_SIZE
-#define EVENT_LOG_SET_COEX_SHADOW_ERR_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_512B)
+#define EVENT_LOG_SET_COEX_SHADOW_ERR_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_256B)
 #endif
 
 /* set 37 */
 #define EVENT_LOG_SET_COEX_SHADOW_TIMELINE	(37u)
 
 #ifndef EVENT_LOG_SET_COEX_SHADOW_TIMELINE_NUM_BLOCKS
-#define EVENT_LOG_SET_COEX_SHADOW_TIMELINE_NUM_BLOCKS	(2u)
+#define EVENT_LOG_SET_COEX_SHADOW_TIMELINE_NUM_BLOCKS	(12u)
 #endif
 
 #ifndef EVENT_LOG_SET_COEX_SHADOW_TIMELINE_BLOCK_SIZE
-#define EVENT_LOG_SET_COEX_SHADOW_TIMELINE_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_512B)
+#define EVENT_LOG_SET_COEX_SHADOW_TIMELINE_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_256B)
 #endif
 
 #endif /* COEX_CPU */
@@ -435,6 +445,31 @@
 #define EVENT_LOG_SET_WL_EMLSR_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_1K)
 #endif
 
+/* set 43: For all datapath related logging. */
+#define EVENT_LOG_SET_DATAPATH			(43u)
+#ifndef EVENT_LOG_SET_DATAPATH_NUM_BLOCKS
+#define EVENT_LOG_SET_DATAPATH_NUM_BLOCKS	(4u)
+#endif /* !EVENT_LOG_SET_DATAPATH_NUM_BLOCKS */
+
+#ifndef EVENT_LOG_SET_DATAPATH_BLOCK_SIZE
+#define EVENT_LOG_SET_DATAPATH_BLOCK_SIZE	(EVENT_LOG_BLOCK_SIZE_1648B)
+#endif
+
+/* This log set is used to log important mgmt frames,EAPOL frames
+ * and DHCP packets. This logset will be flushed whenever there
+ * will be failure(noack) rcvd for these frames from ucode.
+ * AUTH/ASSOC/EAPOL/DHCP
+ */
+#define EVENT_LOG_SET_44                 (44u)
+#define EVENT_LOG_SET_IMP_FRAMES         (EVENT_LOG_SET_44)
+#ifndef EVENT_LOG_SET_IMP_FRAMES_NUM_BLOCKS
+#define EVENT_LOG_SET_IMP_FRAMES_NUM_BLOCKS  (2u)
+#endif
+
+#ifndef EVENT_LOG_SET_IMP_FRAMES_BLOCK_SIZE
+#define EVENT_LOG_SET_IMP_FRAMES_BLOCK_SIZE       (EVENT_LOG_BLOCK_SIZE_1K)
+#endif
+
 #ifndef NUM_EVENT_LOG_SETS
 /* Set a maximum number of sets here.  It is not dynamic for
  * efficiency of the EVENT_LOG calls. Old branches could define
@@ -443,9 +478,9 @@
  */
 #ifdef NUM_EVENT_LOG_SETS_V2
 /* for v2, everything has became unsigned */
-#define NUM_EVENT_LOG_SETS (43u)
+#define NUM_EVENT_LOG_SETS (45u)
 #else /* NUM_EVENT_LOG_SETS_V2 */
-#define NUM_EVENT_LOG_SETS (43)
+#define NUM_EVENT_LOG_SETS (45)
 #endif /* NUM_EVENT_LOG_SETS_V2 */
 #endif /* NUM_EVENT_LOG_SETS */
 

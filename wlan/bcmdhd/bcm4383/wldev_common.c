@@ -1,7 +1,7 @@
 /*
  * Common function shared by Linux WEXT, cfg80211 and p2p drivers
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -29,6 +29,7 @@
 
 #include <wldev_common.h>
 #include <bcmutils.h>
+#include <bcmstdlib_s.h>
 #ifdef WL_CFG80211
 #include <wl_cfg80211.h>
 #include <wl_cfgscan.h>
@@ -813,7 +814,6 @@ int wldev_get_datarate(struct net_device *dev, int *datarate)
 
 extern chanspec_t
 wl_chspec_driver_to_host(chanspec_t chanspec);
-#define WL_EXTRA_BUF_MAX 2048
 int wldev_get_mode(
 	struct net_device *dev, uint8 *cap, uint8 caplen)
 {
@@ -900,3 +900,136 @@ int wldev_set_country(
 #endif /* defined(BCMDONGLEHOST) */
 	return 0;
 }
+
+#ifdef DHD_LPCAP
+/*
+ * Get the local packet capture (LPCAP) status from the dongle.
+ *
+ * enab_data  A pointer where the capture status bitmask will be stored.
+ * return     Returns BCME_OK on success, or a negative error code on failure.
+ */
+int
+wldev_get_lpcap_enab(struct net_device *dev, wl_lpcap_iov_uint_data_t *enab_data)
+{
+	int error = 0;
+	uint8 ip_buf[WL_LPCAP_IOV_VERSION_1_0_CMD_SIZE] = {0u};
+	uint8 op_buf[WLC_IOCTL_SMLEN] = {0u};
+	wl_lpcap_iovar_t *iov_bp;
+	wl_lpcap_iov_uint_data_t *subcmd_dp;
+
+	WL_TRACE_HW4(("LPCAP\n"));
+
+	enab_data->val = 0u;
+
+	/* Prepare the iovar buffer for the get command */
+	iov_bp = (wl_lpcap_iovar_t *)ip_buf;
+	iov_bp->hdr.ver = htod16(WL_LPCAP_IOV_VERSION_1_0);
+	iov_bp->hdr.len = htod16(WL_LPCAP_IOV_VERSION_1_0_CMD_SIZE);
+	iov_bp->hdr.subcmd = htod16(WL_LPCAP_SUBCMD_ENABLE);
+	subcmd_dp = (wl_lpcap_iov_uint_data_t *)iov_bp->data;
+	subcmd_dp->val = 0u;
+	/* Query the dongle for the current LPCAP status */
+	error = wldev_iovar_getbuf(dev, "lpcap", ip_buf, WL_LPCAP_IOV_VERSION_1_0_CMD_SIZE,
+		op_buf, WLC_IOCTL_SMLEN, NULL);
+	if (error) {
+		WL_ERR(("Failed to get lpcap from dongle, error = %d\n", error));
+		goto end;
+	}
+	/* Parse the response from the dongle */
+	iov_bp = (wl_lpcap_iovar_t *)op_buf;
+	subcmd_dp = (wl_lpcap_iov_uint_data_t *)iov_bp->data;
+	if (iov_bp->hdr.ver != htod16(WL_LPCAP_IOV_VERSION_1_0)) {
+		error = BCME_VERSION;
+	}
+	if (iov_bp->hdr.len != htod16(WL_LPCAP_IOV_VERSION_1_0_CMD_SIZE)) {
+		error = BCME_BADLEN;
+		goto end;
+	}
+	if (iov_bp->hdr.subcmd != htod16(WL_LPCAP_SUBCMD_ENABLE)) {
+		error = BCME_NOTFOUND;
+		goto end;
+	}
+	/* Validate the returned enable flags */
+	if (dtoh32(subcmd_dp->val) & ~WL_LPCAP_ENABLE_VALID) {
+		error = BCME_BADARG;
+		goto end;
+	}
+	/* Store the result in the output parameter */
+	enab_data->val = subcmd_dp->val;
+end:
+	return error;
+}
+
+/*
+ * Enable or disable local packet capture (LPCAP) in the dongle.
+ *
+ * enab_data   A pointer containing the desired capture state bitmask.
+ *		A non-zero value enables capture, while zero disables it.
+ * return      Returns BCME_OK on success, or a negative error code on failure.
+ */
+int
+wldev_set_lpcap_enab(struct net_device *dev, wl_lpcap_iov_uint_data_t *enab_data)
+{
+	int error = 0;
+	uint8 ip_buf[WL_LPCAP_IOV_VERSION_1_0_CMD_SIZE] = {0u};
+	uint8 op_buf[WLC_IOCTL_SMLEN] = {0u};
+	wl_lpcap_iovar_t *iov_bp;
+	wl_lpcap_iov_uint_data_t *subcmd_dp;
+
+	WL_TRACE_HW4(("LPCAP\n"));
+
+	/* Prepare the iovar buffer for the set command */
+	iov_bp = (wl_lpcap_iovar_t *)ip_buf;
+	iov_bp->hdr.ver = htod16(WL_LPCAP_IOV_VERSION_1_0);
+	iov_bp->hdr.len = htod16(WL_LPCAP_IOV_VERSION_1_0_CMD_SIZE);
+	iov_bp->hdr.subcmd = htod16(WL_LPCAP_SUBCMD_ENABLE);
+	subcmd_dp = (wl_lpcap_iov_uint_data_t *)iov_bp->data;
+	subcmd_dp->val = enab_data->val;
+
+	/* Validate the enable flags before sending */
+	if (dtoh32(subcmd_dp->val) & ~WL_LPCAP_ENABLE_VALID) {
+		error = BCME_BADARG;
+		goto end;
+	}
+	/* Send the command to the dongle to enable/disable LPCAP */
+	error = wldev_iovar_setbuf(dev, "lpcap", ip_buf, WL_LPCAP_IOV_VERSION_1_0_CMD_SIZE,
+		op_buf, WLC_IOCTL_SMLEN, NULL);
+	if (error) {
+		WL_ERR(("Failed to set lpcap, error = %d\n", error));
+		goto end;
+	}
+
+end:
+	return error;
+}
+
+/*
+ * Get the local packet capture (LPCAP) active or not from the dongle.
+ *
+ * return     Returns TRUE on active, or FALSE on not active or feature not present
+ */
+int
+wldev_is_lpcap_active(struct net_device *dev)
+{
+	struct bcm_cfg80211 *cfg = wl_get_cfg(dev);
+	dhd_pub_t *dhdp = (dhd_pub_t *)(cfg->pub);
+	wl_lpcap_iov_uint_data_t enab_data = {.val = 0u};
+	int error;
+
+	WL_TRACE_HW4(("LPCAP\n"));
+
+	if (!FW_SUPPORTED(dhdp, lpcap)) {
+		return FALSE;
+	}
+	/* Check if capture is already running in the dongle */
+	error = wldev_get_lpcap_enab(dev, &enab_data);
+	if (error != BCME_OK) {
+		return FALSE;
+	}
+	if (enab_data.val == 0) {
+		return FALSE; /* lpcap not active */
+	}
+
+	return TRUE; /* lpcap is active */
+}
+#endif /* DHD_LPCAP */

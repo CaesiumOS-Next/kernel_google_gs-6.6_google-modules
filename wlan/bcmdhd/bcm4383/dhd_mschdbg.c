@@ -1,7 +1,7 @@
 /*
  * DHD debugability support
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -54,7 +54,7 @@ do {	\
 		DHD_LOG_DUMP_WRITE_FW args; \
 	}	\
 } while (0)
-#elif defined(CUSTOM_PREFIX)
+#elif defined(LOG_CUSTOM_PREFIX_AND_RTC)
 #define MSCH_EVENT(args) \
 do {	\
 	if (dhd_msg_level & DHD_EVENT_VAL) {	\

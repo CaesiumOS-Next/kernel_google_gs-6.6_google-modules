@@ -58,16 +58,16 @@
 
 static struct fb_ops pdp_fbdev_ops = {
 	.owner = THIS_MODULE,
-	.fb_check_var = drm_fb_helper_check_var,
-	.fb_set_par = drm_fb_helper_set_par,
+	DRM_FB_HELPER_DEFAULT_OPS,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0))
 	.fb_fillrect = cfb_fillrect,
 	.fb_copyarea = cfb_copyarea,
 	.fb_imageblit = cfb_imageblit,
-	.fb_pan_display = drm_fb_helper_pan_display,
-	.fb_blank = drm_fb_helper_blank,
-	.fb_setcmap = drm_fb_helper_setcmap,
-	.fb_debug_enter = drm_fb_helper_debug_enter,
-	.fb_debug_leave = drm_fb_helper_debug_leave,
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0))
+	FB_DEFAULT_IO_OPS,
+#else
+	FB_DEFAULT_IOMEM_OPS,
+#endif
 };
 
 
@@ -93,11 +93,32 @@ pdp_fbdev_helper_fill_info(struct drm_fb_helper *helper,
 #endif
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
+static int pdp_fbdev_probe(struct drm_fb_helper *,
+			   struct drm_fb_helper_surface_size *);
+#endif
+
+static const struct drm_fb_helper_funcs pdp_fbdev_helper_funcs = {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
+	.fb_probe = pdp_fbdev_probe,
+#endif
+};
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 static int pdp_fbdev_probe(struct drm_fb_helper *helper,
 			   struct drm_fb_helper_surface_size *sizes)
+#else
+int pdp_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
+			   struct drm_fb_helper_surface_size *sizes)
+#endif
 {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 	struct pdp_fbdev *pdp_fbdev =
 		container_of(helper, struct pdp_fbdev, helper);
+#else
+	struct pdp_fbdev *pdp_fbdev = ((struct pdp_drm_private*)helper->dev->dev_private)->fbdev;
+	pdp_fbdev->helper = *helper;
+#endif
 	struct drm_framebuffer *fb =
 		to_drm_framebuffer(&pdp_fbdev->fb);
 	struct pdp_gem_private *gem_priv = pdp_fbdev->priv->gem_priv;
@@ -158,6 +179,9 @@ static int pdp_fbdev_probe(struct drm_fb_helper *helper,
 	if (err)
 		goto err_gem_unmap;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+	helper->funcs = &pdp_fbdev_helper_funcs;
+#endif
 	helper->fb = fb;
 	helper->COMPAT_FB_INFO = info;
 
@@ -196,10 +220,7 @@ err_unlock_dev:
 	return err;
 }
 
-static const struct drm_fb_helper_funcs pdp_fbdev_helper_funcs = {
-	.fb_probe = pdp_fbdev_probe,
-};
-
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 struct pdp_fbdev *pdp_fbdev_create(struct pdp_drm_private *dev_priv)
 {
 	struct pdp_fbdev *pdp_fbdev;
@@ -250,6 +271,7 @@ err_free_fbdev:
 	DRM_ERROR(FBDEV_NAME " - %s, failed (err=%d)\n", __func__, err);
 	return ERR_PTR(err);
 }
+#endif
 
 void pdp_fbdev_destroy(struct pdp_fbdev *pdp_fbdev)
 {
@@ -261,12 +283,18 @@ void pdp_fbdev_destroy(struct pdp_fbdev *pdp_fbdev)
 	if (!pdp_fbdev)
 		return;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 	drm_fb_helper_unregister_info(&pdp_fbdev->helper);
+#endif
 	pdp_fb = &pdp_fbdev->fb;
 
 	pdp_obj = to_pdp_obj(pdp_fb->obj[0]);
 	if (pdp_obj && !pdp_obj->cma_alloc) {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 		info = pdp_fbdev->helper.COMPAT_FB_INFO;
+#else
+		info = pdp_fbdev->priv->dev->fb_helper->info;
+#endif
 		iounmap((void __iomem *)info->screen_base);
 	}
 

@@ -339,3 +339,10 @@ Description:
   Each file represents a specific error type from the gs_panel_err enum
   (e.g., te, esd, dsi_sot). Reading a file returns the accumulated
   error count as a decimal integer.
+
+What: /sys/class/drm/card0/device/primary-panel/gram_collision_count
+Date: January 2026
+KernelVersion: 6.6
+Contact: "Chris Lu" <luchris@google.com>
+Description:
+  Userspace client uses this to read the frame count of GRAM collision detected by the DDIC.

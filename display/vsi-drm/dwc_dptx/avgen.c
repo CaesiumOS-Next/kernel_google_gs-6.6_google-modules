@@ -329,7 +329,6 @@ void dptx_audio_mute(struct dptx *dptx)
 void dptx_audio_config(struct dptx *dptx)
 {
 	dptx_audio_core_config(dptx);
-	dptx_audio_gen_config(dptx);
 	dptx_audio_sdp_en(dptx, 1);
 	dptx_audio_timestamp_sdp_en(dptx, 1);
 
@@ -489,8 +488,6 @@ int dptx_video_config(struct dptx *dptx, int stream)
 		return -EINVAL;
 
 	dptx_video_core_config(dptx, stream);
-	dptx_video_gen_config(dptx, stream);
-
 	return 0;
 }
 

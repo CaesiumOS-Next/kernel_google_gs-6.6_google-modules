@@ -2763,6 +2763,7 @@ static ssize_t dsim_host_transfer(struct mipi_dsi_host *host,
 	ret = pm_runtime_resume_and_get(dsim->dev);
 	if (ret) {
 		dsim_err(dsim, "runtime resume failed (%d). unable to transfer cmd\n", ret);
+		DPU_ATRACE_END(__func__);
 		return ret;
 	}
 

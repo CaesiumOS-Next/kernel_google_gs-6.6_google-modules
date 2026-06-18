@@ -21,6 +21,11 @@
 #define MAX77779_VIMON_ENTRIES_PER_VI_PAIR 2
 
 #define MAX77779_VIMON_SMPL_CNT 64
+
+#define MAX77779_VIMON_NONE_MODE 8
+#define MAX77779_VIMON_LOGBUFFER_MODE 6
+#define MAX77779_VIMON_DEFAULT_MODE 0
+
 #define MAX77779_VIMON_DATA_RETRIEVE_DELAY 0
 
 /*
@@ -78,6 +83,11 @@ int vimon_register_callback(struct device *dev, const u16 mask, const int count,
 			    struct vimon_client_callbacks *cb);
 void vimon_unregister_callback(struct device *dev, struct vimon_client_callbacks *cb);
 
+struct max77779_vimon_config {
+	u16 mode;
+	u16 mask;
+};
+
 struct max77779_vimon_data {
 	struct device *dev;
 	int irq;
@@ -93,6 +103,7 @@ struct max77779_vimon_data {
 	unsigned max_triggers;
 	enum max77779_vimon_state state;
 	uint16_t *buf;
+	uint16_t *buf_adj;
 	size_t buf_size;
 	size_t buf_len;
 
@@ -104,9 +115,10 @@ struct max77779_vimon_data {
 
 	int (*direct_reg_read)(struct max77779_vimon_data *data, u8 reg, unsigned int *val);
 	int (*direct_reg_write)(struct max77779_vimon_data *data, u8 reg, unsigned int val);
-	u16 trigger_src;
 
 	struct power_supply *psy;
+	struct max77779_vimon_config config;
+	struct max77779_vimon_config last_config;
 };
 
 int max77779_vimon_init(struct max77779_vimon_data *data);

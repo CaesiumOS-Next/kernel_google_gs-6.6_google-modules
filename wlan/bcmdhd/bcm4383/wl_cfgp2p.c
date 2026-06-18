@@ -1,7 +1,7 @@
 /*
  * Linux cfgp2p driver
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -145,6 +145,7 @@ bool wl_cfgp2p_is_pub_action(void *frame, u32 frame_len)
 	return false;
 }
 
+
 bool wl_cfgp2p_is_p2p_action(void *frame, u32 frame_len)
 {
 	wifi_p2p_action_frame_t *act_frm;
@@ -152,7 +153,7 @@ bool wl_cfgp2p_is_p2p_action(void *frame, u32 frame_len)
 	if (frame == NULL)
 		return false;
 	act_frm = (wifi_p2p_action_frame_t *)frame;
-	if (frame_len < sizeof(wifi_p2p_action_frame_t) -1)
+	if (frame_len < sizeof(wifi_p2p_action_frame_t))
 		return false;
 
 	if (act_frm->category == P2P_AF_CATEGORY &&
@@ -179,17 +180,18 @@ bool wl_cfgp2p_is_p2p_action(void *frame, u32 frame_len)
 bool wl_cfgp2p_is_gas_action(void *frame, u32 frame_len)
 {
 	wifi_p2psd_gas_pub_act_frame_t *sd_act_frm;
+	u8 gas_frame_type = WL_PUB_AF_STYPE_INVALID;
 
 	if (frame == NULL)
 		return false;
 
 	sd_act_frm = (wifi_p2psd_gas_pub_act_frame_t *)frame;
-	if (frame_len < (sizeof(wifi_p2psd_gas_pub_act_frame_t) - 1))
+	if (frame_len < (sizeof(wifi_p2psd_gas_pub_act_frame_t)))
 		return false;
 	if (sd_act_frm->category != P2PSD_ACTION_CATEGORY)
 		return false;
 
-	if (wl_cfg80211_is_dpp_gas_action(frame, frame_len)) {
+	if (wl_cfg80211_is_dpp_gas_action(frame, frame_len, &gas_frame_type)) {
 		return true;
 	}
 
@@ -211,7 +213,7 @@ bool wl_cfgp2p_is_p2p_gas_action(void *frame, u32 frame_len)
 		return false;
 
 	sd_act_frm = (wifi_p2psd_gas_pub_act_frame_t *)frame;
-	if (frame_len < (sizeof(wifi_p2psd_gas_pub_act_frame_t) - 1))
+	if (frame_len < (sizeof(wifi_p2psd_gas_pub_act_frame_t)))
 		return false;
 	if (sd_act_frm->category != P2PSD_ACTION_CATEGORY)
 		return false;
@@ -229,9 +231,10 @@ void wl_cfgp2p_print_actframe(bool tx, void *frame, u32 frame_len, u32 channel)
 	wifi_p2p_pub_act_frame_t *pact_frm;
 	wifi_p2p_action_frame_t *act_frm;
 	wifi_p2psd_gas_pub_act_frame_t *sd_act_frm;
-	if (!frame || frame_len <= 2)
-		return;
 
+	if (!frame || frame_len <= 2) {
+		return;
+	}
 	if (wl_cfgp2p_is_pub_action(frame, frame_len)) {
 		pact_frm = (wifi_p2p_pub_act_frame_t *)frame;
 		switch (pact_frm->subtype) {
@@ -1838,6 +1841,11 @@ wl_cfg80211_abort_action_frame(struct bcm_cfg80211 *cfg, struct net_device *dev,
 	return ret;
 }
 
+static bool af_completion_condition(struct bcm_cfg80211 *cfg, struct net_device *ndev)
+{
+	return !cfg->af_sent_channel;
+}
+
 /* Send an action frame immediately without doing channel synchronization.
  *
  * This function does not wait for a completion event before returning.
@@ -1852,13 +1860,13 @@ wl_cfgp2p_tx_action_frame(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgdev,
 {
 	s32 ret = BCME_OK;
 	s32 evt_ret = BCME_OK;
-	s32 timeout = 0;
 	s32 dwell_time = 0;
 	wl_eventmsg_buf_t buf;
 	wl_af_params_v2_t *af_params_v2_p = NULL;
 	u8 *af_params_iov_p = NULL;
 	s32 af_params_iov_len = 0;
 	uint16 wl_af_params_size = 0;
+	long timeout = 0;
 
 	CFGP2P_DBG(("\n"));
 	CFGP2P_ACTION(("channel : %u(0x%04x) , dwell time : %u wait_afrx:%d pktid %x \n",
@@ -1873,6 +1881,12 @@ wl_cfgp2p_tx_action_frame(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgdev,
 	wl_cfg80211_add_to_eventbuffer(&buf, WLC_E_ACTION_FRAME_COMPLETE, true);
 	if ((evt_ret = wl_cfg80211_apply_eventbuffer(bcmcfg_to_prmry_ndev(cfg), cfg, &buf)) < 0)
 		return evt_ret;
+
+	/* Try to use STA connected channel when channel is zero from uppaer layer */
+	if (af_params->channel == 0) {
+		af_params->channel = wl_cfg80211_get_sta_chanspec(cfg);
+		CFGP2P_ACTION(("updating channel : 0x%04x\n", af_params->channel));
+	}
 
 	cfg->af_sent_channel  = af_params->channel;
 	/* For older FW versions actframe does not support chanspec format */
@@ -1923,45 +1937,28 @@ wl_cfgp2p_tx_action_frame(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgdev,
 	}
 
 	dwell_time = af_params->dwell_time + WL_AF_TX_EXTRA_TIME_MAX;
-
 	/* Wait for WLC_E_ACTION_FRAME_OFFCHAN_COMPLETE event */
-	while (TRUE) {
-		s32 start_wait_time = get_jiffies_64();
-		timeout = wait_event_interruptible_timeout(cfg->netif_change_event,
-			!cfg->af_sent_channel, msecs_to_jiffies(dwell_time));
-		if (timeout == -ERESTARTSYS) {
-			dwell_time -= jiffies_to_msecs(get_jiffies_64() - start_wait_time);
-			WL_DBG_MEM(("waitqueue was interrupted by a signal,"
-					"remaining dwell time %u\n", dwell_time));
-			if (dwell_time <= 0) {
-				WL_ERR(("Timed out. dwell_time:%u, timeout:%d\n",
-						dwell_time, timeout));
-				goto exit;
-			}
-		} else if (timeout < 0) {
-			WL_ERR(("ACTION_FRAME_OFFCHAN_COMPLETE Event, didn't come. timeout:%d\n",
-					dwell_time));
-			goto exit;
-		} else {
-			/* wait event interrupt, break and process */
-			CFGP2P_DBG(("event interrupt recevd, break and process\n"));
-			break;
-		}
-	}
-
-	if (timeout == 0) { /* timer elapsed but af_sent_channel is non-zero */
-		CFGP2P_DBG(("action frame dwell timeout completed tx_cpl: %d  \n",
-				wl_get_p2p_status(cfg, ACTION_TX_COMPLETED)));
-		/* Call actframe_abort to cleanup FW state, when
-		 * dwell timeout occurs.
-		 */
-		ret = wl_cfg80211_abort_action_frame(cfg, dev, bssidx);
-		/* Dwell time completed, but if TX_COMPLETE is not received then return TXFAIL error
-		 * ACK=false will be returned to supplicant, then supplicant can retry actframe
-		 */
-		if ((af_params->flags & WL_ACT_FRAME_FLAG_NAN_USD) &&
-				!wl_get_p2p_status(cfg, ACTION_TX_COMPLETED)) {
+	timeout = wl_cfg80211_wait_interruptible(cfg, dev, af_completion_condition,
+			dwell_time);
+	if (timeout == 0) {
+		/* dwell time elapsed, check TX_COMPLETE */
+		if (!wl_get_p2p_status(cfg, ACTION_TX_COMPLETED)) {
+			/* Call actframe_abort to cleanup FW state, when
+			 * dwell timeout occurs.
+			 */
+			ret = wl_cfg80211_abort_action_frame(cfg, dev, bssidx);
+			/* Dwell time completed, but if TX_COMPLETE is
+			 * not received then return TXFAIL error
+			 * ACK=false will be returned to supplicant,
+			 * then supplicant can retry actframe
+			 */
+			if ((af_params->flags & WL_ACT_FRAME_FLAG_NAN_USD)) {
+				CFGP2P_DBG(("TXFAIL: No TX_COMPLETE after dwell timeout\n"));
 				ret = BCME_TXFAIL;
+			}
+		} else {
+			CFGP2P_DBG(("tx action frame operation is completed\n"));
+			ret = BCME_OK;
 		}
 	} else if (timeout > 0 && wl_get_p2p_status(cfg, ACTION_TX_COMPLETED)) {
 		CFGP2P_DBG(("tx action frame operation is completed\n"));
@@ -1970,9 +1967,10 @@ wl_cfgp2p_tx_action_frame(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgdev,
 		CFGP2P_DBG(("bcast/multi cast tx action frame operation is completed\n"));
 		ret = BCME_OK;
 	} else {
-		ret = BCME_ERROR;
 		CFGP2P_DBG(("tx action frame operation is failed\n"));
+		ret = BCME_ERROR;
 	}
+
 	/* clear status bit for action tx */
 	wl_clr_p2p_status(cfg, ACTION_TX_COMPLETED);
 	wl_clr_p2p_status(cfg, ACTION_TX_NOACK);
@@ -2160,14 +2158,19 @@ wl_cfgp2p_set_p2p_noa(struct net_device *ndev, char* buf, int len)
 {
 	s32 ret = -1;
 	int count, start, duration;
-	wl_p2p_sched_t dongle_noa;
+	wl_p2p_sched_t *dongle_noa = NULL;
+	wl_p2p_sched_desc_t *desc = NULL;
 	s32 bssidx, type;
-	int iovar_len = sizeof(dongle_noa);
+	int iovar_len = sizeof(wl_p2p_sched_t) + sizeof(wl_p2p_sched_desc_t);
 	struct bcm_cfg80211 *cfg = wl_get_cfg(ndev);
 
 	CFGP2P_DBG((" Enter\n"));
 
-	bzero(&dongle_noa, sizeof(dongle_noa));
+	dongle_noa = MALLOCZ(cfg->osh, iovar_len);
+	if (!dongle_noa) {
+		WL_ERR(("no memory\n"));
+		return BCME_NOMEM;
+	}
 
 	if (wl_cfgp2p_vif_created(cfg)) {
 		cfg->p2p->noa.desc[0].start = 0;
@@ -2187,20 +2190,20 @@ wl_cfgp2p_set_p2p_noa(struct net_device *ndev, char* buf, int len)
 
 		if (cfg->p2p->noa.desc[0].count != 255 && cfg->p2p->noa.desc[0].count != 0) {
 			cfg->p2p->noa.desc[0].start = 200;
-			dongle_noa.type = WL_P2P_SCHED_TYPE_REQ_ABS;
-			dongle_noa.action = WL_P2P_SCHED_ACTION_GOOFF;
-			dongle_noa.option = WL_P2P_SCHED_OPTION_TSFOFS;
+			dongle_noa->type = WL_P2P_SCHED_TYPE_REQ_ABS;
+			dongle_noa->action = WL_P2P_SCHED_ACTION_GOOFF;
+			dongle_noa->option = WL_P2P_SCHED_OPTION_TSFOFS;
 		}
 		else if (cfg->p2p->noa.desc[0].count == 0) {
 			cfg->p2p->noa.desc[0].start = 0;
-			dongle_noa.type = WL_P2P_SCHED_TYPE_ABS;
-			dongle_noa.option = WL_P2P_SCHED_OPTION_NORMAL;
-			dongle_noa.action = WL_P2P_SCHED_ACTION_RESET;
+			dongle_noa->type = WL_P2P_SCHED_TYPE_ABS;
+			dongle_noa->option = WL_P2P_SCHED_OPTION_NORMAL;
+			dongle_noa->action = WL_P2P_SCHED_ACTION_RESET;
 		}
 		else {
 			/* Continuous NoA interval. */
-			dongle_noa.action = WL_P2P_SCHED_ACTION_DOZE;
-			dongle_noa.type = WL_P2P_SCHED_TYPE_ABS;
+			dongle_noa->action = WL_P2P_SCHED_ACTION_DOZE;
+			dongle_noa->type = WL_P2P_SCHED_TYPE_ABS;
 			/* If the NoA interval is equal to the beacon interval, use
 			 * the percentage based NoA API to work-around driver issues
 			 * (PR #88043). Otherwise, use the absolute duration/interval API.
@@ -2209,33 +2212,36 @@ wl_cfgp2p_set_p2p_noa(struct net_device *ndev, char* buf, int len)
 				(cfg->p2p->noa.desc[0].interval == 100)) {
 				cfg->p2p->noa.desc[0].start = 100 -
 					cfg->p2p->noa.desc[0].duration;
-				dongle_noa.option = WL_P2P_SCHED_OPTION_BCNPCT;
+				dongle_noa->option = WL_P2P_SCHED_OPTION_BCNPCT;
 			}
 			else {
-				dongle_noa.option = WL_P2P_SCHED_OPTION_NORMAL;
+				dongle_noa->option = WL_P2P_SCHED_OPTION_NORMAL;
 			}
 		}
+
+		desc = (wl_p2p_sched_desc_t *)dongle_noa->desc;
+
 		/* Put the noa descriptor in dongle format for dongle */
-		dongle_noa.desc[0].count = htod32(cfg->p2p->noa.desc[0].count);
-		if (dongle_noa.option == WL_P2P_SCHED_OPTION_BCNPCT) {
-			dongle_noa.desc[0].start = htod32(cfg->p2p->noa.desc[0].start);
-			dongle_noa.desc[0].duration = htod32(cfg->p2p->noa.desc[0].duration);
+		desc->count = htod32(cfg->p2p->noa.desc[0].count);
+		if (dongle_noa->option == WL_P2P_SCHED_OPTION_BCNPCT) {
+			desc->start = htod32(cfg->p2p->noa.desc[0].start);
+			desc->duration = htod32(cfg->p2p->noa.desc[0].duration);
 		}
 		else {
-			dongle_noa.desc[0].start = htod32(cfg->p2p->noa.desc[0].start*1000);
-			dongle_noa.desc[0].duration = htod32(cfg->p2p->noa.desc[0].duration*1000);
+			desc->start = htod32(cfg->p2p->noa.desc[0].start*1000);
+			desc->duration = htod32(cfg->p2p->noa.desc[0].duration*1000);
 		}
-		dongle_noa.desc[0].interval = htod32(cfg->p2p->noa.desc[0].interval*1000);
+		desc->interval = htod32(cfg->p2p->noa.desc[0].interval*1000);
 		bssidx = wl_get_bssidx_by_wdev(cfg, ndev->ieee80211_ptr);
 		if (wl_cfgp2p_find_type(cfg, bssidx, &type) != BCME_OK)
 			return BCME_ERROR;
 
-		if (dongle_noa.action == WL_P2P_SCHED_ACTION_RESET) {
+		if (dongle_noa->action == WL_P2P_SCHED_ACTION_RESET) {
 			iovar_len -= sizeof(wl_p2p_sched_desc_t);
 		}
 
 		ret = wldev_iovar_setbuf(wl_to_p2p_bss_ndev(cfg, type),
-			"p2p_noa", &dongle_noa, iovar_len, cfg->ioctl_buf,
+			"p2p_noa", dongle_noa, iovar_len, cfg->ioctl_buf,
 			WLC_IOCTL_MAXLEN, &cfg->ioctl_buf_sync);
 
 		if (ret < 0) {
@@ -2245,6 +2251,11 @@ wl_cfgp2p_set_p2p_noa(struct net_device *ndev, char* buf, int len)
 	else {
 		CFGP2P_ERR(("ERROR: set_noa in non-p2p mode\n"));
 	}
+
+	if (dongle_noa) {
+		MFREE(cfg->osh, dongle_noa, iovar_len);
+	}
+
 	return ret;
 }
 
@@ -2328,10 +2339,10 @@ wl_cfgp2p_set_p2p_ps(struct net_device *ndev, char* buf, int len)
 		}
 
 		if ((legacy_ps != -1) && ((legacy_ps == PM_MAX) || (legacy_ps == PM_OFF))) {
-			ret = wldev_ioctl_set(dev,
-				WLC_SET_PM, &legacy_ps, sizeof(legacy_ps));
-			if (unlikely(ret))
+			ret = wl_cfg80211_set_pm(dev, legacy_ps, PM_STATE_P2P_PS);
+			if (unlikely(ret)) {
 				CFGP2P_ERR(("error (%d)\n", ret));
+			}
 			wl_cfg80211_update_power_mode(dev);
 		}
 		else
@@ -2366,7 +2377,7 @@ wl_cfgp2p_set_p2p_ecsa(struct net_device *ndev, char* buf, int len)
 		if (wl_cfgp2p_find_type(cfg, bssidx, &conn_idx) != BCME_OK) {
 			return BCME_ERROR;
 		}
-		dev = wl_to_p2p_bss_ndev(cfg, conn_idx);
+		dev = wl_to_p2p_bss_ndev(cfg, P2PAPI_BSSCFG_CONNECTION1);
 		if (ch <= 0 || bw <= 0) {
 			CFGP2P_ERR(("Negative value not permitted!\n"));
 			return BCME_ERROR;
@@ -3015,6 +3026,9 @@ wl_cfgp2p_del_p2p_disc_if(struct wireless_dev *wdev, struct bcm_cfg80211 *cfg)
 
 	cfg->p2p_wdev = NULL;
 
+	if (cfg->vif_count) {
+		cfg->vif_count--;
+	}
 	CFGP2P_ERR(("P2P interface unregistered\n"));
 
 	return 0;
@@ -3069,21 +3083,26 @@ wl_cfgp2p_is_p2p_specific_scan(struct cfg80211_scan_request *request)
 	return false;
 }
 
+/* Wait for WLC_E_IF event with IF_ADD opcode */
+static bool if_add_condition(struct bcm_cfg80211 *cfg, struct net_device *ndev)
+{
+	return ((wl_get_p2p_status(cfg, IF_ADDING) == false) &&
+			(cfg->if_event_info.valid));
+}
+
 struct wireless_dev *
 wl_cfgp2p_if_add(struct bcm_cfg80211 *cfg, wl_iftype_t wl_iftype,
 	char const *name, u8 *mac_addr, s32 *ret_err)
 {
 	u16 chspec;
 	s16 cfg_type;
-	long timeout;
-	s32 err;
 	u16 p2p_iftype;
 	int dhd_mode;
 	struct net_device *new_ndev = NULL;
-	long time_to_wait = MAX_WAIT_TIME;
-	unsigned long start_wait_time;
+	ktime_t time_to_wait = MAX_WAIT_TIME;
 	struct wiphy *wiphy = bcmcfg_to_wiphy(cfg);
 	struct ether_addr *p2p_addr;
+	long timeout = 0;
 
 	*ret_err = BCME_OK;
 	if (!cfg->p2p) {
@@ -3142,39 +3161,20 @@ wl_cfgp2p_if_add(struct bcm_cfg80211 *cfg, wl_iftype_t wl_iftype,
 	p2p_addr = wl_to_p2p_bss_macaddr(cfg, cfg_type);
 	(void)memcpy_s(p2p_addr->octet, ETH_ALEN, mac_addr, ETH_ALEN);
 
-	err = wl_cfgp2p_ifadd(cfg, p2p_addr,
+	*ret_err = wl_cfgp2p_ifadd(cfg, p2p_addr,
 		htod32(p2p_iftype), chspec);
-	if (unlikely(err)) {
+	if (unlikely(*ret_err)) {
 		wl_clr_p2p_status(cfg, IF_ADDING);
-		WL_ERR((" virtual iface add failed (%d) \n", err));
+		WL_ERR((" virtual iface add failed (%d) \n", *ret_err));
 		return NULL;
 	}
 
-	/* Wait for WLC_E_IF event with IF_ADD opcode */
-	while (TRUE) {
-		start_wait_time = get_jiffies_64();
-		timeout = wait_event_interruptible_timeout(cfg->netif_change_event,
-			((wl_get_p2p_status(cfg, IF_ADDING) == false) &&
-			(cfg->if_event_info.valid)),
-			msecs_to_jiffies(time_to_wait));
-		if (timeout == -ERESTARTSYS) {
-			time_to_wait -= jiffies_to_msecs(get_jiffies_64() - start_wait_time);
-			WL_DBG_MEM(("waitqueue was interrupted by a signal, "
-				"remaining dwell time %ld\n", time_to_wait));
-			if (time_to_wait <= 0) {
-				WL_ERR(("Timed out. time_to_wait:%ld, timeout:%ld\n",
-					time_to_wait, timeout));
-				goto fail;
-			}
-		} else if (timeout <= 0) {
-			WL_ERR(("ADD_IF event, didn't come. timeout:%ld\n", time_to_wait));
-			goto fail;
-		} else {
-			/* wait event interrupt, break and process */
-			break;
-		}
+	timeout = wl_cfg80211_wait_interruptible(cfg, bcmcfg_to_prmry_ndev(cfg),
+			if_add_condition, time_to_wait);
+	if (timeout <= 0) {
+		WL_ERR(("ADD_IF event, didn't come. timeout:%lld\n", time_to_wait));
+		goto fail;
 	}
-
 	if (!wl_get_p2p_status(cfg, IF_ADDING) && cfg->if_event_info.valid) {
 		wl_if_event_info *event = &cfg->if_event_info;
 		new_ndev = wl_cfg80211_post_ifcreate(bcmcfg_to_prmry_ndev(cfg), event,
@@ -3313,6 +3313,9 @@ wl_cfgp2p_if_del(struct wiphy *wiphy, struct wireless_dev *wdev)
 		if (timeout > 0 && !wl_get_p2p_status(cfg, IF_DELETING) &&
 			cfg->if_event_info.valid) {
 			WL_ERR(("P2P IFDEL operation done\n"));
+			if (cfg->vif_count) {
+				cfg->vif_count--;
+			}
 			err = BCME_OK;
 		} else {
 			WL_ERR(("IFDEL didn't complete properly\n"));
@@ -3471,7 +3474,7 @@ s32 wl_cfgp2p_set_p2p_resp_ap_chn(struct net_device *net, s32 enable)
 		/* disable PM for p2p responding on infra AP channel */
 		s32 pm = PM_OFF;
 
-		ret = wldev_ioctl_set(net, WLC_SET_PM, &pm, sizeof(pm));
+		ret = wl_cfg80211_set_pm(net, pm, PM_STATE_P2P_LISTEN);
 	}
 
 	return ret;

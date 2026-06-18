@@ -37,11 +37,13 @@ struct map_counters_by_page_size {
  * @alloc_reqs:  Total number of allocation requests.
  * @free_reqs:   Total number of free requests.
  * @pages_in_use: Current number of pages allocated from the pool.
+ * @max_pages_used: Maximum number of pages used from the pool since boot.
  */
 struct hyp_atomic_pages_telemetry {
 	u64 alloc_reqs;
 	u64 free_reqs;
 	s64 pages_in_use;
+	s64 max_pages_used;
 };
 
 /**

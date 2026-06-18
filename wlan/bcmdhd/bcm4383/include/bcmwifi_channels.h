@@ -3,7 +3,7 @@
  * This header file housing the define and function prototype use by
  * both the wl driver, tools & Apps.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -29,7 +29,7 @@
 #include <typedefs.h>
 
 #ifdef BCMDRIVER
-#define BCMWIFI_CHSPEC_BW_COND	/* Conditional channel width support */
+#define BCMWIFI_CHSPEC_COND	/* Conditional channel support */
 #ifdef WL_BAND6G
 #define BCMWIFI_BAND6G		/* 6Ghz band support */
 #endif
@@ -39,13 +39,17 @@
 #ifdef WL_BW320MHZ
 #define BCMWIFI_BW320MHZ	/* 320Mhz channel width support */
 #endif
+#ifdef WL_BAND6G_BAND7
+#define BCMWIFI_BAND6G_BAND7	/* 6Ghz band 7 channels support */
+#endif
 #endif /* BCMDRIVER */
 
-#ifndef BCMWIFI_CHSPEC_BW_COND
-#define WFC_NON_CONT_CHAN	/* 80+80 support */
+#ifndef BCMWIFI_CHSPEC_COND
+#define BCMWIFI_NON_CONT_CHAN	/* 80+80 support */
 #define BCMWIFI_BAND6G
 #define BCMWIFI_BW160MHZ
 #define BCMWIFI_BW320MHZ
+#define BCMWIFI_BAND6G_BAND7
 #endif /* !BCMWIFI_COND_CHAN_WIDTH */
 
 /* A chanspec holds the channel number, band, bandwidth and primary 20MHz sub-band */
@@ -68,29 +72,40 @@ typedef uint16 chanspec_subband_t;
 #define CH_MAX_2G_40M_CHANNEL            11u    /* Max 40MHz center channel in 2G band */
 
 #define CH_MIN_6G_CHANNEL                 1u    /* Min 20MHz channel in 6G band */
-#define CH_MAX_6G_CHANNEL               233u    /* Max 20MHz channel in 6G band */
 #define CH_MIN_6G_40M_CHANNEL             3u    /* Min 40MHz center channel in 6G band */
-#define CH_MAX_6G_40M_CHANNEL           227u    /* Max 40MHz center channel in 6G band */
 #define CH_MIN_6G_80M_CHANNEL             7u    /* Min 80MHz center channel in 6G band */
-#define CH_MAX_6G_80M_CHANNEL           215u    /* Max 80MHz center channel in 6G band */
 #define CH_MIN_6G_160M_CHANNEL           15u    /* Min 160MHz center channel in 6G band */
-#define CH_MAX_6G_160M_CHANNEL          207u    /* Max 160MHz center channel in 6G band */
 #define CH_MIN_6G_320M_CHANNEL           31u    /* Min 320MHz center channel in 6G band */
-#define CH_MAX_6G_320M_CHANNEL          191u    /* Max 320MHz center channel in 6G band */
 #define CH_MIN_6G_320M_OL_CHANNEL        63u    /* Min overlapped 320MHz cntr ch in 6G */
 #define CH_MIN_6G_320M_START_CHAN         1u    /* Min 20MHz prim ch of a 320MHz 6G chan */
+#ifdef BCMWIFI_BAND6G_BAND7
+/* Tentative max. channel numbers with 6Ghz band 7 channels supports */
+#define CH_MAX_6G_CHANNEL               253u    /* Max 20MHz channel in 6G band */
+#define CH_MAX_6G_40M_CHANNEL           251u    /* Max 40MHz center channel in 6G band */
+#define CH_MAX_6G_80M_CHANNEL           247u    /* Max 80MHz center channel in 6G band */
+#define CH_MAX_6G_160M_CHANNEL          239u    /* Max 160MHz center channel in 6G band */
+#define CH_MAX_6G_320M_CHANNEL          223u    /* Max 320MHz center channel in 6G band */
+#define CH_MAX_6G_320M_END_CHAN         253u    /* Max 20MHz prim ch of a 320MHz 6G chan */
+#else
+#define CH_MAX_6G_CHANNEL               233u    /* Max 20MHz channel in 6G band */
+#define CH_MAX_6G_40M_CHANNEL           227u    /* Max 40MHz center channel in 6G band */
+#define CH_MAX_6G_80M_CHANNEL           215u    /* Max 80MHz center channel in 6G band */
+#define CH_MAX_6G_160M_CHANNEL          207u    /* Max 160MHz center channel in 6G band */
+#define CH_MAX_6G_320M_CHANNEL          191u    /* Max 320MHz center channel in 6G band */
 #define CH_MAX_6G_320M_END_CHAN         221u    /* Max 20MHz prim ch of a 320MHz 6G chan */
+#endif /* BCMWIFI_BAND6G_BAND7 */
 
 /* 6GHz 320M center channel spacing */
 #define CH_6G_320M_CNTR_FREQ_SPACING       64u    /* 320MHz center chan spacing in 6G band */
-#define CH_6G_320M_CNTR_FREQ_OVERLAPPED(cc) ((cc >= CH_MIN_6G_320M_OL_CHANNEL) ?\
-		((cc - CH_MIN_6G_320M_OL_CHANNEL) % CH_6G_320M_CNTR_FREQ_SPACING == 0) : 0)
+#define CH_6G_320M_CNTR_FREQ_OVERLAPPED(cc) \
+	((cc >= CH_MIN_6G_320M_OL_CHANNEL) ? \
+	((cc - CH_MIN_6G_320M_OL_CHANNEL) % CH_6G_320M_CNTR_FREQ_SPACING == 0) : 0)
 
 /* maximum # channels the s/w supports */
 #define MAXCHANNEL                      254u    /* max # supported channels.
 						 * DO NOT MAKE > 255: channels are uint8's all over
 						 */
-#define MAXCHANNEL_NUM	(MAXCHANNEL - 1)	/* max channel number */
+#define MAXCHANNEL_NUM			(MAXCHANNEL - 1)	/* max channel number */
 
 #define INVCHANNEL                      255u    /* error value for a bad channel */
 
@@ -253,13 +268,10 @@ typedef struct {
 	(((chspec) & WL_CHANSPEC_320_CHAN_MASK) >> WL_CHANSPEC_320_CHAN_SHIFT)
 #define WL_CHSPEC_320_CNTR_FREQ_OVERLAPPED(chspec) (WL_CHSPEC_320_CHAN(chspec) & 0x04u)
 
+#define WL_CHSPEC_BAND(chspec)	(CHSPEC_BAND(chspec) >> WL_CHANSPEC_BAND_SHIFT)
 #define WL_CHSPEC_BW(chspec)	(CHSPEC_BW(chspec) >> WL_CHANSPEC_BW_SHIFT)
 
-/* deprecated: to be removed */
-#define MAX_BW_NUM		(uint8)(WL_CHANSPEC_BW_MASK >> WL_CHANSPEC_BW_SHIFT)
-#define CHSPEC_320_CNTR_FREQ_OVERLAPPED(chspec) (WL_CHSPEC_320_CHAN(chspec) & 0x04u)
-
-#define CHSPEC_BW_MAX_NUM	WL_CHSPEC_BW(WL_CHANSPEC_BW_MASK)
+#define CHSPEC_BW_MAX_NUM	(WL_CHSPEC_BW(WL_CHANSPEC_BW_MASK) + 1u)
 #define CHSPEC_BW_REPL(chspec, chspec_bw) \
 	(((chspec) & ~WL_CHANSPEC_BW_MASK) | (chspec_bw))
 
@@ -282,7 +294,7 @@ typedef struct {
 #else
 #define CHSPEC_IS160(chspec)	(FALSE)
 #endif
-#ifdef WFC_NON_CONT_CHAN
+#ifdef BCMWIFI_NON_CONT_CHAN
 #define CHSPEC_IS8080(chspec)	(CHSPEC_BW(chspec) == WL_CHANSPEC_BW_8080)
 #else
 #define CHSPEC_IS8080(chspec)	(FALSE)
@@ -293,13 +305,11 @@ typedef struct {
 #define CHSPEC_IS320(chspec)	(FALSE)
 #endif
 
-#ifdef MOVE_CHSPEC_ISx_UNCOND_TO_BCMWIFI_CHANS
 #define CHSPEC_IS40_UNCOND(chspec)	(CHSPEC_BW(chspec) == WL_CHANSPEC_BW_40)
 #define CHSPEC_IS80_UNCOND(chspec)	(CHSPEC_BW(chspec) == WL_CHANSPEC_BW_80)
 #define CHSPEC_IS8080_UNCOND(chspec)	(CHSPEC_BW(chspec) == WL_CHANSPEC_BW_8080)
 #define CHSPEC_IS160_UNCOND(chspec)	(CHSPEC_BW(chspec) == WL_CHANSPEC_BW_160)
 #define CHSPEC_IS320_UNCOND(chspec)	(CHSPEC_BW(chspec) == WL_CHANSPEC_BW_320)
-#endif
 
 /* pass a center channel and get channel offset from it by 10MHz */
 #define CH_OFF_10MHZ_MULTIPLES(channel, offset) \
@@ -608,7 +618,7 @@ typedef struct {
 /* wf_create_chspec_from_primary() flags bitmasks */
 #define WF_CHANSPEC_FLAG_OVERLAPPED320  0x0001u
 
-uint wf_chspec_first_20_sb(chanspec_t chspec);
+uint wf_chspec_first_20_sb(chanspec_t chspec) BCMCONSTFN;
 
 #include <bcmwifi_channels_shared.h>
 
@@ -616,17 +626,17 @@ uint wf_chspec_first_20_sb(chanspec_t chspec);
  * This function returns TRUE if both the chanspec can co-exist in PHY.
  * Addition to primary20 channel, the function checks for side band for 2g 40 channels
  */
-extern bool wf_chspec_coexist(chanspec_t chspec1, chanspec_t chspec2);
+bool wf_chspec_coexist(chanspec_t chspec1, chanspec_t chspec2) BCMCONSTFN;
 
 /**
  * Return the chanspec bandwidth in MHz
  */
-uint wf_bw_chspec_to_mhz(chanspec_t chspec);
+uint wf_bw_chspec_to_mhz(chanspec_t chspec) BCMCONSTFN;
 
 /**
  * Return the bandwidth string for a given chanspec
  */
-const char *wf_chspec_to_bw_str(chanspec_t chspec);
+const char *wf_chspec_to_bw_str(chanspec_t chspec) BCMCONSTFN;
 
 /**
  * Convert chanspec to ascii string, or formats hex of an invalid chanspec.
@@ -646,93 +656,93 @@ chanspec_t wf_chspec_aton(const char *a);
 /**
  * Verify the chanspec fields are valid for a chanspec_t
  */
-bool wf_chspec_malformed(chanspec_t chanspec);
+bool wf_chspec_malformed(chanspec_t chanspec) BCMCONSTFN;
 
 /**
  * Verify the chanspec specifies a valid channel according to 802.11.
  */
-bool wf_chspec_valid(chanspec_t chanspec);
+bool wf_chspec_valid(chanspec_t chanspec) BCMCONSTFN;
 
 /**
  * Verify the chanspec is greater than or equal to the given bandwidth.
  */
-bool wf_chspec_bw_ge(chanspec_t chanspec, chanspec_bw_t chspec_bw);
+bool wf_chspec_bw_ge(chanspec_t chanspec, chanspec_bw_t chspec_bw) BCMCONSTFN;
 
 /**
  * Verify the chanspec is lesser than or equal to the given bandwidth.
  */
-bool wf_chspec_bw_le(chanspec_t chanspec, chanspec_bw_t chspec_bw);
+bool wf_chspec_bw_le(chanspec_t chanspec, chanspec_bw_t chspec_bw) BCMCONSTFN;
 
 /**
  * Verify that the channel is a valid 20MHz channel according to 802.11.
  */
-bool wf_valid_20MHz_chan(uint channel, chanspec_band_t band);
+bool wf_valid_20MHz_chan(uint channel, chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Verify that the center channel is a valid 40MHz center channel according to 802.11.
  */
-bool wf_valid_40MHz_center_chan(uint center_channel, chanspec_band_t band);
+bool wf_valid_40MHz_center_chan(uint center_channel, chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Verify that the center channel is a valid 80MHz center channel according to 802.11.
  */
-bool wf_valid_80MHz_center_chan(uint center_channel, chanspec_band_t band);
+bool wf_valid_80MHz_center_chan(uint center_channel, chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Verify that the center channel is a valid 160MHz center channel according to 802.11.
  */
-bool wf_valid_160MHz_center_chan(uint center_channel, chanspec_band_t band);
+bool wf_valid_160MHz_center_chan(uint center_channel, chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Verify that the center channel is a valid 320MHz center channel according to 802.11.
  */
-bool wf_valid_320MHz_center_chan(uint center_channel, chanspec_band_t band);
+bool wf_valid_320MHz_center_chan(uint center_channel, chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Create a 20MHz chanspec for the given band.
  */
-chanspec_t wf_create_20MHz_chspec(uint channel, chanspec_band_t band);
+chanspec_t wf_create_20MHz_chspec(uint channel, chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec for a 40MHz channel given the primary 20MHz channel number,
  * the center channel number, and the band.
  */
 chanspec_t wf_create_40MHz_chspec(uint primary_channel, uint center_channel,
-	chanspec_band_t band);
+	chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec for a 40MHz channel given the primary 20MHz channel number,
  * the sub-band for the primary 20MHz channel, and the band.
  */
 chanspec_t wf_create_40MHz_chspec_primary_sb(uint primary_channel,
-	chanspec_subband_t primary_subband, chanspec_band_t band);
+	chanspec_subband_t primary_subband, chanspec_band_t band) BCMCONSTFN;
 /**
  * Returns the chanspec for an 80MHz channel given the primary 20MHz channel number,
  * the center channel number, and the band.
  */
 chanspec_t wf_create_80MHz_chspec(uint primary_channel, uint center_channel,
-	chanspec_band_t band);
+	chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec for an 160MHz channel given the primary 20MHz channel number,
  * the center channel number, and the band.
  */
 chanspec_t wf_create_160MHz_chspec(uint primary_channel, uint center_channel,
-	chanspec_band_t band);
+	chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec for an 320MHz channel given the primary 20MHz channel number,
  * the center channel number, and the band.
  */
 chanspec_t wf_create_320MHz_chspec(uint primary_channel, uint center_channel,
-	chanspec_band_t band);
+	chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec for an 80+80MHz channel given the primary 20MHz channel number,
  * the center channel numbers for each frequency segment, and the band.
  */
 chanspec_t wf_create_8080MHz_chspec(uint primary_channel, uint chan0, uint chan1,
-	chanspec_band_t band);
+	chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec given the primary 20MHz channel number,
@@ -742,14 +752,14 @@ chanspec_t wf_create_8080MHz_chspec(uint primary_channel, uint chan0, uint chan1
  * is not handled by this function, use  wf_create_8080MHz_chspec() instead.
  */
 chanspec_t wf_create_chspec(uint primary_channel, uint center_channel,
-	chanspec_bw_t bw, chanspec_band_t band);
+	chanspec_bw_t bw, chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec given the primary 20MHz channel number,
  * channel width, and the band.
  */
 chanspec_t wf_create_chspec_from_primary(uint primary_channel, chanspec_bw_t bw,
-	chanspec_band_t band, uint16 flags);
+	chanspec_band_t band, uint16 flags) BCMCONSTFN;
 
 /**
  * Returns the chanspec given the index of primary 20MHz channel within whole
@@ -759,7 +769,7 @@ chanspec_t wf_create_chspec_from_primary(uint primary_channel, chanspec_bw_t bw,
  * is not handled by this function, use  wf_create_8080MHz_chspec_prim_idx() instead.
  */
 chanspec_t wf_create_chspec_sb(uint sb, uint center_channel, chanspec_bw_t bw,
-	chanspec_band_t band);
+	chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Returns the chanspec for an 80+80MHz channel given the index of primary 20MHz
@@ -767,12 +777,12 @@ chanspec_t wf_create_chspec_sb(uint sb, uint center_channel, chanspec_bw_t bw,
  * the center channel numbers for each frequency segment, and the band.
  */
 chanspec_t wf_create_8080MHz_chspec_sb(uint sb, uint chan0, uint chan1,
-                                       chanspec_band_t band);
+	chanspec_band_t band) BCMCONSTFN;
 
 /**
  * Return the primary 20MHz channel.
  */
-uint8 wf_chspec_primary20_chan(chanspec_t chspec);
+uint8 wf_chspec_primary20_chan(chanspec_t chspec) BCMCONSTFN;
 
 /* alias for old function name */
 #define wf_chspec_ctlchan(c) wf_chspec_primary20_chan(c)
@@ -780,7 +790,7 @@ uint8 wf_chspec_primary20_chan(chanspec_t chspec);
 /**
  * Return the primary 20MHz chanspec of a given chanspec
  */
-chanspec_t wf_chspec_primary20_chspec(chanspec_t chspec);
+chanspec_t wf_chspec_primary20_chspec(chanspec_t chspec) BCMCONSTFN;
 
 /* alias for old function name */
 #define wf_chspec_ctlchspec(c) wf_chspec_primary20_chspec(c)
@@ -788,22 +798,22 @@ chanspec_t wf_chspec_primary20_chspec(chanspec_t chspec);
 /**
  * Return the primary 40MHz chanspec for a 40MHz or wider channel
  */
-chanspec_t wf_chspec_primary40_chspec(chanspec_t chspec);
+chanspec_t wf_chspec_primary40_chspec(chanspec_t chspec) BCMCONSTFN;
 
 /**
  * Return the chanspec band for a given frequency.
  */
-chanspec_band_t wf_mhz2chanspec_band(uint freq);
+chanspec_band_t wf_mhz2chanspec_band(uint freq) BCMCONSTFN;
 
 /**
  * Return the channel number for a given frequency and base frequency
  */
-int wf_mhz2channel(uint freq, uint start_factor);
+int wf_mhz2channel(uint freq, uint start_factor) BCMCONSTFN;
 
 /**
  * Return the center frequency in MHz of the given channel and base frequency.
  */
-int wf_channel2mhz(uint channel, uint start_factor);
+int wf_channel2mhz(uint channel, uint start_factor) BCMCONSTFN;
 
 /**
  * Returns the chanspec 80Mhz channel corresponding to the following input
@@ -816,7 +826,8 @@ int wf_channel2mhz(uint channel, uint start_factor);
  *
  * returns INVCHANSPEC in case of error
  */
-extern chanspec_t wf_chspec_80(uint8 center_channel, uint8 primary_channel);
+chanspec_t wf_chspec_80(uint8 center_channel, uint8 primary_channel) BCMCONSTFN;
+chanspec_t wf_chspec_80(uint8 center_channel, uint8 primary_channel);
 
 /**
  * Convert ctl chan and bw to chanspec
@@ -827,7 +838,7 @@ extern chanspec_t wf_chspec_80(uint8 center_channel, uint8 primary_channel);
  * @return	> 0 if successful or 0 otherwise
  *
  */
-extern uint16 wf_channel2chspec(uint ctl_ch, uint bw);
+uint16 wf_channel2chspec(uint ctl_ch, uint bw) BCMCONSTFN;
 
 /*
  * Returns the 80+80 MHz chanspec corresponding to the following input parameters
@@ -844,8 +855,8 @@ extern uint16 wf_channel2chspec(uint ctl_ch, uint bw);
  *
  * Refer to 802.11-2016 section 22.3.14 "Channelization".
  */
-extern chanspec_t wf_chspec_get8080_chspec(uint8 primary_20mhz,
-	uint8 chan0_80Mhz, uint8 chan1_80Mhz);
+chanspec_t wf_chspec_get8080_chspec(uint8 primary_20mhz,
+	uint8 chan0_80Mhz, uint8 chan1_80Mhz) BCMCONSTFN;
 
 /**
  * Returns the center channel of the primary 80 MHz sub-band of the provided chanspec
@@ -856,7 +867,7 @@ extern chanspec_t wf_chspec_get8080_chspec(uint8 primary_20mhz,
  *		Will return the center channel of an input 80MHz chspec.
  *		Will return INVCHANNEL if the chspec is malformed or less than 80MHz bw.
  */
-extern uint8 wf_chspec_primary80_channel(chanspec_t chanspec);
+uint8 wf_chspec_primary80_channel(chanspec_t chanspec) BCMCONSTFN;
 
 /**
  * Returns the center channel of the secondary 80 MHz sub-band of the provided chanspec
@@ -866,7 +877,7 @@ extern uint8 wf_chspec_primary80_channel(chanspec_t chanspec);
  * @return	center channel number of the secondary 80MHz sub-band of the input.
  *		Will return INVCHANNEL if the chspec is malformed or bw is not greater than 80MHz.
  */
-extern uint8 wf_chspec_secondary80_channel(chanspec_t chanspec);
+uint8 wf_chspec_secondary80_channel(chanspec_t chanspec) BCMCONSTFN;
 
 /**
  * Returns the chanspec for the primary 80MHz sub-band of a 320MHz or 160MHz or
@@ -878,7 +889,7 @@ extern uint8 wf_chspec_secondary80_channel(chanspec_t chanspec);
  *		Will return an input 80MHz chspec as is.
  *		Will return INVCHANSPEC if the chspec is malformed or less than 80MHz bw.
  */
-extern chanspec_t wf_chspec_primary80_chspec(chanspec_t chspec);
+chanspec_t wf_chspec_primary80_chspec(chanspec_t chspec) BCMCONSTFN;
 
 /**
  * Returns the chanspec for the secondary 80MHz sub-band of an 160MHz or 80+80 channel
@@ -890,7 +901,7 @@ extern chanspec_t wf_chspec_primary80_chspec(chanspec_t chspec);
  * @return	An 80MHz chanspec describing the secondary 80MHz sub-band of the input.
  *		Will return INVCHANSPEC if the chspec is malformed or bw is not greater than 80MHz.
  */
-extern chanspec_t wf_chspec_secondary80_chspec(chanspec_t chspec);
+chanspec_t wf_chspec_secondary80_chspec(chanspec_t chspec) BCMCONSTFN;
 
 /**
  * Returns the center channel of the primary 160MHz sub-band of the provided chanspec
@@ -901,7 +912,7 @@ extern chanspec_t wf_chspec_secondary80_chspec(chanspec_t chspec);
  *		Will return the center channel of an input 160MHz chspec.
  *		Will return INVCHANNEL if the chspec is malformed or less than 160MHz bw.
  */
-extern uint8 wf_chspec_primary160_channel(chanspec_t chanspec);
+uint8 wf_chspec_primary160_channel(chanspec_t chanspec) BCMCONSTFN;
 
 /**
  * Returns the chanspec for the primary 160MHz sub-band of an 320MHz channel
@@ -912,7 +923,7 @@ extern uint8 wf_chspec_primary160_channel(chanspec_t chanspec);
  *		Will return an input 160MHz chspec as is.
  *		Will return INVCHANSPEC if the chspec is malformed or less than 160MHz bw.
  */
-extern chanspec_t wf_chspec_primary160_chspec(chanspec_t chspec);
+chanspec_t wf_chspec_primary160_chspec(chanspec_t chspec) BCMCONSTFN;
 
 /**
  * Returns the center channel of the primary 160MHz sub-band of the provided chanspec
@@ -923,7 +934,7 @@ extern chanspec_t wf_chspec_primary160_chspec(chanspec_t chspec);
  *		Will return the center channel of an input 160MHz chspec.
  *		Will return INVCHANNEL if the chspec is malformed or less than 160MHz bw.
  */
-extern uint8 wf_chspec_secondary160_channel(chanspec_t chanspec);
+uint8 wf_chspec_secondary160_channel(chanspec_t chanspec) BCMCONSTFN;
 
 /**
  * Returns the chanspec for the primary 160MHz sub-band of an 320MHz channel
@@ -934,14 +945,14 @@ extern uint8 wf_chspec_secondary160_channel(chanspec_t chanspec);
  *		Will return an input 160MHz chspec as is.
  *		Will return INVCHANSPEC if the chspec is malformed or less than 160MHz bw.
  */
-extern chanspec_t wf_chspec_secondary160_chspec(chanspec_t chspec);
+chanspec_t wf_chspec_secondary160_chspec(chanspec_t chspec) BCMCONSTFN;
 
 /*
  * For 160MHz or 80P80 chanspec, set ch[0]/ch[1] to be the low/high 80 Mhz channels
  *
  * For 20/40/80MHz chanspec, set ch[0] to be the center freq, and chan[1]=-1
  */
-extern void wf_chspec_get_80p80_channels(chanspec_t chspec, uint8 *ch);
+void wf_chspec_get_80p80_channels(chanspec_t chspec, uint8 *ch);
 
 /* wf_chanspec_iter_... iterator API is deprecated. Use wlc_clm_chanspec_iter_... API instead */
 
@@ -1023,36 +1034,44 @@ chanspec_t wf_chanspec_iter_current(wf_chanspec_iter_t *iter);
  * Works with 20, 40, 80 and 160MHz chspec
  */
 
-extern void wf_get_all_ext(chanspec_t chspec, uint8 *chan_ptr);
+void wf_get_all_ext(chanspec_t chspec, uint8 *chan_ptr);
 
 /*
  * Given two chanspecs, returns true if they overlap.
  * (Overlap: At least one 20MHz subband is common between the two chanspecs provided)
  */
-extern bool wf_chspec_overlap(chanspec_t chspec0, chanspec_t chspec1);
+bool wf_chspec_overlap(chanspec_t chspec0, chanspec_t chspec1) BCMCONSTFN;
 
-extern uint8 channel_bw_to_width(chanspec_t chspec);
+uint8 channel_bw_to_width(chanspec_t chspec) BCMCONSTFN;
 uint8 wf_chspec_320_id2cch(chanspec_t chanspec);
 
-chanspec_t wf_create_chspec_with_center_channel(uint16 channel, bool is_6g);
+chanspec_t wf_create_chspec_with_center_channel(uint16 channel, bool is_6g) BCMCONSTFN;
 
-int channel_5g_160mhz_to_id(uint ch);
+int channel_5g_160mhz_to_id(uint ch) BCMCONSTFN;
 
-int channel_6g_160mhz_to_id(uint ch);
+int channel_6g_160mhz_to_id(uint ch) BCMCONSTFN;
 
-int channel_6g_320mhz_to_id(uint ch);
+int channel_6g_320mhz_to_id(uint ch) BCMCONSTFN;
 bool wf_chspec_get_20m_lower_upper_channel(chanspec_t chspec, uint* lower, uint* upper,
 	uint *separation);
 
-#ifdef BCMWIFI_BW320MHZ
 /*
  * Returns center channel for a contiguous chanspec and
  * INVCHANNEL for non-contiguous chanspec.
  */
-uint8 wf_chspec_center_channel(chanspec_t chspec);
+#ifdef BCMWIFI_BW320MHZ
+uint8 wf_chspec_center_channel(chanspec_t chspec) BCMCONSTFN;
 #else /* BCMWIFI_BW320MHZ */
 #define wf_chspec_center_channel(chspec) CHSPEC_CHANNEL(chspec)
 #endif /* BCMWIFI_BW320MHZ */
-uint8 wf_chspec_get_primary_sb(chanspec_t chspec);
+uint8 wf_chspec_get_primary_sb(chanspec_t chspec) BCMCONSTFN;
+
+/* channel bandwidth */
+#define WLC_20_MHZ	20	/**< 20Mhz channel bandwidth */
+#define WLC_40_MHZ	40	/**< 40Mhz channel bandwidth */
+#define WLC_80_MHZ	80	/**< 80Mhz channel bandwidth */
+#define WLC_160_MHZ	160	/**< 160Mhz channel bandwidth */
+#define WLC_240_MHZ	240	/**< 240Mhz channel bandwidth */
+#define WLC_320_MHZ	320	/**< 320Mhz channel bandwidth */
 
 #endif	/* _bcmwifi_channels_h_ */

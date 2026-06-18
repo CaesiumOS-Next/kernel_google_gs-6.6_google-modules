@@ -1,7 +1,7 @@
 /*
  * Driver O/S-independent utility routines
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -579,6 +579,34 @@ bcm_pack_xtlv_buf_from_mem(uint8 **tlv_buf, uint16 *buflen, const xtlv_desc_t *i
 }
 
 /*
+ * pack xtlv according to xtlv_desc_t and return the idx where buffer ran out
+ */
+int
+bcm_pack_xtlv_buf_from_mem_index(uint8 **tlv_buf, uint16 *buflen, const xtlv_desc_t *items,
+        bcm_xtlv_opts_t opts, uint16 *stopped_at)
+{
+	int res = BCME_OK;
+	uint8 *ptlv = *tlv_buf;
+	uint16 idx = 0;
+
+	while (items->type != 0) {
+		if (items->len && items->ptr) {
+			res = bcm_pack_xtlv_entry(&ptlv, buflen, items->type,
+				items->len, items->ptr, opts);
+			if (res != BCME_OK) {
+				*stopped_at = idx;
+				break;
+			}
+		}
+		idx++;
+		items++;
+	}
+
+	*tlv_buf = ptlv; /* update the external pointer */
+	return res;
+}
+
+/*
  *  unpack xtlv buffer to memory according to xtlv_desc_t
  *
  */
@@ -850,8 +878,12 @@ bcm_xtlv_process_gather_descs_fill_container(xtlv_gather_desc_t *desc,
 	hsz = bcm_xtlv_hdr_size(xtlvbuf->opts);
 
 	/* Create a new local XTLV buffer after leaving space for container's type and length */
-	bcm_xtlv_buf_init(&local_xtlvbuf,
+	rc = bcm_xtlv_buf_init(&local_xtlvbuf,
 		(bcm_xtlv_buf(xtlvbuf) + hsz), (rlen - (uint16)hsz), xtlvbuf->opts);
+
+	if (rc != BCME_OK) {
+		goto fail;
+	}
 
 	/* Go through all leaf level descriptors */
 	if (leaf_level_desc) {

@@ -13,6 +13,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/mmzone.h> /* MAX_ORDER_NR_PAGES */
+#include <linux/pm_runtime.h>
 #include <linux/slab.h>
 
 #include <gcip/gcip-memory.h>
@@ -818,7 +819,7 @@ static int edgetpu_mailbox_external_disable_free(struct edgetpu_client *client)
 
 void edgetpu_mailbox_external_disable_free_locked(struct edgetpu_device_group *group)
 {
-	if (!group->dev_inaccessible) {
+	if (pm_runtime_get_if_active(group->etdev->dev, false) > 0) {
 	/*
 	 * Deactivate only fails if f/w is unresponsive which will put group
 	 * in errored state or mailbox physically disabled before requesting
@@ -826,6 +827,7 @@ void edgetpu_mailbox_external_disable_free_locked(struct edgetpu_device_group *g
 	 */
 		edgetpu_mailbox_deactivate_external_mailbox(group);
 		edgetpu_mailbox_disable_external_mailbox(group);
+		pm_runtime_put(group->etdev->dev);
 	}
 	edgetpu_mailbox_external_free(group);
 }
@@ -835,10 +837,10 @@ static int edgetpu_mailbox_external_enable_by_id(struct edgetpu_client *client, 
 {
 	int ret;
 
-	if (!edgetpu_wakelock_lock(&client->wakelock)) {
+	if (!edgetpu_wakelock_lock(client)) {
 		etdev_err(client->etdev, "Enabling mailbox %d needs wakelock acquired\n",
 			  mailbox_id);
-		edgetpu_wakelock_unlock(&client->wakelock);
+		edgetpu_wakelock_unlock(client);
 		return -EAGAIN;
 	}
 
@@ -848,9 +850,8 @@ static int edgetpu_mailbox_external_enable_by_id(struct edgetpu_client *client, 
 	if (ret)
 		etdev_err(client->etdev, "Activate mailbox %d failed: %d", mailbox_id, ret);
 	else
-		edgetpu_wakelock_inc_event_locked(&client->wakelock,
-						  EDGETPU_WAKELOCK_EVENT_EXT_MAILBOX);
-	edgetpu_wakelock_unlock(&client->wakelock);
+		edgetpu_wakelock_inc_event_locked(client, EDGETPU_WAKELOCK_EVENT_EXT_MAILBOX);
+	edgetpu_wakelock_unlock(client);
 	return ret;
 }
 
@@ -863,18 +864,18 @@ static int edgetpu_mailbox_external_disable_by_id(struct edgetpu_client *client,
 	 * released, so theoretically the check fail here can only happen when enable_ext() is
 	 * failed or not called before.
 	 */
-	if (!edgetpu_wakelock_lock(&client->wakelock)) {
+	if (!edgetpu_wakelock_lock(client)) {
 		etdev_err(client->etdev, "Disabling mailbox %d needs wakelock acquired\n",
 			  mailbox_id);
-		edgetpu_wakelock_unlock(&client->wakelock);
+		edgetpu_wakelock_unlock(client);
 		return -EAGAIN;
 	}
 
 	etdev_dbg(client->etdev, "Disabling mailbox: %d\n", mailbox_id);
 
 	edgetpu_mailbox_deactivate_bulk(client->etdev, BIT(mailbox_id));
-	edgetpu_wakelock_dec_event_locked(&client->wakelock, EDGETPU_WAKELOCK_EVENT_EXT_MAILBOX);
-	edgetpu_wakelock_unlock(&client->wakelock);
+	edgetpu_wakelock_dec_event_locked(client, EDGETPU_WAKELOCK_EVENT_EXT_MAILBOX);
+	edgetpu_wakelock_unlock(client);
 	return ret;
 }
 
@@ -984,4 +985,22 @@ void edgetpu_mailbox_set_irq_handler(struct edgetpu_mailbox *mailbox,
 
 	if (mailbox->irq)
 		enable_irq(mailbox->irq);
+}
+
+void edgetpu_mailbox_dump(struct edgetpu_mailbox *mailbox)
+{
+	/* Ensure the TPU block is powered. */
+	if (pm_runtime_get_if_active(mailbox->etdev->dev, false) <= 0)
+		return;
+
+	etdev_info(mailbox->etdev, "mailbox id %u cmd head=%#x tail=%#x doorbell_status=%u",
+		   mailbox->mailbox_id,
+		   EDGETPU_MAILBOX_CMD_QUEUE_READ(mailbox, head),
+		   EDGETPU_MAILBOX_CMD_QUEUE_READ(mailbox, tail),
+		   EDGETPU_MAILBOX_CMD_QUEUE_READ(mailbox, doorbell_status));
+	etdev_info(mailbox->etdev, "  resp head=%#x tail=%#x doorbell_status=%u\n",
+		   EDGETPU_MAILBOX_RESP_QUEUE_READ(mailbox, head),
+		   EDGETPU_MAILBOX_RESP_QUEUE_READ(mailbox, tail),
+		   EDGETPU_MAILBOX_RESP_QUEUE_READ(mailbox, doorbell_status));
+	pm_runtime_put(mailbox->etdev->dev);
 }

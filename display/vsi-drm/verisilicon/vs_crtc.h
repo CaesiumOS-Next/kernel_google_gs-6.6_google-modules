@@ -55,11 +55,11 @@ static const char *power_state_names[VS_POWER_STATE_COUNT] = {
 	"POWER_STATE_PSR",
 };
 
-enum vs_fabrt_boost_state {
-	VS_FABRT_BOOST_INIT,
-	VS_FABRT_BOOST_BOOSTING,
-	VS_FABRT_BOOST_RESTORE,
-	VS_FABRT_BOOST_PENDING,
+enum vs_freq_boost_state {
+	VS_FREQ_BOOST_INIT,
+	VS_FREQ_BOOST_BOOSTING,
+	VS_FREQ_BOOST_RESTORE,
+	VS_FREQ_BOOST_PENDING,
 };
 
 struct vs_crtc;
@@ -72,9 +72,6 @@ struct vs_crtc_funcs {
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	int (*show_pattern_config)(struct seq_file *s);
 	void (*set_pattern)(struct drm_crtc *crtc, const char __user *ubuf, size_t len);
-	void (*set_crc)(struct device *dev, struct drm_crtc *crtc, const char __user *ubuf,
-			size_t len);
-	int (*show_crc)(struct seq_file *s);
 #endif /* CONFIG_DEBUG_FS */
 	void (*config)(struct device *dev, struct drm_crtc *crtc);
 	void (*enable_vblank)(struct vs_crtc *crtc, bool enable);
@@ -83,21 +80,6 @@ struct vs_crtc_funcs {
 		       struct drm_atomic_state *state);
 	int (*check)(struct device *dev, struct drm_crtc *crtc, struct drm_crtc_state *state);
 	int (*get_crtc_scanout_position)(struct device *dev, struct drm_crtc *crtc, u32 *position);
-};
-
-struct vs_crtc_pattern {
-	bool enable;
-	u8 pos;
-	u8 mode;
-	u64 color;
-	struct drm_vs_rect rect;
-};
-
-struct vs_crtc_crc {
-	bool enable;
-	u8 pos;
-	struct drm_vs_color seed;
-	struct drm_vs_color result;
 };
 
 struct vs_drm_blob_state {
@@ -127,7 +109,6 @@ struct vs_crtc_state {
 	struct drm_crtc_state base;
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	struct dc_hw_pattern pattern; /* for pattern debugfs */
-	struct dc_hw_disp_crc crc; /* for crc debugfs */
 #endif
 
 	u32 sync_mode;
@@ -173,7 +154,7 @@ struct vs_crtc_state {
 	bool force_skip_update;
 	bool planes_updated;
 	bool wb_connectors_updated;
-	bool need_boost_fabrt;
+	bool need_boost_freq;
 
 	bool recovery_disabled;
 	/** @recovery_info: information about any request for recovery trigger */
@@ -306,8 +287,16 @@ struct vs_crtc {
 	atomic_t unexpected_te_count;
 	atomic_t frame_done_count;
 
+	/**
+	 * @first_frame_trigger: whether sof sent out on this crtc since
+	 *			 latest device resume. Guards against
+	 *			 invalid frame_start interrupt.
+	 */
+	bool first_frame_trigger;
+
 	struct dev_pm_qos_request core_devfreq_req;
-	struct dev_pm_qos_request fabrt_devfreq_req;
+	struct dev_pm_qos_request boost_fab_devfreq_req;
+	struct dev_pm_qos_request boost_core_devfreq_req;
 	struct vs_qos_config qos_config;
 	struct vs_qos_config pending_qos_config;
 	bool underrun_enabled;

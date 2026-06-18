@@ -103,7 +103,8 @@ struct vs_dc {
 	struct drm_device *drm_dev;
 
 	struct devfreq *core_devfreq;
-	struct devfreq *fabrt_devfreq;
+	struct devfreq *boost_fab_devfreq;
+	struct devfreq *boost_core_devfreq;
 	int irq_num;
 	int *irqs;
 	int irq_enable_count;
@@ -136,8 +137,9 @@ struct vs_dc {
 	u32 crtc_mask;
 
 	enum dc_hw_reg_dump_options hw_reg_dump_options;
-	/** @boost_fabrt_freq: define the value to boost FABRT frequency */
-	u32 boost_fabrt_freq;
+	/** define the value to boost fabric and core frequencies */
+	u32 boost_fab_freq;
+	u32 boost_core_freq;
 	/** @disp_sscd: handle for display subsystem coredump */
 	struct display_sscd_info *disp_sscd;
 };
@@ -150,6 +152,12 @@ static inline struct vs_dc *to_vs_dc(const struct dc_hw *hw)
 {
 	return container_of(hw, struct vs_dc, hw);
 }
+
+static inline bool is_boost_freq_enabled(struct vs_dc *dc)
+{
+	return (dc->boost_fab_freq || dc->boost_core_freq);
+}
+
 bool dc_is_coredump_source_enabled(const struct vs_dc *dc, enum coredump_source source);
 
 int vs_sw_reset_ioctl(struct drm_device *dev, void *data, struct drm_file *file_priv);
@@ -164,9 +172,5 @@ int vs_dc_power_get(struct device *dev, bool sync);
 int vs_dc_power_put(struct device *dev, bool sync);
 int vs_dc_coredump(struct vs_dc *dc, const char *reason);
 bool is_display_cmd_sw_trigger(struct dc_hw_display *display);
-
-#if IS_ENABLED(CONFIG_DEBUG_FS)
-void vs_crtc_set_last_crc(u32 crtc_id, struct drm_vs_color vaule);
-#endif
 
 #endif /* __VS_DC_H__ */

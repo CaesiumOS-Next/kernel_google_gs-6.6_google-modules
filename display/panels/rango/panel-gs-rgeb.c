@@ -947,20 +947,25 @@ static int rgeb_detect_fault(struct gs_panel *ctx)
 	int ret;
 
 	PANEL_ATRACE_BEGIN(__func__);
-	ret = mipi_dsi_dcs_read(dsi, ERR_DSI_ADDR, buf, ERR_DSI_ERR_LEN);
 
+	bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
+	ret = mipi_dsi_dcs_read(dsi, ERR_DSI_ADDR, buf, ERR_DSI_ERR_LEN);
 	if (ret != ERR_DSI_ERR_LEN) {
-		dev_warn(dev, "Error reading ERR_DSI (%pe)\n", ERR_PTR(ret));
+		ctx->ddic_read_fail_cnt++;
+		dev_warn(dev, "Error reading ERR_FG (%pe), cnt=%d\n",
+			ERR_PTR(ret), ctx->ddic_read_fail_cnt);
+		if (ctx->ddic_read_fail_cnt >= MAX_DDIC_READ_FAIL_CNT)
+			set_bit(GS_PANEL_ERR_DSI_READ_FAILURE, ctx->panel_errors);
 		goto end;
 	} else {
 		dev_dbg(dev, "ERR_DSI: %02x %02x\n", buf[0], buf[1]);
+		ctx->ddic_read_fail_cnt = 0;
 	}
 
 	if (buf[0] || buf[1]) {
 		u8 br_buf[BR_LEN] = { 0 };
 		u8 pps_buf[RGEB_PPS_LEN] = { 0 };
 
-		bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
 		bitmap_set_value8(ctx->panel_errors, buf[0], 8);
 		bitmap_set_value8(ctx->panel_errors, buf[1], 0);
 		dev_err(dev, "DDIC error: %*pbl\n", GS_PANEL_ERR_MAX, ctx->panel_errors);
@@ -1077,8 +1082,7 @@ const struct gs_panel_desc google_rgeb = {
 	.default_dsi_hs_clk_mbps = MIPI_DSI_FREQ_DEFAULT,
 	.reset_timing_ms = { -1, 1, 5 },
 	.fault_detect_interval_ms = 5000,
-	.panel_errors_mask = ~(BIT(GS_PANEL_ERR_DSI_SOT) | BIT(GS_PANEL_ERR_DSI_SOT_SYNC) |
-			BIT(GS_PANEL_ERR_DSI_HS_RX_TIMEOUT)), /* Peripheral timeout */
+	.panel_errors_mask = BIT(GS_PANEL_ERR_DSI_READ_FAILURE),
 };
 
 static const struct of_device_id gs_panel_of_match[] = {

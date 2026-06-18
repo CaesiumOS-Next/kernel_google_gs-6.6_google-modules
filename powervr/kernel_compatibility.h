@@ -262,6 +262,7 @@ struct dma_buf_map {
 #define COMPAT_FB_INFO fbdev
 #define drm_fb_helper_alloc_info drm_fb_helper_alloc_fbi
 #define drm_fb_helper_unregister_info drm_fb_helper_unregister_fbi
+#define timer_delete_sync del_timer_sync
 #else
 #define COMPAT_FB_INFO info
 #endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)) */
@@ -301,6 +302,37 @@ static inline void pvr_vm_flags_clear(struct vm_area_struct *vma,
 #define thermal_tripless_zone_device_register(type, devdata, ops, tzp) \
 	thermal_zone_device_register((type), 0, 0, (devdata), (ops), (tzp), 0, 0)
 #endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)) */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0))
+#define COMPAT_DMA_BUF DMA_BUF
+#else
+#define COMPAT_DMA_BUF "DMA_BUF"
+#endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)) */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
+#define DRM_DISPLAY_MODE	struct drm_display_mode
+#else
+#define DRM_DISPLAY_MODE	const struct drm_display_mode
+#endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0)) */
+
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0))
+#define timer_container_of	from_timer
+#endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(6, 16, 0)) */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0))
+#define PVR_PHYS_PFN(phys) (phys_to_pfn_t(phys, 0))
+#define pvr_pfn_t pfn_t
+#define pvr_pfn_t_to_page pfn_t_to_page
+#define pvr_pfn_t_to_pfn pfn_t_to_pfn
+#define pvr_pfn_t_valid pfn_t_valid
+#else
+#define PVR_PHYS_PFN PHYS_PFN
+#define pvr_pfn_t unsigned long
+#define pvr_pfn_t_to_page pfn_to_page
+#define pvr_pfn_t_to_pfn(pfn_t) (pfn_t)
+#define pvr_pfn_t_valid pfn_valid
+#endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(6, 17, 0)) */
 
 #if defined(__GNUC__)
 #define GCC_VERSION_AT_LEAST(major, minor) \

@@ -4,7 +4,7 @@
  * To be used in firmware and host apps or dhd - reducing code size,
  * duplication, and maintenance overhead.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -170,7 +170,11 @@ struct bcm_iov_batch_buf {
 	uint16 version;
 	uint8 count;
 	uint8 is_set;   /* obsolete */
+#ifdef BCM_NON_ISO_C
+	struct bcm_iov_batch_subcmd cmds[0];
+#else
 	struct bcm_iov_batch_subcmd cmds[];
+#endif
 };
 
 /* Non-Batched commands will have the following memory layout

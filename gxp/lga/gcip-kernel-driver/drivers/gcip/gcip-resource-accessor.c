@@ -259,8 +259,6 @@ struct gcip_resource_accessor *gcip_resource_accessor_create(struct device *dev,
 				     &fops_gcip_resource_accessor);
 
 	if (IS_ERR(dentry)) {
-		dev_warn(dev, "Failed to create debugfs for resource accessor (ret=%ld)\n",
-			 PTR_ERR(dentry));
 		devm_kfree(dev, accessor);
 		return ERR_CAST(dentry);
 	}

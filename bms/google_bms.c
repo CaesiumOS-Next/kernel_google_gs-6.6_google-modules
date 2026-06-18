@@ -580,6 +580,73 @@ int gbms_aacc_temp_idx(const struct gbms_chg_profile *profile, int temp, bool is
 }
 EXPORT_SYMBOL_GPL(gbms_aacc_temp_idx);
 
+int gbms_read_aacv_limits(struct gbms_chg_profile *profile,
+			  struct device_node *node)
+{
+	int ret = 0, cycle_nb_limits = 0, offset_nb_limits = 0;
+
+	if (!profile || !node)
+		return -ENODEV;
+
+	ret = of_property_count_elems_of_size(node, "google,aacv-ref-cycles", sizeof(u32));
+	if (ret < 0)
+		goto no_data;
+
+	cycle_nb_limits = ret;
+
+	ret = of_property_count_elems_of_size(node, "google,aacv-ref-offset", sizeof(u32));
+	if (ret < 0)
+		goto no_data;
+
+	offset_nb_limits = ret;
+
+	if (cycle_nb_limits != offset_nb_limits ||
+	    cycle_nb_limits > GBMS_AACV_DATA_MAX ||
+	    cycle_nb_limits == 0) {
+		gbms_warn(profile, "aacv not supported, cycle_nb:%d, offset_nb:%d, max:%d",
+			  cycle_nb_limits, offset_nb_limits, GBMS_AACV_DATA_MAX);
+		profile->aacv_nb_limits = 0;
+		return -ERANGE;
+	}
+
+	ret = of_property_read_u32_array(node, "google,aacv-ref-cycles",
+					 (u32 *)profile->aacv_cycles, cycle_nb_limits);
+	if (ret < 0)
+		return ret;
+
+	ret = of_property_read_u32_array(node, "google,aacv-ref-offset",
+					 (u32 *)profile->aacv_offsets, offset_nb_limits);
+	if (ret < 0)
+		return ret;
+
+	profile->aacv_nb_limits = cycle_nb_limits;
+
+	return 0;
+
+no_data:
+	profile->aacv_nb_limits = 0;
+	return ret;
+}
+EXPORT_SYMBOL_GPL(gbms_read_aacv_limits);
+
+int gbms_aacv_get_offset(const struct gbms_chg_profile *profile, const int cycles)
+{
+	int idx, offset = 0;
+
+	if (profile->aacv_nb_limits == 0 || cycles < 0)
+		return 0;
+
+	for (idx = 0; idx < profile->aacv_nb_limits; ++idx) {
+		if (cycles >= profile->aacv_cycles[idx])
+			offset = profile->aacv_offsets[idx];
+		else
+			break;
+	}
+
+	return offset;
+}
+EXPORT_SYMBOL_GPL(gbms_aacv_get_offset);
+
 int gbms_init_chg_profile_internal(struct gbms_chg_profile *profile,
 			  struct device_node *node,
 			  const char *owner_name)
@@ -1402,7 +1469,7 @@ int gbms_tier_stats_cstr(char *buff, int size,
 			 const struct gbms_ce_tier_stats *tier_stat,
 			 bool verbose)
 {
-	const int soc_in = tier_stat->soc_in >> 8;
+	const qnum_t q_soc = qnum_from_q8_8(tier_stat->soc_in);
 	const long elap = tier_stat->time_fast + tier_stat->time_taper +
 			  tier_stat->time_other;
 
@@ -1424,9 +1491,9 @@ int gbms_tier_stats_cstr(char *buff, int size,
 		(verbose) ? ':' : ',');
 
 	len += scnprintf(&buff[len], size - len,
-		"%d.%d,%d,%d, %d,%d,%d, %d,%ld,%d, %d,%ld,%d, %d,%ld,%d",
-		soc_in,
-		tier_stat->soc_in & 0xff,
+		"%d.%02d,%d,%d, %d,%d,%d, %d,%ld,%d, %d,%ld,%d, %d,%ld,%d",
+		qnum_toint(q_soc),
+		qnum_fracdgt(q_soc),
 		tier_stat->cc_in,
 		tier_stat->temp_in,
 		tier_stat->time_fast,

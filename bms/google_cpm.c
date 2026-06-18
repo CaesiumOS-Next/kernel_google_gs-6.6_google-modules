@@ -1320,10 +1320,6 @@ static int gcpm_pps_timeout(struct gcpm_drv *gcpm)
 		? PPS_ACTIVE_WLC_TIMEOUT_S : PPS_ACTIVE_USB_TIMEOUT_S;
 }
 
-static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev,
-					      unsigned long lvl);
-
-
 static int gcpm_pps_offline(struct gcpm_drv *gcpm)
 {
 	int ret;
@@ -3039,17 +3035,13 @@ static int gcpm_set_mdis_charge_cntl_limit(struct thermal_cooling_device *tcd,
 	return ret;
 }
 
-static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev,
-					      unsigned long lvl)
+static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev, unsigned long lvl,
+					      bool mdis_crit_lvl)
 {
 	struct gcpm_drv *gcpm = tdev->gcpm;
 	struct power_supply *wlc_psy = gcpm->wlc_pps_data.pps_psy;
 	int online = 0, in_idx = -1;
 	int msc_fcc, dc_icl, cp_fcc, ret = 0;
-	bool mdis_crit_lvl;
-
-	if (tdev->thermal_levels <= 0 || lvl < 0 || lvl > tdev->thermal_levels)
-		return -EINVAL;
 
 	dev_dbg(gcpm->device, "MSC_THERM_MDIS lvl=%d->%d\n", tdev->current_level, (int)lvl);
 
@@ -3059,7 +3051,6 @@ static int gcpm_update_mdis_charge_cntl_limit(struct mdis_thermal_device *tdev,
 		dev_err(gcpm->device, "fail to write mdis level to wlc driver, %d\n", ret);
 
 	tdev->current_level = lvl;
-	mdis_crit_lvl = lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0;
 	if (mdis_crit_lvl) {
 		msc_fcc = dc_icl = cp_fcc = 0;
 		gcpm->cp_fcc_hold_limit = 0;
@@ -3599,8 +3590,13 @@ static int gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
 	const int lvl = (long)value;
 	int power_uw = CSI_POWER_UNKNOWN;
 	bool trigger_select;
+	bool mdis_crit_lvl = false;
 
-	gcpm_update_mdis_charge_cntl_limit(tdev, lvl);
+	if (tdev->thermal_levels > 0 && lvl >= 0 && lvl <= tdev->thermal_levels) {
+		mdis_crit_lvl = lvl == tdev->thermal_levels || tdev->thermal_mitigation[lvl] == 0;
+
+		gcpm_update_mdis_charge_cntl_limit(tdev, lvl, mdis_crit_lvl);
+	}
 
 	trigger_select = lvl != 0 && gcpm->cp_fcc_hold;
 
@@ -3653,6 +3649,10 @@ static int gcpm_mdis_callback(struct gvotable_election *el, const char *reason,
 					       &psy_current))
 			power_uw = (psy_voltage.intval / 1000) * (psy_current.intval / 1000);
 	}
+
+	/* Ensure critical MDIS is correctly flagged */
+	if (mdis_crit_lvl)
+		power_uw = 0;
 
 	/* this is a problem only when speed is affected */
 	gvotable_cast_compound_vote(gcpm->csi_status_votable, "CSI_STATUS_THERM_MDIS",

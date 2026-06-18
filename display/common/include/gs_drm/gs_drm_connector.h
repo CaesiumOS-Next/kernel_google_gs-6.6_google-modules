@@ -386,6 +386,12 @@ struct gs_drm_connector_state {
 	ktime_t frame_start_ts;
 
 	/**
+	 * @trigger_dumps_for_gram_collision: Whether need to trigger the dumps for GRAM
+	 * collision.
+	 */
+	bool trigger_dumps_for_gram_collision;
+
+	/**
 	 * @coredump_for_gram_collision_triggered: Whether the coredump for GRAM collision has
 	 * been triggered
 	 */

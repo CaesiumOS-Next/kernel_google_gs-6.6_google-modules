@@ -2,7 +2,7 @@
 
 #include "dvfs.h"
 
-#include <pvrsrvkm/osfunc.h>
+#include <pvrsrvkm/services/server/include/osfunc.h>
 
 #include <misc/sbbm.h>
 #if defined(CONFIG_DEVFREQ_THERMAL)
@@ -15,22 +15,7 @@
 #include <soc/google/google_gtc.h>
 #endif
 
-#if defined(SUPPORT_LINUX_DVFS)
-/**
- * get_frequency() - Gets GPU frequency using clk
- * @hSysData:	private system-layer data
- *
- * This function gets GPU frequency using the common
- * clk interface
- */
-static IMG_UINT32 get_frequency(IMG_HANDLE hSysData)
-{
-	struct pixel_gpu_device *pixel_dev = (struct pixel_gpu_device *)hSysData;
-	struct clk *const gpu_clk = pixel_dev->gpu_clk;
-	IMG_UINT32 frequency = (IMG_UINT32)clk_get_rate(gpu_clk);
-	dev_dbg(pixel_dev->dev, "%s: %uHz", __func__, frequency);
-	return frequency;
-}
+#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
 
 /**
  * set_frequency() - Sets GPU frequency using clk
@@ -72,9 +57,7 @@ static void set_voltage(IMG_HANDLE hSysData, IMG_UINT32 ui32Volt)
 	PVR_UNREFERENCED_PARAMETER(hSysData);
 	PVR_UNREFERENCED_PARAMETER(ui32Volt);
 }
-#endif
 
-#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
 static PVRSRV_ERROR register_dvfs(struct devfreq *psDevFreq)
 {
 	PVRSRV_ERROR err = PVRSRV_OK;
@@ -89,9 +72,7 @@ static void unregister_dvfs(struct devfreq *psDevFreq)
 {
 	vote_manager_remove_devfreq(psDevFreq);
 }
-#endif
 
-#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
 static IMG_UINT32 **get_fab_votes(IMG_HANDLE hSysData)
 {
 	struct pixel_gpu_device *pixel_dev = (struct pixel_gpu_device *)hSysData;
@@ -120,7 +101,20 @@ int init_pixel_dvfs(struct pixel_gpu_device *pixel_dev)
 	PVRSRV_DEVICE_CONFIG *cfg = pixel_dev->dev_config;
 #endif
 
+#if defined(SUPPORT_SOC_TIMER)
+	cfg->pfnSoCTimerRead = read_soc_timer;
+#endif
+
 #if defined(SUPPORT_LINUX_DVFS)
+	// TODO: Get this from DT
+	cfg->sDVFS.sDVFSDeviceCfg.ui32PollMs             = 20;
+	// The utilisation at which the GPU frequency will be boosted to maximum frequency
+	cfg->sDVFS.sDVFSGovernorCfg.ui32UpThreshold      = 90;
+	// Range size under which the utilisation can vary without triggering a DVFS transition
+	cfg->sDVFS.sDVFSGovernorCfg.ui32DownDifferential = 10;
+#endif
+
+#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
 	/*
 	 * clk device is required for:
 	 * obtaining current clock rate
@@ -140,43 +134,20 @@ int init_pixel_dvfs(struct pixel_gpu_device *pixel_dev)
 #if defined(CONFIG_DEVFREQ_THERMAL)
 	// b/289995706 provide an implementation for get_real_power
 	pixel_dev->gpu_power_ops.get_real_power = NULL;
-#endif
-
-	cfg->pfnClockFreqGet = get_frequency;
-
-	cfg->sDVFS.sDVFSDeviceCfg.bIdleReq               = IMG_FALSE;
-	cfg->sDVFS.sDVFSDeviceCfg.pfnSetFrequency        = set_frequency;
-	cfg->sDVFS.sDVFSDeviceCfg.pfnSetVoltage          = set_voltage;
-	// TODO: Get this from DT
-	cfg->sDVFS.sDVFSDeviceCfg.ui32PollMs             = 20;
-	// The utilisation at which the GPU frequency will be boosted to maximum frequency
-	cfg->sDVFS.sDVFSGovernorCfg.ui32UpThreshold      = 90;
-	// Range size under which the utilisation can vary without triggering a DVFS transition
-	cfg->sDVFS.sDVFSGovernorCfg.ui32DownDifferential = 10;
-#endif
-
-#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
-	cfg->sDVFS.sDVFSDeviceCfg.pfnDVFSRegister        = register_dvfs;
-
-#if defined(CONFIG_DEVFREQ_THERMAL)
 	cfg->sDVFS.sDVFSDeviceCfg.psPowerOps             = &pixel_dev->gpu_power_ops;
 #endif
-#endif
 
-#if defined(SUPPORT_SOC_TIMER)
-	cfg->pfnSoCTimerRead = read_soc_timer;
-#endif
-
-#if defined(SUPPORT_LINUX_DVFS) || defined(SUPPORT_PDVFS)
+	cfg->sDVFS.sDVFSDeviceCfg.bIdleReq               = IMG_FALSE;
+	cfg->sDVFS.sDVFSDeviceCfg.pfnDVFSRegister        = register_dvfs;
+	cfg->sDVFS.sDVFSDeviceCfg.pfnSetFrequency        = set_frequency;
+	cfg->sDVFS.sDVFSDeviceCfg.pfnSetVoltage          = set_voltage;
 	cfg->sDVFS.sDVFSDeviceCfg.pfnGetFabVotes         = get_fab_votes;
 
 	if (dvfs_helper_add_opps_to_device(pixel_dev->dev, pixel_dev->dev->of_node)) {
 		dev_err(pixel_dev->dev, "%s: Failed to add opps from helper", __func__);
 		ret = PVRSRV_ERROR_UNABLE_TO_RETRIEVE_INFO;
 	}
-#endif
 
-#if defined(SUPPORT_LINUX_DVFS)
 init_fail:
 #endif
 	return ret;

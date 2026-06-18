@@ -1,7 +1,7 @@
 /*
  * OS Abstraction Layer
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -25,6 +25,10 @@
 #define _osl_h_
 
 #include <osl_decl.h>
+
+#ifdef WL_UNITTEST
+#include <assert.h>
+#endif /* WL_UNITTEST */
 
 enum {
 	TAIL_BYTES_TYPE_FCS = 1,
@@ -75,9 +79,8 @@ typedef void  (*osl_wreg_fn_t)(void *ctx, volatile void *reg, unsigned int val, 
 #define PKTDBG_TRACE(osh, pkt, bit)	BCM_REFERENCE(osh)
 #endif
 
-#ifndef BCM_UPTIME_PROFILE
+/* DEPRECATED! */
 #define OSL_GETCYCLES_PROF(x)
-#endif
 
 /* --------------------------------------------------------------------------
 ** Register manipulation macros.
@@ -158,15 +161,18 @@ typedef void  (*osl_wreg_fn_t)(void *ctx, volatile void *reg, unsigned int val, 
 #endif /* !OSL_GET_PMU_ACCU_TICK64_US */
 
 #ifndef OSL_SYS_HALT
-#ifdef __COVERITY__
+#if defined(__COVERITY__)
 /*
- * For Coverity builds, provide a definition that allows Coverity
- * to model the lack of return. This avoids Coverity False Positive
- * defects associated with data inconsistency being detected after
- * we otherwise would have halted.
+ * For Coverity and Klocwork builds, provide a definition that allows Coverity and Klocwork to
+ * model the lack of return. This avoids Coverity and Klocwork False Positive defects associated
+ * with data inconsistency being detected after we otherwise would have halted.
  */
 #define OSL_SYS_HALT()   __coverity_panic__()
-#else /* __COVERITY__ */
+#elif defined(__KLOCWORK__)
+#define OSL_SYS_HALT()	kw_panic()
+#elif defined (WL_UNITTEST)
+#define OSL_SYS_HALT()	assert(0)
+#else
 #define OSL_SYS_HALT()	do {} while (0)
 #endif /* __COVERITY__ */
 #endif /* OSL_SYS_HALT */
@@ -324,6 +330,17 @@ do { \
 #define PKTRESETTXALFRAG(osh, lb)	BCM_REFERENCE(osh)
 #endif
 
+/* RX ALFRAG */
+#ifndef PKT_IS_RX_ALFRAG
+#define PKT_IS_RX_ALFRAG(osh, lb)	(0)
+#endif
+#ifndef PKT_SET_RX_ALFRAG
+#define PKT_SET_RX_ALFRAG(osh, lb)	(BCM_REFERENCE(osh))
+#endif
+#ifndef PKT_RESET_RX_ALFRAG
+#define PKT_RESET_RX_ALFRAG(osh, lb)	(BCM_REFERENCE(osh))
+#endif
+
 #ifndef PKTNUMMPDUS
 #define PKTNUMMPDUS(osh, lb)		(1)
 #endif
@@ -410,6 +427,14 @@ do { \
 #define PKTRESETUDR(osh, lb)			BCM_REFERENCE(osh)
 #endif
 
+#ifndef PKTGETNMSDU_AMSDU
+#define PKTGETNMSDU_AMSDU(osh, p)		0
+#endif
+
+#ifndef PKTSETNMSDU_AMSDU
+#define PKTSETNMSDU_AMSDU(osh, lb, _nmsdu)	BCM_REFERENCE(osh)
+#endif
+
 #if !defined(__linux__)
 #define PKTLIST_INIT(x)			BCM_REFERENCE(x)
 #define PKTLIST_ENQ(x, y)		BCM_REFERENCE(x)
@@ -485,20 +510,29 @@ do { \
 
 /* Memory breakup capturing macros */
 #ifdef BCMDBG_MEM_BREAKUP
+extern uint32 g_mb_depth;
 #define MB_START(var) \
-		uint mb_memuse_before_##var = MALLOCED(NULL)
+		uint mb_memuse_before_##var = MALLOCED(NULL); g_mb_depth++
 
-#define MB_END(var, fmt, ...) \
+/* The variable argument list includes 'fmt' as the first param. This ensures that there is at least
+ * one argument in '...', as required by (pre-C23) ISO C for variadic macros.
+ */
+#define MB_END(var, ...) \
 		do { \
 			uint mb_memuse_##var = MALLOCED(NULL) - mb_memuse_before_##var; \
+			g_mb_depth--; \
 			if (mb_memuse_##var) { \
-				printf("[MB] " fmt, ##__VA_ARGS__); \
-				printf(" %d\n", mb_memuse_##var); \
+				printf("[MB] "); \
+				for (uint _i = 0; _i < g_mb_depth; _i++) { \
+					printf("-"); \
+				} \
+				printf(__VA_ARGS__); \
+				printf(" %d, %d\n", mb_memuse_##var, MALLOCED(NULL)); \
 			} \
 		} while (0)
 #else
 #define MB_START(var)
-#define MB_END(var, fmt, ...)
+#define MB_END(var, ...)
 #endif /* BCMDBG_MEM_BREAKUP */
 
 /* ASSERT NULL check should not be enabled for ROM build */
@@ -529,17 +563,49 @@ do { \
 #define MFREE_PERSIST MFREE
 #endif /* DONGLEBUILD && !BCM_MEM_PERSIST_ENABLE */
 
+#ifndef PKTISRXHWPKTID_CHAINED
+#define PKTISRXHWPKTID_CHAINED(osh, lb)		{BCM_REFERENCE(osh); BCM_BCM_REFERENCE(lb); FALSE}
+#endif /* PKTISRXHWPKTID_CHAINED */
+
+#ifndef PKTSETRXHWPKTID_CHAINED
+#define PKTSETRXHWPKTID_CHAINED(osh, lb)	(BCM_REFERENCE(osh), BCM_REFERENCE(lb))
+#endif /* PKTSETRXHWPKTID_CHAINED */
+
+#ifndef PKTRESETRXHWPKTID_CHAINED
+#define PKTRESETRXHWPKTID_CHAINED(osh, lb)	(BCM_REFERENCE(osh), BCM_REFERENCE(lb))
+#endif /* PKTRESETRXHWPKTID_CHAINED */
+
 #define OSL_ALLOC_FATAL_LOGBUF(osh) \
-	(osl_alloc_fatal_logbuf(osl_t *osh))
+	(osl_alloc_fatal_logbuf(osh))
 #define OSL_DEALLOC_FATAL_LOGBUF(osh) \
-	(osl_dealloc_fatal_logbuf(osl_t *osh))
+	(osl_dealloc_fatal_logbuf(osh))
 #define OSL_GET_FATAL_LOGBUF_SIZE(osh) \
-	(osl_get_fatal_logbuf_size(osl_t *osh))
+	(osl_get_fatal_logbuf_size(osh))
 #define OSL_GET_FATAL_LOGBUF_ADDR(osh) \
-		(osl_get_fatal_logbuf_addr(osl_t *osh))
+		(osl_get_fatal_logbuf_addr(osh))
 #define OSL_GET_FATAL_LOGBUF(osh, size, alloced)	\
 	(osl_get_fatal_logbuf((osh), (size), (alloced)))
 #define OSL_GET_FATAL_LOGBUF_END(osh, size, alloced)	\
 	(osl_get_fatal_logbuf_end(osh, size, alloced))
 
+#define OSL_TIMER_CREATE(osh, name, fn, arg) \
+	(osl_timer_create(osh, name, fn, arg))
+#define OSL_TIMER_INIT(osh, name, fn, arg) \
+	(osl_timer_init(osh, name, fn, arg))
+#define OSL_TIMER_ADD(osh, t, ms, periodic) \
+	(osl_timer_add(osh, t, ms, periodic))
+#define OSL_TIMER_DEL(osh, t) \
+	(osl_timer_del(osh, t))
+#define OSL_TIMER_FREE(osh, t) \
+	(osl_timer_free(osh, t))
+#define OSL_TIMER_GET_CTX(t) \
+	(osl_timer_get_ctx((t)))
+
+#ifndef OSH_STACK_CTX_SZ
+#define OSH_STACK_CTX_SZ 0u
+uint osl_ctx_push(osl_t *osh, void *ptr);
+void osl_ctx_pop(osl_t *osh, uint flag);
+uint osl_ctx_copy(osl_t *osh, uintptr *out, uint sz);
+void osl_ctx_enab(osl_t *osh);
+#endif /* OSH_STACK_CTX_SZ */
 #endif	/* _osl_h_ */

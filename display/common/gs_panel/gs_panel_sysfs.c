@@ -1206,6 +1206,15 @@ static ssize_t content_gray_level_show(struct device *dev, struct device_attribu
 	return sysfs_emit(buf, "%d\n", ctx->content_gray_level);
 }
 
+static ssize_t gram_collision_count_show(struct device *dev, struct device_attribute *attr,
+					 char *buf)
+{
+	const struct mipi_dsi_device *dsi = to_mipi_dsi_device(dev);
+	struct gs_panel *ctx = mipi_dsi_get_drvdata(dsi);
+
+	return sysfs_emit(buf, "%u\n", ctx->gram_collision_count);
+}
+
 static DEVICE_ATTR_RO(serial_number);
 static DEVICE_ATTR_RO(panel_extinfo);
 static DEVICE_ATTR_RO(panel_name);
@@ -1239,6 +1248,7 @@ static DEVICE_ATTR_RO(te_freq_hz);
 static DEVICE_ATTR_RW(te2_freq_hz);
 static DEVICE_ATTR_RW(skin_temperature);
 static DEVICE_ATTR_RW(content_gray_level);
+static DEVICE_ATTR_RO(gram_collision_count);
 /* TODO(tknelms): re-implement below */
 #if 0
 static DEVICE_ATTR_WO(gamma);
@@ -1276,6 +1286,7 @@ static const struct attribute *panel_attrs[] = { &dev_attr_serial_number.attr,
 						 &dev_attr_te2_freq_hz.attr,
 						 &dev_attr_skin_temperature.attr,
 						 &dev_attr_content_gray_level.attr,
+						 &dev_attr_gram_collision_count.attr,
 /* TODO(tknelms): re-implement below */
 #if 0
 						 &dev_attr_gamma.attr,

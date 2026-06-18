@@ -212,7 +212,6 @@ struct vs_plane_info {
 	u32 hdr : 1;
 	u32 tone_map : 1;
 	u32 blend_config : 1; /* for BLEND_MODE, BLEND_ALPHA properties */
-	u32 crc : 1;
 	u32 test_pattern : 1;
 	u32 compressed : 1;
 	u32 watermark : 1;
@@ -256,7 +255,6 @@ struct vs_display_info {
 	u32 data_mode : 1;
 	u32 histogram : 1;
 	u32 rgb_hist : 1;
-	u32 crc : 1;
 	u32 test_pattern : 1;
 	/* write-back point validity */
 	u32 disp_in_wb : 1;
@@ -292,7 +290,6 @@ struct vs_wb_info {
 	u8 program_point : 1;
 	u8 dither : 1;
 	u8 csc : 1; /* for R2Y */
-	u8 crc : 1;
 	u8 compressed : 1;
 	u8 spliter : 1;
 	u8 wb_stall : 1;
@@ -380,7 +377,6 @@ struct vs_dc_info {
 	u8 roi_y_gap;
 
 	u8 vrr : 1;
-	u8 crc_roi : 1;
 
 	u16 dma_sram_alignment; /* DMA sram pool buffer line alignment (Byte) */
 	u8 dma_sram_extra_buffer : 1;

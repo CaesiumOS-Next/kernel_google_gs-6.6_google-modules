@@ -302,7 +302,7 @@ static int link_send_tx(struct u100_ctx *u100_ctx)
 	if (ret == 0) {
 		ret = -ETIMEDOUT;
 		irq_count_after = get_irq_count(u100_ctx->gpio_u100_irq.u100_irq);
-		UWB_WARN("Irq count before [%d], after [%d]\n", irq_count_before, irq_count_after);
+		UWB_WARN("TX timeout, irq_cnt %u-%u\n", irq_count_before, irq_count_after);
 		if (!u100_ctx->is_bhalf_entered)
 			UWB_WARN("Not enter threaded IRQ Bottom Half\n");
 		else

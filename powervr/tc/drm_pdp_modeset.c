@@ -59,6 +59,9 @@
 #include <drm/drm_gem_framebuffer_helper.h>
 
 #include <drm/drm_atomic_helper.h>
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+#include <drm/clients/drm_client_setup.h>
+#endif
 
 #include <powervr/img_drm_fourcc.h>
 
@@ -332,6 +335,8 @@ static inline int pdp_modeset_init_fbdev(struct pdp_drm_private *dev_priv)
 {
 #if defined(CONFIG_DRM_FBDEV_EMULATION)
 	struct pdp_fbdev *fbdev;
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 	int err;
 
 	fbdev = pdp_fbdev_create(dev_priv);
@@ -354,6 +359,15 @@ static inline int pdp_modeset_init_fbdev(struct pdp_drm_private *dev_priv)
 		DRM_ERROR("failed to set mode (err=%d)\n", err);
 		return err;
 	}
+#else
+	fbdev = kzalloc(sizeof(*fbdev), GFP_KERNEL);
+	if (!fbdev)
+		return -ENOMEM;
+	dev_priv->fbdev = fbdev;
+	fbdev->priv = dev_priv;
+
+	drm_client_setup(dev_priv->dev, NULL);
+#endif
 #endif
 	return 0;
 }
@@ -380,8 +394,12 @@ void pdp_modeset_late_cleanup(struct pdp_drm_private *dev_priv)
 {
 #if defined(CONFIG_DRM_FBDEV_EMULATION)
 	pdp_fbdev_destroy(dev_priv->fbdev);
-#endif
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 	drm_mode_config_cleanup(dev_priv->dev);
+#endif
+#else
+	drm_mode_config_cleanup(dev_priv->dev);
+#endif
 
 	DRM_DEBUG_DRIVER("cleaned up\n");
 }

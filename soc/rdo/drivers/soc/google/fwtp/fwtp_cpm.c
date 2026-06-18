@@ -209,13 +209,13 @@ static fwtp_error_code_t fwtp_cpm_send_message(struct fwtp_if *fwtp_if,
 		dev_err(fwtp_cpm_dev->dev,
 			"FWTP message data size %u too big for message buffer size %u.\n",
 			tx_msg_data_size, msg_buffer_size);
-		return -EINVAL;
+		return kFwtpErrBadLen;
 	}
 	if (msg_buffer_size > fwtp_cpm_dev->dma_size) {
 		dev_err(fwtp_cpm_dev->dev,
 			"FWTP message of size %d too big for DMA buffer of size %zu.\n",
 			(int)msg_buffer_size, fwtp_cpm_dev->dma_size);
-		return -EINVAL;
+		return kFwtpErrBadLen;
 	}
 
 	/* Encapsulate the FWTP message into a CPM FWTP message. */
@@ -239,7 +239,7 @@ static fwtp_error_code_t fwtp_cpm_send_message(struct fwtp_if *fwtp_if,
 	if (ret < 0) {
 		dev_err(fwtp_cpm_dev->dev,
 			"Failed to send message with error %d\n", ret);
-		return ret;
+		return kFwtpErrIo;
 	}
 
 	/* Return the received response message. */
@@ -248,7 +248,7 @@ static fwtp_error_code_t fwtp_cpm_send_message(struct fwtp_if *fwtp_if,
 		dev_err(fwtp_cpm_dev->dev,
 			"Received message of size %d too big for message buffer of size %d.\n",
 			(int)local_rx_msg_data_size, (int)msg_buffer_size);
-		return -EIO;
+		return kFwtpErrIo;
 	}
 	memcpy(msg_buffer, fwtp_cpm_dev->dma_base, local_rx_msg_data_size);
 	*rx_msg_data_size = local_rx_msg_data_size;
@@ -279,23 +279,25 @@ fwtp_cpm_printer_post_process(struct fwtp_printer_ctx *printer_ctx,
 			      const char *str,
 			      struct fwtp_data_item_list *data_items)
 {
-	/* Get the first data item up to 32-bits in size. */
-	u32 data = 0;
-	int data_item_size =
-		fwtp_get_next_data_item(data_items, &data, sizeof(data));
-
-	/* Log any trace counters. */
-	if (type == FWTP_LL_ENTRY_TYPE_TRACE_COUNTER) {
-		fwtp_dev_trace_fwtp_perfetto_counter(timestamp, 0, "cpm", str,
-						     data);
-	}
+	uint8_t *p_starting_next_data_item;
+	u32 data;
+	int data_item_size;
 
 	/*
 	 * Pass the tracepoint string and data item to the CPM tracepoint
-	 * decoder.
+	 * decoder. Reset the data items list.
 	 */
+	p_starting_next_data_item = data_items->p_next_data_item;
+	data = 0;
+	data_item_size =
+		fwtp_get_next_data_item(data_items, &data, sizeof(data));
 	if (data_item_size > 0)
 		cpm_tracepoint_decode(str_id, data, timestamp);
+	data_items->p_next_data_item = p_starting_next_data_item;
+
+	/* Continue post-processing the tracepoint. */
+	fwtp_dev_printer_post_process(printer_ctx, type, timestamp, str_id, str,
+				      data_items);
 }
 
 /**
@@ -308,8 +310,6 @@ static void fwtp_cpm_handle_ring_notify_work(struct work_struct *work)
 {
 	struct fwtp_cpm_dev *fwtp_cpm_dev =
 		container_of(work, struct fwtp_cpm_dev, ring_notify_work);
-	/* FWTP printer data buffer holding at least 8 32-bit data items. */
-	uint8_t printer_data_buffer[8 * (sizeof(struct fwtp_data_item) + 4)];
 	int i;
 
 	/* Print all the rings that have new tracepoints. */
@@ -323,11 +323,6 @@ static void fwtp_cpm_handle_ring_notify_work(struct work_struct *work)
 		 */
 		fwtp_ipc_client_printer_ctx_init(&(fwtp_dev->fwtp_ipc_client),
 						 printer_ctx);
-
-		/* Set up CPM post-processing in the printer context. */
-		printer_ctx->data_items.data_buffer = printer_data_buffer;
-		printer_ctx->data_items.data_buffer_size =
-			sizeof(printer_data_buffer);
 
 		/*
 		 * Print the ring using an intermediate buffer. The buffer is
@@ -552,12 +547,23 @@ static int fwtp_cpm_init_dev(struct fwtp_cpm_dev *fwtp_cpm_dev,
 {
 	struct fwtp_dev *fwtp_dev;
 	struct tracepoint_ring *memio_ring;
-	struct dentry *dev_debugfs;
+	struct dentry *root_subdev_debugfs;
 	int ret;
+
+	/* Create the root sub-device debugfs directory. */
+	root_subdev_debugfs =
+		debugfs_create_dir(tracepoint_name, fwtp_cpm_dev->debugfs_root);
+	if (!root_subdev_debugfs) {
+		dev_err(fwtp_cpm_dev->dev,
+			"Failed to create a debugfs directory for \"%s\".\n",
+			tracepoint_name);
+		return -ENOENT;
+	}
 
 	/* Configure and initialize the FWTP sub-device. */
 	fwtp_dev = &(fwtp_cpm_dev->fwtp_dev_list[dev_num]);
 	fwtp_dev->dev = fwtp_cpm_dev->dev;
+	fwtp_dev->root_debugfs = root_subdev_debugfs;
 	fwtp_dev->fwtp_ipc_client.fwtp_if.send_message = fwtp_cpm_send_message;
 	fwtp_dev->fwtp_ipc_client.fwtp_if.send_message_ctx = fwtp_cpm_dev;
 	fwtp_dev->fwtp_ipc_client.ring_num = ring_num;
@@ -583,28 +589,22 @@ static int fwtp_cpm_init_dev(struct fwtp_cpm_dev *fwtp_cpm_dev,
 		return ret;
 	}
 
-	/* Create the debugfs file used to subscribe to tracepoints. */
-	dev_debugfs =
-		debugfs_create_dir(tracepoint_name, fwtp_cpm_dev->debugfs_root);
-	if (!dev_debugfs) {
-		dev_err(fwtp_dev->dev,
-			"Failed to create a debugfs directory for \"%s\".\n",
-			tracepoint_name);
-		return -ENOENT;
-	}
-	if (!debugfs_create_file("request_subscribe", 0220, dev_debugfs,
+	/* Create the various device debugfs files. */
+	if (!debugfs_create_file("request_subscribe", 0220, root_subdev_debugfs,
 				 fwtp_dev, &fwtp_cpm_debugfs_fops_subscribe)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create a subscription debugfs file.\n");
 		return -ENOENT;
 	}
-	if (!debugfs_create_file("enable_log", 0220, dev_debugfs, fwtp_dev,
-				 &fwtp_cpm_debugfs_fops_enable_log)) {
+	if (!debugfs_create_file("enable_log", 0220, root_subdev_debugfs,
+				 fwtp_dev, &fwtp_cpm_debugfs_fops_enable_log)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create an enable kernel log debugfs file.\n");
 		return -ENOENT;
 	}
-	if (!debugfs_create_file("enable_ftrace", 0220, dev_debugfs, fwtp_dev,
+
+	if (!debugfs_create_file("enable_ftrace", 0220, root_subdev_debugfs,
+				 fwtp_dev,
 				 &fwtp_cpm_debugfs_fops_enable_ftrace)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create an enable ftrace debugfs file.\n");

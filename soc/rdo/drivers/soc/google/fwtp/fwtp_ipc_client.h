@@ -50,6 +50,9 @@ __BEGIN_CDECLS
  * @string_table_size: Size of string table.
  * @ring_num: Tracepoint ring number.
  * @tracepoints_head_offset: Current tracepoint ring head offset.
+ * @filter_count: Count of the number of tracepoint filters.
+ * @filter_name_table: Table of filter names.
+ * @filter_name_strings: Buffer containing the filter name strings.
  */
 struct fwtp_ipc_client {
 	struct fwtp_if fwtp_if;
@@ -59,6 +62,9 @@ struct fwtp_ipc_client {
 	uint32_t string_table_size;
 	uint16_t ring_num;
 	uint32_t tracepoints_head_offset;
+	int filter_count;
+	char **filter_name_table;
+	char *filter_name_strings;
 };
 
 fwtp_error_code_t
@@ -69,6 +75,10 @@ fwtp_ipc_client_print_tracepoints(struct fwtp_ipc_client *fwtp_ipc_client,
 				  struct fwtp_printer_ctx *printer_ctx);
 void fwtp_ipc_client_printer_ctx_init(struct fwtp_ipc_client *fwtp_ipc_client,
 				      struct fwtp_printer_ctx *printer_ctx);
+fwtp_error_code_t
+fwtp_ipc_client_get_filter_list(struct fwtp_ipc_client *fwtp_ipc_client);
+int fwtp_ipc_client_get_filter_index(struct fwtp_ipc_client *fwtp_ipc_client,
+				     const char *filter_name);
 
 /**
  * FWTP_IPC_CLIENT_LOG_ERR - Logs an error message for an FWTP IPC client.

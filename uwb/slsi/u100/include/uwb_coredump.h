@@ -39,7 +39,6 @@ int u100_register_coredump(struct u100_ctx *u100_ctx);
 void u100_unregister_coredump(struct u100_ctx *u100_ctx);
 bool is_coredump(struct u100_ctx *u100_ctx, struct sk_buff *skb);
 int u100_process_coredump(struct u100_ctx *u100_ctx, struct sk_buff *skb);
-void u100_report_coredump_on_poweron(struct u100_ctx *u100_ctx, int err);
-
+void u100_report_coredump_on_poweron(struct u100_ctx *u100_ctx, const char *msg, int errcode);
 #endif /* __UWB_COREDUMP__ */
 

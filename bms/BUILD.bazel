@@ -977,6 +977,7 @@ ddk_module(
 kernel_module_group(
     name = "bms",
     srcs = [
+        ":ggauge_health_monitor",
         ":google-battery",
         ":google-bms",
         ":google-charger",
@@ -1143,5 +1144,30 @@ ddk_module(
         "//common:all_headers_aarch64",
         "//private/google-modules/soc/rdo:rdo_soc_headers",
         "//private/google-modules/soc/rdo:rdo_soc_module",
+    ],
+)
+
+ddk_module(
+    name = "ggauge_health_monitor",
+    srcs = glob([
+        "**/*.h",
+    ]) + [
+        "ggauge_health_monitor.c",
+    ],
+    out = "ggauge_health_monitor.ko",
+    defconfig = "defconfig",
+    kconfig = "Kconfig",
+    kernel_build = "//private/devices/google/common:kernel",
+    local_defines = [
+        "DYNAMIC_DEBUG_MODULE",
+    ],
+    deps = [
+        ":google-bms",
+        ":internal_headers",
+        ":max77779-charger",
+        ":max77779-vimon",
+        "//common:all_headers_aarch64",
+        "//private/google-modules/bms/misc:bms-misc",
+        "//private/google-modules/soc/gs:headers",
     ],
 )

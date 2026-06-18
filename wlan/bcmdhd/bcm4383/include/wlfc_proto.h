@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -134,6 +134,8 @@ typedef enum {
 	WLFC_CTL_TYPE_CHECK_CTLCPL_FULL		= 41, /* Query current complietion ring is full */
 	WLFC_CTL_TYPE_CHECK_HLTH_THRTL		= 42, /* Query health resources to throttle */
 	WLFC_CTL_TYPE_CHECK_NINQ_THRTL		= 43, /* Query number not in q for throttle */
+
+	WLFC_CTL_TYPE_INTERFACE_OPEN_EAPOL	= 44, /* Only open 802.1x EAPOL flows */
 
 	WLFC_CTL_TYPE_FILLER			= 255
 } wlfc_ctl_type_t;
@@ -418,14 +420,14 @@ typedef enum {
 
 /* AMPDU host reorder packet flags */
 #define WLHOST_REORDERDATA_MAXFLOWS		256
-#define WLHOST_REORDERDATA_LEN		 10
-#define WLHOST_REORDERDATA_TOTLEN	(WLHOST_REORDERDATA_LEN + 1 + 1) /* +tag +len */
+#define WLHOST_REORDERDATA_LEN			10
+#define WLHOST_REORDERDATA_TOTLEN		(WLHOST_REORDERDATA_LEN + 1 + 1) /* +tag +len */
 
-#define WLHOST_REORDERDATA_FLOWID_OFFSET		0
-#define WLHOST_REORDERDATA_MAXIDX_OFFSET		2
-#define WLHOST_REORDERDATA_FLAGS_OFFSET			4
-#define WLHOST_REORDERDATA_CURIDX_OFFSET		6
-#define WLHOST_REORDERDATA_EXPIDX_OFFSET		8
+#define WLHOST_REORDERDATA_FLOWID_OFFSET	0
+#define WLHOST_REORDERDATA_MAXIDX_OFFSET	2
+#define WLHOST_REORDERDATA_FLAGS_OFFSET		4
+#define WLHOST_REORDERDATA_CURIDX_OFFSET	6
+#define WLHOST_REORDERDATA_EXPIDX_OFFSET	8
 
 #define WLHOST_REORDERDATA_DEL_FLOW		0x01
 #define WLHOST_REORDERDATA_FLUSH_ALL		0x02
@@ -492,7 +494,7 @@ typedef enum {
 /* bit 7, indicating if is TID(1) or AC(0) mapped info in tid field) */
 #define PCIEDEV_IS_AC_TID_MAP_MASK	0x80
 
-#define WLFC_PCIEDEV_AC_PRIO_MAP	 0
+#define WLFC_PCIEDEV_AC_PRIO_MAP	0
 #define WLFC_PCIEDEV_TID_PRIO_MAP     1
 #define WLFC_PCIEDEV_LLR_PRIO_MAP	2
 
@@ -506,7 +508,9 @@ typedef enum {
 	APP_STS_80211_FRAGMENTATION	= 3u,   /* 802.11 fragmentation enabled */
 	APP_STS_DISABLE_FOR_BTCX	= 4u,	/* BTCX requested APP disable */
 	APP_STS_DISABLE_FOR_QOS		= 5u,	/* Disable APP for QoS */
-	APP_STS_MAX			= 6u	/* MAX */
+	APP_STS_DISABLE_SP_PROBE	= 6u,	/* Disable APP for Spatial Probe */
+	APP_STS_FLOWRING_MESH		= 7u,	/* Disable APP for Mesh flowring under txmacapp */
+	APP_STS_MAX			= 8u	/* MAX */
 } app_disable_reason_s;
 
 /* shared structure between wlc and pciedev layer to set/reset a reason code */

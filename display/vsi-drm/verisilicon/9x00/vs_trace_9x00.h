@@ -79,6 +79,37 @@ TRACE_EVENT(disp_set_mode,
 
 /* Framebuffer HW Programming Traces */
 
+TRACE_EVENT(disp_config_hw_fb_mask,
+	TP_PROTO(enum hw_trace_component_9x00 component, const char *prop, u32 hw_id,
+		 struct dc_hw_fb *fb),
+	TP_ARGS(component, prop, hw_id, fb),
+	TP_STRUCT__entry(
+			__field(u32, component)
+			__field(u32, hw_id)
+			__field(u64, address)
+			__field(u32, stride)
+			__field(bool, en)
+			__string(prop, prop)
+	),
+	TP_fast_assign(
+			__entry->component = component;
+			__entry->hw_id = hw_id;
+			__entry->address = fb->address;
+			__entry->stride = fb->stride;
+			__entry->en = fb->enable;
+			__assign_str(prop, prop);
+	),
+	TP_printk("[%s%d] %s: en:%d address:%#llx stride:%d",
+		  show_trace_component_9x00(__entry->component), __entry->hw_id,
+		  __get_str(prop), __entry->en, __entry->address, __entry->stride));
+
+#define trace_config_hw_layer_fb_mask(name, hw_id, fb) \
+	trace_disp_config_hw_fb_mask(HW_TRACE_LAYER_9x00, (name), (hw_id), (fb))
+#define trace_config_hw_display_fb_mask(name, hw_id, fb) \
+	trace_disp_config_hw_fb_mask(HW_TRACE_OUT_CTRL_9x00, (name), (hw_id), (fb))
+#define trace_config_hw_wb_fb_mask(name, hw_id, fb) \
+	trace_disp_config_hw_fb_mask(HW_TRACE_WRITEBACK_9x00, (name), (hw_id), (fb))
+
 TRACE_EVENT(disp_config_hw_fb,
 	TP_PROTO(enum hw_trace_component_9x00 component, const char *prop, u32 hw_id,
 		 struct dc_hw_fb *fb),
@@ -136,6 +167,35 @@ TRACE_EVENT(disp_config_hw_fb,
 		__entry->u_stride, __entry->v_stride, __entry->tile_mode, __entry->rotation,
 		__entry->swizzle, __entry->uv_swizzle, __entry->zpos, __entry->secure,
 		__entry->display_id));
+
+#define trace_config_hw_layer_fb(name, hw_id, fb) \
+	trace_disp_config_hw_fb(HW_TRACE_LAYER_9x00, (name), (hw_id), (fb))
+#define trace_config_hw_display_fb(name, hw_id, fb) \
+	trace_disp_config_hw_fb(HW_TRACE_OUT_CTRL_9x00, (name), (hw_id), (fb))
+#define trace_config_hw_wb_fb(name, hw_id, fb) \
+	trace_disp_config_hw_fb(HW_TRACE_WRITEBACK_9x00, (name), (hw_id), (fb))
+
+TRACE_EVENT(disp_trusty_protect_ip,
+	TP_PROTO(u8 hw_id, u8 plane_sid, unsigned long *secured_layers_mask, bool secure),
+	TP_ARGS(hw_id, plane_sid, secured_layers_mask, secure),
+	TP_STRUCT__entry(
+		__field(u8, hw_id)
+		__field(u8, plane_sid)
+		__field(bool, secure)
+		__array(unsigned long, secured_layers_mask, BITS_TO_LONGS(HW_PLANE_NUM))
+	),
+	TP_fast_assign(
+		__entry->hw_id = hw_id;
+		__entry->plane_sid = plane_sid;
+		__entry->secure = secure;
+		memcpy(__entry->secured_layers_mask, secured_layers_mask,
+		       sizeof(__entry->secured_layers_mask));
+	),
+	TP_printk(
+		"[Layer%d] sid:%d secured_layers_mask:%*phN secure:%d",
+		__entry->hw_id, __entry->plane_sid, (int)BITS_TO_LONGS(HW_PLANE_NUM),
+		__entry->secured_layers_mask, __entry->secure)
+);
 
 TRACE_EVENT(disp_underrun_config,
 	TP_PROTO(u32 hw_id, u32 output_id, struct dc_hw_display_mode *mode, u32 te_width_us,
@@ -237,13 +297,6 @@ TRACE_EVENT(disp_urgent_vid_config,
 		__entry->urgent_low_thresh, __entry->urgent_high_thresh,
 		__entry->healthy_thresh)
 );
-
-#define trace_config_hw_layer_fb(name, hw_id, fb) \
-	trace_disp_config_hw_fb(HW_TRACE_LAYER_9x00, (name), (hw_id), (fb))
-#define trace_config_hw_display_fb(name, hw_id, fb) \
-	trace_disp_config_hw_fb(HW_TRACE_OUT_CTRL_9x00, (name), (hw_id), (fb))
-#define trace_config_hw_wb_fb(name, hw_id, fb) \
-	trace_disp_config_hw_fb(HW_TRACE_WRITEBACK_9x00, (name), (hw_id), (fb))
 
 TRACE_EVENT(disp_dsc,
 	TP_PROTO(u32 hw_id, bool enable, bool video_mode, u8 slices_per_line, u8 ss_num,

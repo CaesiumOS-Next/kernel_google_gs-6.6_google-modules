@@ -2,8 +2,8 @@
 
 #include <customer/volcanic/customer_dvfs.h>
 
-#include <pvrsrvkm/rgxfwutils.h>
-#include <pvrsrvkm/volcanic/rgx_options.h>
+#include <pvrsrvkm/services/server/devices/rgxfwutils.h>
+#include <pvrsrvkm/include/volcanic/rgx_options.h>
 
 
 PVRSRV_ERROR pixel_fw_dvfs_set_rate(PVRSRV_RGXDEV_INFO *info, uint32_t rate)

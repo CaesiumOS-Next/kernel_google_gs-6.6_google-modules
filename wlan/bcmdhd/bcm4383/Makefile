@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2025, Broadcom.
+# Copyright (C) 2026, Broadcom.
 #
 #      Unless you and Broadcom execute a separate written software license
 # agreement governing use of this software, this software is licensed to you
@@ -45,6 +45,11 @@ ifneq ($(KERNEL_SRC),)
     endif
   endif
   EXTRA_CFLAGS+="-Wno-missing-prototypes"
+endif
+
+NOA_SYMBOL_PATH := $(COMMON_OUT_DIR)/private/google-modules/noa/common/Module.symvers
+ifneq ($(wildcard $(NOA_SYMBOL_PATH)),)
+  EXTRA_SYMBOLS += $(NOA_SYMBOL_PATH)
 endif
 
 # Define and "all" target, which isn't really needed but doesn't hurt.

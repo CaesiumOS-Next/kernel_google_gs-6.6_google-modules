@@ -2,7 +2,7 @@
  * Common stats definitions for clients of dongle
  * ports
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -112,6 +112,8 @@ typedef enum {
 #else
 #define PACK_ATTRIBUTE
 #endif
+
+#define MAX_20MHZ_CHANNELS   16u
 typedef struct {
 	wifi_interface_mode mode;     /* interface mode */
 	uint8 mac_addr[6];               /* interface mac address (self) */
@@ -221,6 +223,22 @@ typedef struct {
 } wifi_channel_stat;
 
 typedef struct {
+	u8 chan_array[MAX_20MHZ_CHANNELS]; /* Sub bands of the current chanspec */
+	uint32 radio_on_time[MAX_20MHZ_CHANNELS];	/* msecs the radio is awake (32 bits number
+							 * accruing over time)
+							 */
+	uint32 cca_busy_time[MAX_20MHZ_CHANNELS];	/* msecs the CCA register is busy
+							 * (32 bits number accruing over time)
+							 */
+} sub_band_info;
+
+/* Channel Utilization */
+typedef struct {
+	wifi_channel_info channel[MAX_20MHZ_CHANNELS];
+	sub_band_info sub_bands;	/* Sub band info of the current chanspec */
+} wifi_chan_util;
+
+typedef struct {
 	wifi_radio radio;
 	uint32 on_time;
 	uint32 tx_time;
@@ -313,7 +331,9 @@ typedef struct {
 	uint32 capabilities;			/* peer WIFI_CAPABILITY_XXX */
 	bssload_info_t bssload;			/* STA count and CU */
 	uint32 num_rate;				/* number of rates */
-	wifi_rate_stat_v1 rate_stats[1];	/* per rate statistics, num of entries = num_rate */
+	wifi_rate_stat_v1 rate_stats[BCM_FLEX_ARRAY];	/* per rate statistics,
+							 * num of entries = num_rate
+							 */
 } wifi_peer_info_v1;
 
 typedef struct {
@@ -408,7 +428,7 @@ typedef struct {
 	wifi_wmm_ac_stat ac[WIFI_AC_MAX];	/* per ac data packet statistics */
 	uint8 time_slicing_duty_cycle_percent;	/* If this link is being served using */
 	uint32 num_peers;		/* number of peers */
-	wifi_peer_info_v1 peer_info[1];	/* per peer statistics */
+	wifi_peer_info_v1 peer_info[BCM_FLEX_ARRAY];	/* per peer statistics */
 } wifi_link_stat;
 
 typedef struct {
@@ -419,6 +439,17 @@ typedef struct {
 } wifi_iface_ml_stat;
 
 #ifdef CONFIG_COMPAT
+typedef struct {
+	wifi_peer_type type;			/* peer type (AP, TDLS, GO etc.) */
+	uint8 peer_mac_address[6];		/* mac address */
+	uint32 capabilities;			/* peer WIFI_CAPABILITY_XXX */
+	bssload_info_t bssload;			/* STA count and CU */
+	uint32 num_rate;				/* number of rates */
+	wifi_rate_stat_v1 rate_stats[BCM_FLEX_ARRAY];	/* per rate statistics,
+							 * num of entries = num_rate
+							 */
+} compat_wifi_peer_info_v1;
+
 /* ML interface statistics */
 typedef struct {
 	uint8 link_id;			/* Identifier for the link */
@@ -460,7 +491,7 @@ typedef struct {
 	wifi_wmm_ac_stat ac[WIFI_AC_MAX];	/* per ac data packet statistics */
 	uint8 time_slicing_duty_cycle_percent;	/* If this link is being served using */
 	uint32 num_peers;		/* number of peers */
-	wifi_peer_info_v1 peer_info[1];	/* per peer statistics */
+	wifi_peer_info_v1 peer_info[BCM_FLEX_ARRAY];	/* per peer statistics */
 } compat_wifi_link_stat;
 
 typedef struct {

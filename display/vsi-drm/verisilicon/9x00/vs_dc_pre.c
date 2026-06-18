@@ -397,10 +397,10 @@ static void update_plane_fb(struct vs_plane *plane, u8 display_id, struct dc_hw_
 
 	if (plane_info->sid != HW_PLANE_NOT_SUPPORTED_SID) {
 		prop = vs_dc_drm_plane_property_get(vs_plane_state, "SECURE_BUFFER", NULL);
-		if (!prop)
+		if (prop)
+			is_secure = *((const bool *)prop);
+		else
 			dev_err(dev, "%s: Failed to get SECURE_BUFFER property!\n", __func__);
-
-		is_secure = *((const bool *)prop);
 	}
 
 	/* TBD !
@@ -722,7 +722,7 @@ static void update_plane_blend(struct vs_dc *dc, u8 id, struct vs_plane_state *p
 	bld_mode = vs_dc_get_drm_property_state(dev, plane_state->drm_states,
 						VS_DC_MAX_PROPERTY_NUM, "BLEND_MODE");
 
-	if (!bld_mode->is_changed && plane_info->blend_mode) {
+	if (bld_mode && !bld_mode->is_changed && plane_info->blend_mode) {
 		std_bld.alpha = (plane_state->base.alpha >> 6) & VS_BLEND_ALPHA_OPAQUE;
 		std_bld.blend_mode = plane_state->base.pixel_blend_mode;
 
@@ -824,39 +824,6 @@ static void vs_dc_set_plane_pattern(struct device *dev, struct vs_plane *plane)
 		pattern.ramp_step = 65535 / src_h * 2048;
 
 	dc_hw_set_plane_pattern(&dc->hw, hw_id, &pattern);
-}
-
-static void vs_dc_set_plane_crc(struct device *dev, struct vs_plane *plane)
-{
-	struct vs_dc *dc = dev_get_drvdata(dev);
-	struct vs_plane_state *plane_state = to_vs_plane_state(plane->base.state);
-	struct vs_plane_info *plane_info;
-	struct dc_hw_crc crc;
-
-	plane_info = get_plane_info(plane->id, dc->hw.info);
-	if (!plane_info) {
-		dev_err(dev, "%s: invalid plane id: %d\n", __func__, plane->id);
-		return;
-	}
-
-	if (!plane_info->crc) {
-		pr_info("%s: vs_plane[%u] does not support crc.\n", __func__, plane->id);
-		return;
-	}
-
-	if (plane_state->crc.pos > VS_PLANE_CRC_HDR) {
-		pr_err("%s: Invalid crc pos.\n", __func__);
-		return;
-	}
-
-	crc.enable = plane_state->crc.enable;
-	if (!crc.enable)
-		dc_hw_set_plane_crc(&dc->hw, plane->id, &crc);
-
-	crc.pos = plane_state->crc.pos;
-	memcpy(&crc.seed, &plane_state->crc.seed, sizeof(plane_state->crc.seed));
-
-	dc_hw_set_plane_crc(&dc->hw, plane->id, &crc);
 }
 #endif
 
@@ -1868,7 +1835,6 @@ const struct vs_plane_funcs dc_plane_funcs = {
 	.update = vs_dc_update_plane,
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	.set_pattern = vs_dc_set_plane_pattern,
-	.set_crc = vs_dc_set_plane_crc,
 #endif /* CONFIG_DEBUG_FS */
 	.disable = vs_dc_disable_plane,
 	.check = vs_dc_check_plane,

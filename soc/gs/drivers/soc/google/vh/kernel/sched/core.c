@@ -17,7 +17,6 @@
 #endif
 
 #include "sched_priv.h"
-#include "sched_events.h"
 
 #include "../../../../../devfreq/google/governor_memlat.h"
 
@@ -147,6 +146,8 @@ static inline void task_tick_uclamp(struct rq *rq, struct task_struct *curr)
 	if (!uclamp_is_used())
 		return;
 
+	lockdep_assert_rq_held(rq);
+
 	/*
 	 * Condition might have changed since we enqueued the task.
 	 */
@@ -179,12 +180,12 @@ static inline void task_tick_uclamp(struct rq *rq, struct task_struct *curr)
 static inline void task_tick_uclamp(struct rq *rq, struct task_struct *curr) {}
 #endif
 
-void vh_scheduler_tick_pixel_mod(void *data, struct rq *rq)
+void vh_scheduler_tick_pixel_mod_locked(struct rq *rq)
 {
-	struct rq_flags rf;
 	bool uclamp_st_updated = false;
 
-	rq_lock(rq, &rf);
+	lockdep_assert_rq_held(rq);
+
 	task_tick_uclamp(rq, rq->curr);
 	__update_util_est_invariance(rq, rq->curr, true);
 	uclamp_st_updated = update_auto_max_uclamp_st(rq->curr);
@@ -195,8 +196,10 @@ void vh_scheduler_tick_pixel_mod(void *data, struct rq *rq)
 		/* freq may have been updated in entity tick, so use force update here */
 		cpufreq_update_util(rq, SCHED_PIXEL_FORCE_UPDATE);
 	}
-	rq_unlock(rq, &rf);
+}
 
+void vh_scheduler_tick_pixel_mod_nolock(struct rq *rq)
+{
 	/* Check if an RT task needs to move to a better fitting CPU */
 	check_migrate_rt_task(rq, rq->curr);
 
@@ -209,6 +212,21 @@ void vh_scheduler_tick_pixel_mod(void *data, struct rq *rq)
 	 * up a helper thread to update memory frequencies.
 	 */
 	gs_perf_mon_tick_update_counters();
+}
+
+void vh_scheduler_tick_pixel_mod(void *data, struct rq *rq)
+{
+	struct rq_flags rf;
+
+	/* Our ptick handles everything now, skip if enabled */
+	if (static_key_enabled(&enable_ptick))
+		return;
+
+	rq_lock(rq, &rf);
+	vh_scheduler_tick_pixel_mod_locked(rq);
+	rq_unlock(rq, &rf);
+
+	vh_scheduler_tick_pixel_mod_nolock(rq);
 }
 
 void reset_task_pmu(struct task_struct *p)
@@ -333,8 +351,19 @@ void vh_sched_switch_pixel_mod(void *data, bool preempt, struct task_struct *pre
 	if (is_idle_task(next))
 		ptick_clear(rq);
 
-	if (static_key_enabled(&enable_ptick) && is_idle_task(prev))
-		ptick_start(rq);
+	if (static_key_enabled(&enable_ptick)) {
+		if (fair_policy(prev->policy))
+			fair_add_pushable_task(rq, prev);
+		if (fair_policy(next->policy)) {
+			fair_remove_pushable_task(rq, next);
+			fair_queue_pushable_tasks(rq);
+		}
+
+		if (is_idle_task(prev))
+			ptick_start(rq);
+	}
+
+	send_trace_sched_group_tracker(next, true);
 }
 
 void rvh_after_enqueue_task_pixel_mod(void *data, struct rq *rq, struct task_struct *p, int flags)

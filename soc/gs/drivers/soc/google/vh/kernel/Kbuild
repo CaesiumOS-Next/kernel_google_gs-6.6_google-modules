@@ -24,3 +24,6 @@ obj-$(CONFIG_VH_THERMAL)   += thermal/
 
 # pixel metrics
 obj-$(CONFIG_PIXEL_METRICS)	+= metrics/
+
+# vh/kernel/power
+obj-$(CONFIG_VH_POWER)   += power/

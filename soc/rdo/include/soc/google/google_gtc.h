@@ -29,6 +29,12 @@ u64 goog_gtc_ticks_to_ns(u64 gtc_tick);
  */
 u64 goog_gtc_get_time_ns(void);
 
+/*
+ * goog_gtc_get_freq_hz - Returns the GTC frequency in Hz.
+ * Return:			The GTC tick frequency in Hz.
+ */
+u64 goog_gtc_get_freq_hz(void);
+
 #else /* IS_ENABLED(CONFIG_GOOGLE_GTC) */
 
 static inline u64 goog_gtc_get_counter(void)
@@ -42,6 +48,11 @@ static inline u64 goog_gtc_ticks_to_ns(u64 gtc_tick)
 }
 
 static inline u64 goog_gtc_get_time_ns(void)
+{
+	return 0;
+}
+
+static inline u64 goog_gtc_get_freq_hz(void)
 {
 	return 0;
 }

@@ -44,7 +44,7 @@
 
 #include <linux/io.h>
 
-/*#define PDP_VERBOSE*/
+/* #define PDP_VERBOSE */
 
 #define REG_VALUE_GET(v, s, m) \
 	(u32)(((v) & (m)) >> (s))

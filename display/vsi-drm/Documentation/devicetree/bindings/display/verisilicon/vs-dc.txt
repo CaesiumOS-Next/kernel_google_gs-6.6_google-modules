@@ -28,6 +28,8 @@ Optional properties:
 - min-wr-peak-bw: minimum real-time peak write bandwidth in MBps
 - min-core-clk: minimum core clock in Hz.
 - tzprot-device: trust zone kernel device, for secure mode.
+- boost-fab-freq: target dpu fabric frequency in kHz during frequency boost stage.
+- boost-core-freq: target dpu core frequency in kHz during frequency boost stage.
 
 Example 1:
 

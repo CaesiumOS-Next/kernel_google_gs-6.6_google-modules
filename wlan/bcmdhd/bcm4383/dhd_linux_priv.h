@@ -1,7 +1,7 @@
 /*
  * DHD Linux header file - contains private structure definition of the Linux specific layer
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -262,6 +262,11 @@ typedef struct dhd_info {
 	*/
 	struct sk_buff_head   rx_emerge_queue	____cacheline_aligned;
 
+#ifdef DHD_VALIDATE_PKT_ADDRESS
+	/* Queue to hold invalid address packets in Hikey */
+	struct sk_buff_head   inv_addr_queue	____cacheline_aligned;
+#endif /* DHD_VALIDATE_PKT_ADDRESS */
+
 	/* Number of times DPC Tasklet ran */
 	uint32	dhd_dpc_cnt;
 	/* Number of times NAPI processing got scheduled */
@@ -335,6 +340,8 @@ typedef struct dhd_info {
 
 	/* CPU on which the Network stack is calling the DHD's xmit function */
 	atomic_t		net_tx_cpu;
+	/* cpu on which the DHD Rxpost is happenning */
+	atomic_t                rxpost_cpu;
 
 	/* Tasklet context from which the DHD's TX processing happens */
 	struct tasklet_struct tx_tasklet;
@@ -464,10 +471,14 @@ typedef struct dhd_info {
 	pkt_pool_t rx_pkt_pool;
 	tsk_ctl_t rx_pktpool_thread;
 #endif
-#if defined(DHD_FILE_DUMP_EVENT) && defined(DHD_FW_COREDUMP)
+#if defined(DHD_LB_RXPOST)
+	tsk_ctl_t lb_rxpost_thread;
+#endif /* DHD_LB_RXPOST */
+
+#if (defined(DHD_FILE_DUMP_EVENT) || defined(DHD_DMPD)) && defined(DHD_FW_COREDUMP)
 	osl_atomic_t dump_status;
 	struct work_struct dhd_dump_proc_work;
-#endif /* DHD_FILE_DUMP_EVENT && DHD_FW_COREDUMP */
+#endif /* (DHD_FILE_DUMP_EVENT || DHD_DMPD) && DHD_FW_COREDUMP */
 #ifdef DEBUGABILITY
 	struct proc_dir_entry *dhd_trace_proc;
 #endif /* DEBUGABILITY */
@@ -534,6 +545,11 @@ void dhd_cpumasks_deinit(dhd_info_t *dhd);
 int dhd_cpumasks_init(dhd_info_t *dhd);
 
 void dhd_select_cpu_candidacy(dhd_info_t *dhd);
+#ifdef DHD_LB_RXPOST
+void dhd_lb_rxpost_init(dhd_pub_t *dhdp);
+void dhd_lb_rxpost_deinit(dhd_pub_t *dhdp);
+void dhd_lb_rxpost_dispatch(dhd_pub_t *dhdp);
+#endif /* DHD_LB_RXPOST */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0))
 int dhd_cpu_startup_callback(unsigned int cpu);

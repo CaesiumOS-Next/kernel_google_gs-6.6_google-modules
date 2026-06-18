@@ -1,7 +1,7 @@
 /*
  * TRX image file header format.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -82,9 +82,9 @@ struct trx_header {
 #define ISTRX_V1(trx)		(TRX_VER(trx) == TRX_V1)
 #define ISTRX_V2(trx)		(TRX_VER(trx) == TRX_V2)
 /* For V2, return size of V2 size: others, return V1 size */
-#define SIZEOF_TRX(trx)	    (ISTRX_V2(trx) ? SIZEOF_TRXHDR_V2: SIZEOF_TRXHDR_V1)
+#define SIZEOF_TRX(trx)	(ISTRX_V2(trx) ? SIZEOF_TRXHDR_V2 : SIZEOF_TRXHDR_V1)
 #else
-#define SIZEOF_TRX(trx)	    (sizeof(struct trx_header))
+#define SIZEOF_TRX(trx)	(sizeof(struct trx_header))
 #endif /* BCMTRXV2 */
 
 /* Compatibility */

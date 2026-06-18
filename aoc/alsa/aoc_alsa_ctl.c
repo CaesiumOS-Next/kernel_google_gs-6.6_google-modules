@@ -2557,11 +2557,11 @@ static SOC_ENUM_SINGLE_DECL(sink_4_state_enum, 1, 4,
 /* audio dsp state switch */
 static const char *audio_dsp_state_switch_texts[] = { "Ambient", "Record", "Telephony",
 						      "RESERVED_0", "RESERVED_1", "RESERVED_2",
-						      "Telephony_APMG3"};
+						      "Telephony_APMG3", "Ambient_Plus"};
 static SOC_ENUM_SINGLE_DECL(audio_dsp_state_switch_enum, 1, 0, audio_dsp_state_switch_texts);
 
 /* incall capture stream state */
-static const char *incall_capture_stream_texts[] = { "Off", "UL", "DL", "UL_DL", "3MIC" };
+static const char * const incall_capture_stream_texts[] = { "Off", "UL", "DL", "UL_DL", "3MIC", "2MIC" };
 static SOC_ENUM_SINGLE_DECL(incall_capture_stream0_enum, 1, 0, incall_capture_stream_texts);
 static SOC_ENUM_SINGLE_DECL(incall_capture_stream1_enum, 1, 1, incall_capture_stream_texts);
 static SOC_ENUM_SINGLE_DECL(incall_capture_stream2_enum, 1, 2, incall_capture_stream_texts);

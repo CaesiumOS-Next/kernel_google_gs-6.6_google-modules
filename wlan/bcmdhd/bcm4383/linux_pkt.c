@@ -1,7 +1,7 @@
 /*
  * Linux Packet (skb) interface
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -47,19 +47,19 @@ bcm_static_pkt_t *bcm_static_skb = 0;
 void* wifi_platform_prealloc(void *adapter, int section, unsigned long size);
 #endif /* CONFIG_DHD_USE_STATIC_BUF */
 
-#ifndef CUSTOM_PREFIX
+#ifndef LOG_CUSTOM_PREFIX_AND_RTC
 #define BCM_PRINT(args)	\
 	do {			\
 		pr_cont args;	\
 	} while (0)
 #else
-#define BCM_PRINT_PREFIX "[%s]"CUSTOM_PREFIX, OSL_GET_RTCTIME()
+#define BCM_PRINT_PREFIX "[%s]"LOG_CUSTOM_PREFIX_AND_RTC, OSL_GET_RTCTIME()
 #define BCM_PRINT(args)			\
 	do {					\
 		pr_cont(OSL_PRINT_PREFIX);	\
 		pr_cont args;			\
 	} while (0)
-#endif /* CUSTOM_PREFIX */
+#endif /* LOG_CUSTOM_PREFIX_AND_RTC */
 
 #ifdef BCM_OBJECT_TRACE
 /* don't clear the first 4 byte that is the pkt sn */
@@ -164,7 +164,16 @@ BCMFASTPATH(osl_alloc_skb)(osl_t *osh, unsigned int len)
 #endif /* DHD_USE_ATOMIC_PKTGET */
 	skb = __dev_alloc_skb(len, flags);
 #else
+
+#ifdef GOOGLE_DAL_CORE
+#define GOOGLE_DAL_OVERHEAD 64u
+	/* Extend extra space to store information for offload mode */
+	skb = dev_alloc_skb(len + GOOGLE_DAL_OVERHEAD);
+	if (likely(skb))
+		skb_reserve(skb, GOOGLE_DAL_OVERHEAD);
+#else
 	skb = dev_alloc_skb(len);
+#endif /* GOOGLE_DAL_CORE */
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25) */
 
 	return skb;
@@ -881,6 +890,9 @@ osl_pkt_orphan_partial(struct sk_buff *skb)
 
 	if (!skb->destructor || skb->destructor == sock_wfree)
 		return;
+
+	if (!skb->sk || skb->sk->sk_protocol != IPPROTO_TCP)
+	    return;
 
 	if (unlikely(!p_tcp_wfree)) {
 		/* this is a hack to get tcp_wfree pointer since it's not

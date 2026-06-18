@@ -803,7 +803,7 @@ struct google_wlc_data {
 	u16					eds_total_count;
 	bool					eds_event;
 	bool					wpc_auth_type;
-	int					last_event;
+	int					last_charging_uevent;
 	/* debug or fwupdate related values */
 	bool					force_bpp;
 	bool					manual_force_bpp;
@@ -864,6 +864,7 @@ struct google_wlc_data {
 	u32					cloak_ping_delay_ms;
 	bool					bpp_ramp_done_check;
 	u32					bpp_ramp_done_target;
+	bool					mode_ready;
 };
 
 struct google_wlc_bits {

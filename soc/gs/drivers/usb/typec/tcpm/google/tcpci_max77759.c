@@ -639,6 +639,26 @@ static ssize_t manual_disable_vbus_show(struct device *dev, struct device_attrib
 };
 static DEVICE_ATTR_RO(manual_disable_vbus);
 
+static ssize_t manual_bc12_detect_store(struct device *dev, struct device_attribute *attr,
+					     const char *buf, size_t count)
+{
+	struct max77759_plat *chip = max777x9_get_drvdata(dev);
+	bool enable;
+	int ret;
+
+	if (kstrtobool(buf, &enable) < 0)
+		return -EINVAL;
+
+	/* chgDetMan auto-clears, so there's no need to do anything if the write value is false */
+	if (!enable)
+		return count;
+
+	ret = bc12_manual_detect_enable(chip->bc12);
+
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_WO(manual_bc12_detect);
+
 static struct device_attribute *max77759_device_attrs[] = {
 	&dev_attr_frs,
 	&dev_attr_bc12_enabled,
@@ -656,6 +676,7 @@ static struct device_attribute *max77759_device_attrs[] = {
 	&dev_attr_usb_limit_source_enable,
 	&dev_attr_irq_hpd_count,
 	&dev_attr_manual_disable_vbus,
+	&dev_attr_manual_bc12_detect,
 	NULL
 };
 

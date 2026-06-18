@@ -1304,16 +1304,21 @@ static int fleb_detect_fault(struct gs_panel *ctx)
 	int ret;
 
 	PANEL_ATRACE_BEGIN(__func__);
-	ret = mipi_dsi_dcs_read(dsi, ERR_FG_ADDR, buf, ERR_FG_LEN);
 
+	bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
+	ret = mipi_dsi_dcs_read(dsi, ERR_FG_ADDR, buf, ERR_FG_LEN);
 	if (ret != ERR_FG_LEN) {
-		dev_warn(dev, "Error reading ERR_FG (%pe)\n", ERR_PTR(ret));
+		ctx->ddic_read_fail_cnt++;
+		dev_warn(dev, "Error reading ERR_FG (%pe), cnt=%d\n",
+			ERR_PTR(ret), ctx->ddic_read_fail_cnt);
+		if (ctx->ddic_read_fail_cnt >= MAX_DDIC_READ_FAIL_CNT)
+			set_bit(GS_PANEL_ERR_DSI_READ_FAILURE, ctx->panel_errors);
 		goto end;
 	} else {
 		dev_dbg(dev, "ERR_FG: %02x\n", buf[0]);
+		ctx->ddic_read_fail_cnt = 0;
 	}
 
-	bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
 	if (buf[0] & ERR_FG_CSUM_ERR)
 		set_bit(GS_PANEL_ERR_CHECKSUM, ctx->panel_errors);
 	if (buf[0] & ERR_FG_TE_ERR)
@@ -1528,8 +1533,7 @@ static struct gs_panel_desc gs_fleb = {
 	.refresh_on_lp = true,
 	.common_work_delay_ms = 60000,
 	.fault_detect_interval_ms = 5000,
-	.panel_errors_mask = ~(BIT(GS_PANEL_ERR_DSI_SOT) | BIT(GS_PANEL_ERR_DSI_SOT_SYNC) |
-			BIT(GS_PANEL_ERR_DSI_FALSE_CONTROL)),
+	.panel_errors_mask = BIT(GS_PANEL_ERR_DSI_READ_FAILURE),
 	/* supported IRC mode bitmask : 1(IRC_OFF), 2(IRC_PEAK_LUM) */
 	.irc_support_mode = BIT(1) | BIT(2),
 };

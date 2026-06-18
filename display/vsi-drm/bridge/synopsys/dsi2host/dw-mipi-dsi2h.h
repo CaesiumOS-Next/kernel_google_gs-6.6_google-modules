@@ -225,7 +225,19 @@ struct dsi2h_color_format {
 	enum dsi2h_ipi_depth depth;
 };
 
-#if IS_ENABLED(CONFIG_DEBUG_FS)
+enum dsi_err_event_stats {
+	/* error event in driver */
+	ST_CRI_BUSY = 0,
+	ST_PRI_BUSY,
+	ST_ULPS_EXIT_ERR,
+	ST_ULPS_ENTER_ERR,
+	ST_DCS_READ_ACK_ERR,
+	ST_DCS_READ_EXTRA_DATA,
+	ST_DCS_READ_DATA_NOT_ARRIVED,
+	/* Total Count */
+	STATS_EVENT_COUNT,
+};
+
 struct dw_dsi2h_int_cntrs {
 	u64	cntr_int_phy_l0_erresc;
 	u64	cntr_int_phy_l0_errsyncesc;
@@ -287,7 +299,6 @@ struct dw_dsi2h_int_cntrs {
 	u64	cntr_int_cmd_wr_hdr_fifo_over;
 	u64	cntr_int_cmd_wr_hdr_fifo_under;
 };
-#endif /* CONFIG_DEBUG_FS */
 
 enum dsi2h_host_state {
 	DSI2H_STATE_SUSPEND,
@@ -352,6 +363,7 @@ struct dw_mipi_dsi2h {
 	struct task_struct *thread;
 	struct kthread_delayed_work ulps_dwork;
 	u32 pm_ver;
+	u32 *stat_data;
 
 	u32 max_data_lanes;
 	u32 is_cphy;
@@ -400,8 +412,8 @@ struct dw_mipi_dsi2h {
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	struct dentry *debugfs;
 	struct dw_debugfs_hwv *debugfs_hwv;
+#endif /* CONFIG_DEBUG_FS */
 	struct dw_dsi2h_int_cntrs int_cntrs;
-	#endif
 
 	struct regmap_field	*field_core_id;
 	struct regmap_field	*field_ver_number;
@@ -885,21 +897,23 @@ struct dw_debugfs_hwv {
 	void (*write)(void *data, u64 val);
 };
 
+void dw_dsi2h_import_device(struct dw_mipi_dsi2h *dsi2h,
+			    struct mipi_dsi_device *d_device);
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 /* Functions that need to be exposed for HWV*/
 int dw_mipi_dsi2h_disable(struct dw_mipi_dsi2h *dsi2h);
 
 void dw_create_debugfs_hwv_files(struct dw_mipi_dsi2h *dsi2h);
-void dw_create_debugfs_hwv_u64_files(struct dw_mipi_dsi2h *dsi2h);
 u32 dw_ctrl_read_dbgfs(struct dw_mipi_dsi2h *dsi2h, int offset);
 struct drm_display_mode *dw_dsi2h_export_display(struct dw_mipi_dsi2h *dsi2h);
 struct mipi_dsi_device *dw_dsi2h_export_device(struct dw_mipi_dsi2h *dsi2h);
 union phy_configure_opts
 *dw_dsi2h_export_phy_opts(struct dw_mipi_dsi2h *dsi2h);
-void dw_dsi2h_import_device(struct dw_mipi_dsi2h *dsi2h,
-			    struct mipi_dsi_device *d_device);
 int dw_dsi2h_reconfigure(struct dw_mipi_dsi2h *dsi2h);
 void dw_dsi2h_update(struct dw_mipi_dsi2h *dsi2h);
 #endif /* CONFIG_DEBUG_FS */
+
+int dw_mipi_dsi2h_sysfs_init(struct dw_mipi_dsi2h *dsi2h);
+void dw_mipi_dsi2h_sysfs_remove(struct dw_mipi_dsi2h *dsi2h);
 
 #endif /* DW_DSI2H_H */

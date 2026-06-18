@@ -18,7 +18,8 @@ $ find . -name kernel-doc
 .
 .
 .
-$ ln -sf ../../private aosp/Documentation/private
+$ ln -sf `pwd`/private aosp/Documentation/private && \
+  ln -sf `pwd`/private aosp/private
 $ (cd aosp && make htmldocs)
 .
 .

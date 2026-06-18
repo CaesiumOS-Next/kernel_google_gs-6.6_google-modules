@@ -11,6 +11,9 @@
 
 #include <gcip/gcip-kci.h>
 #include <perf/core/google_pm_qos.h>
+#if IS_ENABLED(CONFIG_GS_PERF_DOMAIN)
+#include <perf/core/perf_domain.h>
+#endif
 
 #include "gxp-core-telemetry.h"
 #include "gxp-gem.h"
@@ -179,15 +182,17 @@ int gxp_soc_init(struct gxp_dev *gxp)
 	dsu_df = &gxp->soc_data->dsu_df;
 
 	/* Get the instance of DSU devfreq device. */
+#if IS_ENABLED(CONFIG_GS_PERF_DOMAIN)
+	df = gs_perf_domain_find_devfreq("dsu", GS_RECOMMENDED_DEVFREQ);
+#else /* CONFIG_GS_PERF_DOMAIN */
 	df = devfreq_get_devfreq_by_phandle(gxp->dev, "dsu-devfreq", 0);
-	if (IS_ERR(df)) {
-		dev_warn(gxp->dev, "devfreq_get_devfreq_by_phandle return %ld.", PTR_ERR(df));
+#endif /* CONFIG_GS_PERF_DOMAIN */
+	if (IS_ERR_OR_NULL(df)) {
+		dev_warn(gxp->dev, "failed to get devfreq: %ld\n", PTR_ERR(df));
 	} else {
 		dsu_df->df = df;
 		INIT_WORK(&dsu_df->dsu_reset_work, gxp_soc_dsu_reset_work);
 	}
-
-	/* TODO(b/301884920): Check and support SLC configurations. */
 
 	return 0;
 }

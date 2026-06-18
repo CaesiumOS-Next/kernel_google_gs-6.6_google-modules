@@ -1,7 +1,7 @@
 /*
  * Misc system wide definitions
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -46,6 +46,13 @@
 #define BCM_UNUSED_VAR
 #endif
 
+/* Allow for suppressing pedantic warnings. */
+#ifdef __GNUC__
+#define BCM_EXTENSION	__extension__
+#else
+#define BCM_EXTENSION
+#endif
+
 /* Allow for suppressing a warning for a switch case without break */
 #ifdef __GNUC__
 #define GCC_SUPPRESS_FALLTHROUGH_WARNING     __attribute__ ((fallthrough))
@@ -75,11 +82,11 @@
 	defined(__clang__))
 
 #define GCC_DIAGNOSTIC_PUSH_SUPPRESS_CAST()              \
-	_Pragma("GCC diagnostic push")			 \
+	_Pragma("GCC diagnostic push")			\
 	_Pragma("GCC diagnostic ignored \"-Wcast-qual\"")
 
-#define GCC_DIAGNOSTIC_PUSH_SUPPRESS_NULL_DEREF()	 \
-	_Pragma("GCC diagnostic push")			 \
+#define GCC_DIAGNOSTIC_PUSH_SUPPRESS_NULL_DEREF()	\
+	_Pragma("GCC diagnostic push")			\
 	_Pragma("GCC diagnostic ignored \"-Wnull-dereference\"")
 
 #define GCC_DIAGNOSTIC_POP()                             \
@@ -90,7 +97,7 @@
 #define GCC_DIAGNOSTIC_PUSH_SUPPRESS_CAST()              \
 	__pragma(warning(push))                          \
 	__pragma(warning(disable:4090))
-#define GCC_DIAGNOSTIC_PUSH_SUPPRESS_NULL_DEREF()	 \
+#define GCC_DIAGNOSTIC_PUSH_SUPPRESS_NULL_DEREF()	\
 	__pragma(warning(push))
 #define GCC_DIAGNOSTIC_POP()                             \
 	__pragma(warning(pop))
@@ -106,7 +113,7 @@
 
 #if !defined(__clang__) || __clang_major__ >= 13
 #define GCC_DIAGNOSTIC_PUSH_SUPPRESS_FN_TYPE()           \
-	_Pragma("GCC diagnostic push")			 \
+	_Pragma("GCC diagnostic push")			\
 	_Pragma("GCC diagnostic ignored \"-Wcast-function-type\"")
 #else
 #define GCC_DIAGNOSTIC_PUSH_SUPPRESS_FN_TYPE()           \
@@ -153,12 +160,17 @@
 /* Compile-time assert can be used in place of ASSERT if the expression evaluates
  * to a constant at compile time.
  */
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+/* _Static_assert() is supported in ISO C from C11. */
+#define STATIC_ASSERT(expr) _Static_assert(expr, "Static ASSERT failure")
+#else
 #define STATIC_ASSERT(expr) { \
 	/* Make sure the expression is constant. */ \
 	typedef enum { _STATIC_ASSERT_NOT_CONSTANT = (expr) } _static_assert_e BCM_UNUSED_VAR; \
 	/* Make sure the expression is true. */ \
 	typedef char STATIC_ASSERT_FAIL[(expr) ? 1 : -1] BCM_UNUSED_VAR; \
 }
+#endif /* __STDC_VERSION__ >= 201112L */
 
 /* Reclaiming text and data :
  * The following macros specify special linker sections that can be reclaimed
@@ -357,8 +369,23 @@ extern bool bcm_postattach_part_reclaimed;
 	#define BCMRAMDATA(_data)	_data
 #endif /* ROMBUILD */
 
+/* This will be used by the accessor functions and other helper functions which are required
+ * to ROM a given function. This function will always remain in RAM. Also a separate modifier
+ * will help to differentiate these functions from standard RAM functions.
+ */
+#define BCMACCESSOR_RAMFN(_fn) BCMRAMFN(_fn)
+
 /* Use BCMSPECSYM() macro to tag symbols going to a special output section in the binary. */
 #define BCMSPECSYM(_sym)	__attribute__ ((__section__ (".special." #_sym))) _sym
+
+#ifdef BCMFUZZ
+#define BCM_UNROLL_LOOPS
+#else
+/** Use on functions with small loops with boundaries known at compile time to trade increased
+ * memory usage for a few saved cycles by avoiding the branch statement caused by the loop.
+ */
+#define BCM_UNROLL_LOOPS	__attribute__ ((optimize("unroll-loops")))
+#endif /* BCMFUZZ */
 
 #define STATIC	static
 
@@ -554,7 +581,7 @@ typedef uint32 dmaaddr_t;
 /* One physical DMA segment */
 typedef struct  {
 	dmaaddr_t addr;
-	uint32	  length;
+	uint32	length;
 } hnddma_seg_t;
 
 #if defined(__linux__)
@@ -639,7 +666,7 @@ typedef struct {
 		(((val) >> field ## _S) & field ## _M)
 #define SFIELD(val, field, bits) \
 		(((val) & (~(field ## _M << field ## _S))) | \
-		 ((unsigned)(bits) << field ## _S))
+		((unsigned)(bits) << field ## _S))
 
 /* define BCMSMALL to remove misc features for memory-constrained environments */
 #ifdef BCMSMALL
@@ -721,7 +748,8 @@ typedef struct {
 
 #ifdef BCMLFRAG /* BCMLFRAG support enab macros  */
 	extern bool _bcmlfrag;
-#if defined(ROM_ENAB_RUNTIME_CHECK) || !defined(DONGLEBUILD)
+#if (defined(ROM_ENAB_RUNTIME_CHECK) && !defined(BCMLFRAG_NO_RUNTIME_CHECK)) || \
+	!defined(DONGLEBUILD)
 	#define BCMLFRAG_ENAB() (_bcmlfrag)
 #elif defined(BCMLFRAG_DISABLED)
 	#define BCMLFRAG_ENAB()	(FALSE)
@@ -734,7 +762,7 @@ typedef struct {
 
 #ifdef BCMPCIEDEV /* BCMPCIEDEV support enab macros */
 extern bool _pciedevenab;
-#if defined(ROM_ENAB_RUNTIME_CHECK)
+#if defined(ROM_ENAB_RUNTIME_CHECK) && !defined(BCMPCIEDEV_NO_RUNTIME_CHECK)
 	#define BCMPCIEDEV_ENAB() (_pciedevenab)
 #elif defined(BCMPCIEDEV_ENABLED)
 	#define BCMPCIEDEV_ENAB() (TRUE)
@@ -802,6 +830,19 @@ extern bool _dvfsenab;
 	#define BCMDVFS_ENAB() (FALSE)
 #endif /* BCMDVFS */
 
+#ifdef BCM_HW_SFHLLC
+extern bool _hw_sfhllc_enab;
+#if defined(ROM_ENAB_RUNTIME_CHECK)
+	#define BCM_HW_SFHLLC_ENAB() (_hw_sfhllc_enab)
+#elif !defined(BCM_HW_SFHLLC_DISABLED)
+	#define BCM_HW_SFHLLC_ENAB() (TRUE)
+#else
+	#define BCM_HW_SFHLLC_ENAB() (FALSE)
+#endif
+#else
+	#define BCM_HW_SFHLLC_ENAB() (FALSE)
+#endif /* BCMDVFS */
+
 /* Max size for reclaimable NVRAM array */
 #ifndef ATE_BUILD
 #ifdef DL_NVRAM
@@ -817,7 +858,8 @@ extern uint32 gFWID;
 
 #ifdef BCMFRWDPKT /* BCMFRWDPKT support enab macros  */
 	extern bool _bcmfrwdpkt;
-#if defined(ROM_ENAB_RUNTIME_CHECK) || !defined(DONGLEBUILD)
+#if (defined(ROM_ENAB_RUNTIME_CHECK) && !defined(BCMFRWDPKT_NO_RUNTIME_CHECK)) || \
+		!defined(DONGLEBUILD)
 	#define BCMFRWDPKT_ENAB() (_bcmfrwdpkt)
 #elif defined(BCMFRWDPKT_DISABLED)
 	#define BCMFRWDPKT_ENAB() (FALSE)
@@ -856,9 +898,10 @@ extern uint32 gFWID;
 
 #ifdef BCMRXDATAPOOL /* BCMRXDATAPOOL support enab macros  */
 	extern bool _bcmrxdatapool;
-#if defined(ROM_ENAB_RUNTIME_CHECK) || !defined(DONGLEBUILD)
+#if (defined(ROM_ENAB_RUNTIME_CHECK) && !defined(BCMRXDATAPOOL_NO_RUNTIME_CHECK)) || \
+		!defined(DONGLEBUILD)
 	#define BCMRXDATAPOOL_ENAB() (_bcmrxdatapool)
-#elif defined(BCMRXDATAPOOL_DISABLED)
+#elif defined(BCMRXDATAPOOL_DISABLED) && defined(DONGLEBUILD)
 	#define BCMRXDATAPOOL_ENAB() (FALSE)
 #else
 	#define BCMRXDATAPOOL_ENAB() (TRUE)
@@ -869,7 +912,8 @@ extern uint32 gFWID;
 
 #ifdef URB /* URB support enab macros  */
 	extern bool _urb_enab;
-#if defined(ROM_ENAB_RUNTIME_CHECK) || !defined(DONGLEBUILD)
+#if (defined(ROM_ENAB_RUNTIME_CHECK) && !defined(URB_NO_RUNTIME_CHECK)) || \
+		!defined(DONGLEBUILD)
 	#define URB_ENAB() (_urb_enab)
 #elif defined(URB_DISABLED)
 	#define URB_ENAB() (FALSE)
@@ -892,6 +936,19 @@ extern uint32 gFWID;
 #else
 	#define UDCC_ENAB() (FALSE)
 #endif /* UDCC */
+
+#ifdef URB_DBG_BUS /* URB DBG BUS enab macros  */
+	extern bool _urb_dbg_bus_enab;
+#if defined(ROM_ENAB_RUNTIME_CHECK) || !defined(DONGLEBUILD)
+	#define URB_DBG_BUS_ENAB() (_urb_dbg_bus_enab)
+#elif defined(URB_DBG_BUS_DISABLED)
+	#define URB_DBG_BUS_ENAB() (FALSE)
+#else
+	#define URB_DBG_BUS_ENAB() (TRUE)
+#endif
+#else
+	#define URB_DBG_BUS_ENAB() (FALSE)
+#endif /* URB_DBG_BUS */
 
 #ifdef URB_MON_GIANT_PKT /* URB Mon giant packet enab macro  */
 	extern bool _urb_giantpkt_enab;
@@ -981,6 +1038,7 @@ extern bool _tx_histogram_enabled;
 #if defined(BCMROMBUILD)
 #define BCMPOSTTRAPFN(_fn)		_fn
 #define BCMPOSTTRAPRAMFN(_fn)	__attribute__ ((__section__ (".text_ram." #_fn))) _fn
+#define BCMPOSTTRAP_ACCESSOR_RAMFN(fn)	BCMPOSTTRAPRAMFN(fn)
 #if defined(BCMFASTPATH_EXCLUDE_FROM_ROM)
 #define BCMPOSTTRAPFASTPATH(_fn)	__attribute__ ((__section__ (".text_ram." #_fn))) _fn
 #else /* BCMFASTPATH_EXCLUDE_FROM_ROM */
@@ -995,6 +1053,7 @@ extern bool _tx_histogram_enabled;
 #define BCMPOSTTRAPFASTPATH(_fn)	_fn
 #endif /* DONGLEBUILD */
 #define BCMPOSTTRAPRAMFN(fn)	BCMPOSTTRAPFN(fn)
+#define BCMPOSTTRAP_ACCESSOR_RAMFN(fn)	BCMPOSTTRAPRAMFN(fn)
 #endif /* ROMBUILD */
 
 typedef struct bcm_rng * bcm_rng_handle_t;
@@ -1016,10 +1075,12 @@ void* BCM_ASLR_CODE_FNPTR_RELOCATOR(void *func_ptr);
 	/* 'func_ptr_err_chk' performs a compile time error check to ensure that only a constant
 	 * function name is passed as an argument to BCM_FUNC_PTR(). This ensures that the macro is
 	 * only used for function pointer references, and not for function pointer invocations.
+	 *
+	 * Cast function ptr arg to avoid warnings related to conversion of function ptr to void*.
 	 */
-	#define BCM_FUNC_PTR(func) \
-		({ static void *func_ptr_err_chk __attribute__ ((unused)) = (func); \
-		BCM_ASLR_CODE_FNPTR_RELOCATOR(func); })
+	#define BCM_FUNC_PTR(fn) \
+		({ static void *func_ptr_err_chk __attribute__ ((unused)) = (void *)(uintptr)(fn); \
+		(__typeof__(&fn))(uintptr)BCM_ASLR_CODE_FNPTR_RELOCATOR((void *)(uintptr)(fn)); })
 #else
 	#define BCM_FUNC_PTR(func)         (func)
 #endif /* BCM_ASLR_CODE_FNPTR_RELOC */
@@ -1111,6 +1172,13 @@ typedef struct _regs_bmp_list {
 					((_reglist)->bmp_cnt[1u] << 16) | \
 					((_reglist)->bmp_cnt[2u] << 8) | \
 					((_reglist)->bmp_cnt[3u]))
+
+#define REGLIST_STORE_BMP32(_reglist, bitmap) { \
+					(_reglist)->bmp_cnt[3u] = (uint8)bitmap; \
+					(_reglist)->bmp_cnt[2u] = (uint8)(bitmap >> 8); \
+					(_reglist)->bmp_cnt[1u] = (uint8)(bitmap >> 16); \
+					(_reglist)->bmp_cnt[0u] = (uint8)(bitmap >> 24); \
+}
 
 #define REGLIST_WIDTH(rlst)		(((REGLIST_LOAD_BMP32((rlst)) & REGLIST_SIZE_MASK) >> \
 					REGLIST_SIZE_SHIFT))

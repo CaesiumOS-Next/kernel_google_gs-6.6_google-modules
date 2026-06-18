@@ -3,7 +3,7 @@
  * of the SiliconBackplane-based Broadcom chips.
  * For DHD only.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -137,7 +137,7 @@ si_get_pmu_reg_addr(si_t *sih, uint32 offset)
 		/* note: this function is used by dhd and possible 64 bit compilation needs
 		 * a cast to (unsigned long) for avoiding a compilation error.
 		 */
-		pmuaddr = (uint32)(uintptr)((volatile uint8*)pmu + offset);
+		pmuaddr = (uint32)(uintptr)((volatile uint8 *)pmu + offset);
 		si_setcoreidx(sih, origidx);
 	} else
 		pmuaddr = SI_ENUM_BASE(sih) + offset;
@@ -171,7 +171,7 @@ BCMATTACHFN(si_oob_war_BT_F1)(si_t *sih)
  */
 si_info_t *
 BCMATTACHFN(si_doattach)(si_info_t *sii, uint devid, osl_t *osh, volatile void *regs,
-                       uint bustype, void *sdh, char **vars, uint *varsz)
+	uint bustype, void *sdh, char **vars, uint *varsz)
 {
 	struct si_pub *sih = &sii->pub;
 	chipcregs_t *cc;
@@ -242,13 +242,15 @@ si_tcm_size(si_t *sih)
 	origidx = si_coreidx(sih);
 
 	/* Switch to CR4 core */
-	if (!(regs = si_setcore(sih, ARMCR4_CORE_ID, 0)))
+	regs = si_setcore(sih, ARMCR4_CORE_ID, 0);
+	if (!regs)
 		goto done;
 
 	/* Get info for determining size. If in reset, come out of reset,
 	 * but remain in halt
 	 */
-	if (!(wasup = si_iscoreup(sih)))
+	wasup = si_iscoreup(sih);
+	if (!wasup)
 		si_core_reset(sih, SICF_CPUHALT, SICF_CPUHALT);
 
 	arm_cap_reg = (volatile uint32 *)(regs + SI_CR4_CAP);
@@ -334,7 +336,7 @@ si_ccreg(si_t *sih, uint32 offset, uint32 mask, uint32 val)
 /* #define	SI_BPIND_4BYTE		0xF */
 int
 si_bpind_access(si_t *sih, uint32 addr_high, uint32 addr_low,
-		int32 * data, bool read, uint32 us_timeout)
+	int32 *data, bool read, uint32 us_timeout)
 {
 
 	uint32 status = 0;
@@ -371,4 +373,40 @@ si_bpind_access(si_t *sih, uint32 addr_high, uint32 addr_low,
 	}
 
 	return ret_val;
+}
+
+#ifdef SOCI_NCI_BUS
+int si_get_amni_slave_cfg_cc_reg_addrs(si_t *sih, volatile uint32 **idm_errstatus_addr,
+	volatile uint32 **idm_intstatus_addr)
+{
+	if (CHIPTYPE(sih->socitype) == SOCI_NCI) {
+		return nci_get_amni_slave_cfg_cc_reg_addrs(sih, idm_errstatus_addr,
+			idm_intstatus_addr);
+	} else {
+		return -1;
+	}
+}
+#endif /* SOCI_NCI_BUS */
+
+/*
+ * Reset 5G RFFE Gpio lines on reboot from DHD.
+ * JIRA:SWDHD-4585 RB:302458
+ *
+ * Clear bit 10 of GCI CHIPCTRL14 AND Clear bit 12 of GCI CHIPCTRL38
+ */
+#define RF_SWCTRL_LINE10_CCGCI14_MASK 0x400
+#define RF_SWCTRL_LINE27_CCGCI38_MASK 0x1000
+int
+si_reset_5g_rffe_vio(si_t *sih)
+{
+	uint32 gcicc14, gcicc38;
+	gcicc14 = si_gci_chipcontrol(sih, CC_GCI_CHIPCTRL_14, 0, 0);
+	gcicc38 = si_gci_chipcontrol(sih, CC_GCI_CHIPCTRL_38, 0, 0);
+	SI_PRINT(("si_reset_5g_rffe_vio Read GCI_CC14  %d:0x%08x \t GCI_CC38: %d:0x%x\n",
+			CC_GCI_CHIPCTRL_14, gcicc14, CC_GCI_CHIPCTRL_38, gcicc38));
+	gcicc14 = si_gci_chipcontrol(sih, CC_GCI_CHIPCTRL_14, RF_SWCTRL_LINE10_CCGCI14_MASK, 0);
+	gcicc38 = si_gci_chipcontrol(sih, CC_GCI_CHIPCTRL_38, RF_SWCTRL_LINE27_CCGCI38_MASK, 0);
+	SI_PRINT(("si_reset_5g_rffe_vio After Clear GCI_CC14  %d:0x%08x \t GCI_CC38: %d:0x%x\n",
+			CC_GCI_CHIPCTRL_14, gcicc14, CC_GCI_CHIPCTRL_38, gcicc38));
+	return 0;
 }

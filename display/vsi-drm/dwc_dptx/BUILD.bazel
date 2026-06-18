@@ -2,6 +2,16 @@
 
 load("@kleaf//build/kernel/kleaf:kernel.bzl", "ddk_headers", "ddk_module")
 
+filegroup(
+    name = "dwc_dptx.kconfig",
+    srcs = [
+        "//private/google-modules/display/vsi-drm/dwc_dptx:Kconfig",
+    ],
+    visibility = [
+        "//private/devices/google:__subpackages__",
+    ],
+)
+
 ddk_headers(
     name = "ddk_headers",
     hdrs = glob([
@@ -73,7 +83,7 @@ ddk_module(
     ],
     kernel_build = "//private/devices/google/common:kernel",
     visibility = [
-        "//private/google-modules/display/vsi-drm:__pkg__",
+        "//private/devices/google:__subpackages__",
     ],
     deps = [
         ":ddk_headers",
@@ -104,7 +114,7 @@ ddk_module(
     ],
     kernel_build = "//private/devices/google/common:kernel",
     visibility = [
-        "//private/google-modules/display/vsi-drm:__pkg__",
+        "//private/devices/google:__subpackages__",
     ],
     deps = [
         ":ddk_headers",
@@ -119,6 +129,6 @@ exports_files(
         "Kconfig",
     ],
     [
-        "//private/google-modules/display/vsi-drm:__pkg__",
+        "//private/google-modules/display/vsi-drm/dwc_dptx:__pkg__",
     ],
 )

@@ -159,8 +159,8 @@ void vs_crtc_destroy(struct drm_crtc *crtc)
 {
 	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
 
-	vs_qos_remove_fabrt_devfreq_request(crtc);
-
+	vs_qos_remove_boost_core_devfreq_request(crtc);
+	vs_qos_remove_boost_fab_devfreq_request(crtc);
 	vs_qos_remove_devfreq_request(crtc);
 
 	if (crtc->port)
@@ -346,7 +346,7 @@ static struct drm_crtc_state *vs_crtc_atomic_duplicate_state(struct drm_crtc *cr
 
 	state->wb_connectors_updated = false;
 
-	state->need_boost_fabrt = false;
+	state->need_boost_freq = false;
 
 	memset(&state->recovery_info, 0, sizeof(state->recovery_info));
 
@@ -436,9 +436,10 @@ static int vs_crtc_atomic_set_property(struct drm_crtc *crtc, struct drm_crtc_st
 		ret = vs_dc_set_drm_property(dev, vs_crtc_state->drm_states, &vs_crtc->properties,
 					     property, val);
 
-		if (vs_dc->boost_fabrt_freq && ((strcmp(property->name, "PRIOR_3DLUT") == 0) ||
-						(strcmp(property->name, "PRIOR_3DLUT_RGB16") == 0)))
-			vs_crtc_state->need_boost_fabrt = true;
+		if (is_boost_freq_enabled(vs_dc) &&
+		    ((strcmp(property->name, "PRIOR_3DLUT") == 0) ||
+		     (strcmp(property->name, "PRIOR_3DLUT_RGB16") == 0)))
+			vs_crtc_state->need_boost_freq = true;
 
 		vs_crtc_state->skip_update = false;
 	}
@@ -763,47 +764,10 @@ static ssize_t vs_crtc_pattern_write(struct file *file, const char __user *ubuf,
 	return len;
 }
 
-static int vs_crtc_crc_show(struct seq_file *s, void *data)
-{
-	struct drm_crtc *crtc = s->private;
-	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
-
-	if (!vs_crtc->funcs->show_crc)
-		return -EINVAL;
-
-	return vs_crtc->funcs->show_crc(s);
-}
-
-static ssize_t vs_crtc_crc_write(struct file *file, const char __user *ubuf, size_t len,
-				 loff_t *offp)
-{
-	struct seq_file *s = file->private_data;
-	struct drm_crtc *crtc = s->private;
-	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
-
-	if (vs_crtc->funcs->set_crc)
-		vs_crtc->funcs->set_crc(vs_crtc->dev, crtc, ubuf, len);
-
-	return len;
-}
-
-static int vs_crtc_crc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, vs_crtc_crc_show, inode->i_private);
-}
-
 static const struct file_operations vs_crtc_pattern_fops = {
 	.open = vs_crtc_pattern_open,
 	.read = seq_read,
 	.write = vs_crtc_pattern_write,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
-
-static const struct file_operations vs_crtc_crc_fops = {
-	.open = vs_crtc_crc_open,
-	.read = seq_read,
-	.write = vs_crtc_crc_write,
 	.llseek = seq_lseek,
 	.release = single_release,
 };
@@ -854,8 +818,6 @@ static int vs_crtc_debugfs_init(struct drm_crtc *crtc)
 	debugfs_create_file("status", 0444, crtc->debugfs_entry, crtc, &vs_crtc_debugfs_fops);
 
 	debugfs_create_file("pattern", 0644, crtc->debugfs_entry, crtc, &vs_crtc_pattern_fops);
-
-	debugfs_create_file("CRC", 0644, crtc->debugfs_entry, crtc, &vs_crtc_crc_fops);
 
 	debugfs_create_file("recovery", 0644, crtc->debugfs_entry, crtc, &vs_recovery_fops);
 
@@ -1445,9 +1407,9 @@ static void vs_crtc_enter_power_on(struct drm_crtc *crtc, struct drm_atomic_stat
 			dev_err(dev, "failed to power on during modeset enable\n");
 	}
 
-	if (vs_crtc_state->base.active_changed && vs_dc->boost_fabrt_freq) {
-		/* boost FABRT freq during register configuration */
-		WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_PENDING);
+	if (vs_crtc_state->base.active_changed && is_boost_freq_enabled(vs_dc)) {
+		/* boost frequencies during register configuration */
+		WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_PENDING);
 	}
 
 	vs_crtc_state->bpp = cal_pixel_bits(vs_crtc_state->output_fmt);
@@ -1563,8 +1525,8 @@ static void vs_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_stat
 	DPU_ATRACE_INT_PID("power_state", vs_crtc_state->power_state, pid);
 	trace_disp_disable(vs_crtc->id, crtc->state);
 
-	/* reset the fabrt boost state */
-	WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_INIT);
+	/* reset the freq boost state */
+	WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_INIT);
 
 	switch (vs_crtc_state->power_state) {
 	case VS_POWER_STATE_OFF:
@@ -1600,8 +1562,8 @@ static void vs_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_atomic_state 
 		vs_crtc_trigger_recovery(vs_crtc, vs_crtc_state->recovery_info.recovery_srcs);
 	}
 
-	if (vs_crtc_state->need_boost_fabrt)
-		WRITE_ONCE(vs_crtc->fboost_state, VS_FABRT_BOOST_PENDING);
+	if (vs_crtc_state->need_boost_freq)
+		WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_PENDING);
 
 	if (vs_crtc->funcs->config)
 		vs_crtc->funcs->config(dev, crtc);
@@ -2113,7 +2075,7 @@ struct vs_crtc *vs_crtc_create(const struct dc_hw_display *display, struct drm_d
 		drm_object_attach_property(&crtc->base.base, crtc->brightness_mask_prop, 0);
 	}
 
-	if (dc->core_devfreq != NULL) {
+	if (dc->core_devfreq) {
 		if (vs_qos_add_devfreq_request(dc, &crtc->base, DEV_PM_QOS_MIN_FREQUENCY,
 					       PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE))
 			goto err_cleanup_crtc;
@@ -2127,9 +2089,15 @@ struct vs_crtc *vs_crtc_create(const struct dc_hw_display *display, struct drm_d
 					   dc->core_devfreq->scaling_min_freq);
 	}
 
-	if (dc->fabrt_devfreq != NULL) {
-		if (vs_qos_add_fabrt_devfreq_request(dc, &crtc->base, DEV_PM_QOS_MIN_FREQUENCY,
-						     PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE))
+	if (dc->boost_fab_devfreq) {
+		if (vs_qos_add_boost_fab_devfreq_request(dc, &crtc->base, DEV_PM_QOS_MIN_FREQUENCY,
+							 PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE))
+			goto err_cleanup_crtc;
+	}
+
+	if (dc->boost_core_devfreq) {
+		if (vs_qos_add_boost_core_devfreq_request(dc, &crtc->base, DEV_PM_QOS_MIN_FREQUENCY,
+							  PM_QOS_MIN_FREQUENCY_DEFAULT_VALUE))
 			goto err_cleanup_crtc;
 	}
 
@@ -2278,15 +2246,18 @@ dma_addr_t vs_crtc_get_ltm_hist_dma_addr(struct device *dev, u8 hw_id)
 	dma_addr_t addr;
 	unsigned long flags;
 
-	if (!dev || hw_id >= DC_DISPLAY_NUM) {
-		dev_err(dev, "%s invalid input with device %p and hw_id %d\n", __func__, dev,
-			hw_id);
+	if (!dev) {
+		dev_err(dev, "%s invalid input with device %p\n", __func__, dev);
 		return 0;
 	}
 
 	dc = dev_get_drvdata(dev);
 	if (!dc) {
 		dev_err(dev, "%s null dc\n", __func__);
+		return 0;
+	}
+	if (hw_id >= dc->hw.info->display_num) {
+		dev_err(dev, "%s invalid input with hw_id %d\n", __func__, hw_id);
 		return 0;
 	}
 

@@ -501,12 +501,22 @@ static u32 rgea_get_min_idle_vrefresh(struct gs_panel *ctx,
 	return min_idle_vrefresh;
 }
 
-static void rgea_set_panel_feat_te(struct gs_panel *ctx, unsigned long *feat, u32 te_freq, bool is_vrr)
+/**
+ * rgea_set_panel_feat_te - configure TE type, width and frequency
+ * @ctx: gs_panel struct
+ * @is_vrr: true if it's VRR mode
+ * @te_freq: TE frequency
+ * @return: enum gs_panel_tex_opt, fixed or changeable TE
+ *
+ * Description: this function should cache commands only, don't update hw_status.
+ */
+static enum gs_panel_tex_opt rgea_set_panel_feat_te(struct gs_panel *ctx, bool is_vrr, u32 te_freq)
 {
 	struct device *dev = ctx->dev;
+	const unsigned long *feat = ctx->sw_status.feat;
+	enum gs_panel_tex_opt te_opt = TEX_OPT_FIXED;
 
 	if (is_vrr || test_bit(FEAT_EARLY_EXIT, feat)) {
-		ctx->hw_status.te.option = TEX_OPT_FIXED;
 		if (is_vrr && te_freq == 240) {
 			GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x41, 0x51);
 			GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x04, 0xB9);
@@ -519,13 +529,15 @@ static void rgea_set_panel_feat_te(struct gs_panel *ctx, unsigned long *feat, u3
 			GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x02, 0x02, 0x07, 0x02, 0x02, 0x07);
 		}
 	} else {
-		ctx->hw_status.te.option = TEX_OPT_CHANGEABLE;
+		te_opt = TEX_OPT_CHANGEABLE;
 		GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x44, 0x51);
 		GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x04, 0xB9);
 		GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x81, 0xE0, 0x02, 0x81, 0xE0, 0x02);
 		GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x0D, 0xB9);
 		GS_DCS_BUF_ADD_CMD(dev, 0xB9, 0x02, 0x02, 0x07, 0x02, 0x02, 0x07);
 	}
+
+	return te_opt;
 }
 
 static void rgea_set_panel_feat_manual_mode_fi(struct gs_panel *ctx, u32 vrefresh, bool enabled)
@@ -568,9 +580,10 @@ static void rgea_set_panel_feat_manual_mode_fi(struct gs_panel *ctx, u32 vrefres
 	dev_info(ctx->dev, "%s: manual mode fi %s\n", __func__, enabled ? "enabled" : "disabled");
 }
 
-static void rgea_set_panel_feat_early_exit(struct gs_panel *ctx, unsigned long *feat, u32 te_freq)
+static void rgea_set_panel_feat_early_exit(struct gs_panel *ctx, u32 te_freq)
 {
 	struct device *dev = ctx->dev;
+	const unsigned long *feat = ctx->sw_status.feat;
 	u8 val;
 
 	if (!test_bit(FEAT_EARLY_EXIT, feat))
@@ -582,10 +595,10 @@ static void rgea_set_panel_feat_early_exit(struct gs_panel *ctx, unsigned long *
 	GS_DCS_BUF_ADD_CMD(dev, 0xBD, val);
 }
 
-static void rgea_set_panel_feat_frequency(struct gs_panel *ctx, unsigned long *feat, u32 vrefresh,
-					  u32 idle_vrefresh, bool is_vrr)
+static void rgea_set_panel_feat_frequency(struct gs_panel *ctx, u32 vrefresh)
 {
 	struct device *dev = ctx->dev;
+	const unsigned long *feat = ctx->sw_status.feat;
 	u8 val;
 
 	/* auto mode */
@@ -633,6 +646,9 @@ static void rgea_set_panel_feat_frequency(struct gs_panel *ctx, unsigned long *f
  * @enforce: force to write all of registers even if no feature state changes
  *
  * Configure panel features based on the context.
+ * Note: rgea_set_panel_feat_xxx() should cache commands only while
+ *       rgea_set_panel_feat() aggregates and sends the commands, and update
+ *       hw_status. DO NOT update them in rgea_set_panel_feat_xxx().
  */
 static void rgea_set_panel_feat(struct gs_panel *ctx, const struct gs_panel_mode *pmode,
 				bool enforce)
@@ -641,11 +657,13 @@ static void rgea_set_panel_feat(struct gs_panel *ctx, const struct gs_panel_mode
 	struct gs_panel_status *sw_status = &ctx->sw_status;
 	struct gs_panel_status *hw_status = &ctx->hw_status;
 	unsigned long *feat = sw_status->feat;
+	enum irc_mode irc_mode = sw_status->irc_mode;
 	u32 idle_vrefresh = sw_status->idle_vrefresh;
 	u32 vrefresh = drm_mode_vrefresh(&pmode->mode);
 	u32 te_freq = gs_drm_mode_te_freq(&pmode->mode);
 	bool is_vrr = gs_is_vrr_mode(pmode);
-	bool irc_mode_changed;
+	bool irc_mode_changed, idle_vrefresh_changed, vrefresh_changed, te_freq_changed;
+	char trace_msg[64];
 	DECLARE_BITMAP(changed_feat, FEAT_MAX);
 
 	/* Override settings if vrr */
@@ -660,45 +678,51 @@ static void rgea_set_panel_feat(struct gs_panel *ctx, const struct gs_panel_mode
 	if (enforce) {
 		bitmap_fill(changed_feat, FEAT_MAX);
 		irc_mode_changed = true;
+		idle_vrefresh_changed = true;
+		vrefresh_changed = true;
+		te_freq_changed = true;
 	} else {
 		bitmap_xor(changed_feat, feat, hw_status->feat, FEAT_MAX);
-		irc_mode_changed = (sw_status->irc_mode != hw_status->irc_mode);
+		irc_mode_changed = (irc_mode != hw_status->irc_mode);
+		idle_vrefresh_changed = (idle_vrefresh != hw_status->idle_vrefresh);
+		vrefresh_changed = (vrefresh != hw_status->vrefresh);
+		te_freq_changed = (te_freq != hw_status->te.freq_hz);
+		if (bitmap_empty(changed_feat, FEAT_MAX) && !vrefresh_changed &&
+		    !idle_vrefresh_changed && !te_freq_changed && !irc_mode_changed) {
+			dev_dbg(dev, "no changes to panel features, skip update\n");
+			return;
+		}
 	}
 
-	/* If no changes, skip update */
-	if (!enforce && bitmap_empty(changed_feat, FEAT_MAX) &&
-		idle_vrefresh == hw_status->idle_vrefresh &&
-		vrefresh == hw_status->vrefresh &&
-		te_freq == hw_status->te.freq_hz &&
-		!irc_mode_changed) {
-		dev_dbg(dev, "%s: no changes, skip update\n", __func__);
-		return;
-	}
-
-	dev_dbg(dev, "hbm=%u irc=%u h_pwm=%u vrr=%u fi=%u@a,%u@m ee=%u rr=%u-%u:%u\n",
-		test_bit(FEAT_HBM, feat), sw_status->irc_mode, test_bit(FEAT_PWM_HIGH, feat),
-		is_vrr, test_bit(FEAT_FRAME_AUTO, feat), test_bit(FEAT_FRAME_MANUAL_FI, feat),
-		test_bit(FEAT_EARLY_EXIT, feat), idle_vrefresh ?: vrefresh,
-		drm_mode_vrefresh(&pmode->mode), te_freq);
+	snprintf(trace_msg, sizeof(trace_msg),
+		 "feat: hbm=%u irc=%u h_pwm=%u fi=%u@a,%u@m ee=%u rr=%3u-%3u@%3u",
+		 test_bit(FEAT_HBM, feat), irc_mode, test_bit(FEAT_PWM_HIGH, feat),
+		 test_bit(FEAT_FRAME_AUTO, feat), test_bit(FEAT_FRAME_MANUAL_FI, feat),
+		 test_bit(FEAT_EARLY_EXIT, feat), idle_vrefresh ? idle_vrefresh : vrefresh,
+		 drm_mode_vrefresh(&pmode->mode), te_freq);
+	dev_dbg(dev, "%s\n", trace_msg);
 
 	/* Trace start */
-	PANEL_ATRACE_BEGIN(__func__);
+	PANEL_ATRACE_BEGIN(trace_msg);
 	GS_DCS_BUF_ADD_CMDLIST(dev, test_key_enable);
 
 	sw_status->te.freq_hz = te_freq;
-	if (test_bit(FEAT_EARLY_EXIT, changed_feat) || hw_status->te.freq_hz != te_freq)
-		rgea_set_panel_feat_te(ctx, feat, te_freq, is_vrr);
+	if (test_bit(FEAT_EARLY_EXIT, changed_feat) || te_freq_changed)
+		hw_status->te.option = rgea_set_panel_feat_te(ctx, is_vrr, te_freq);
 
-	if (test_bit(FEAT_EARLY_EXIT, changed_feat))
-		rgea_set_panel_feat_early_exit(ctx, feat, te_freq);
+	if (test_bit(FEAT_EARLY_EXIT, changed_feat) || vrefresh_changed || te_freq_changed)
+		rgea_set_panel_feat_early_exit(ctx, te_freq);
 
 	if (test_bit(FEAT_FRAME_MANUAL_FI, changed_feat))
 		rgea_set_panel_feat_manual_mode_fi(ctx, vrefresh, test_bit(FEAT_FRAME_MANUAL_FI, feat));
 
-	rgea_set_panel_feat_frequency(ctx, feat, vrefresh, idle_vrefresh, is_vrr);
+	if (test_bit(FEAT_FRAME_AUTO, changed_feat) || test_bit(FEAT_PWM_HIGH, changed_feat) ||
+	    idle_vrefresh_changed || vrefresh_changed)
+		rgea_set_panel_feat_frequency(ctx, vrefresh);
+
 	GS_DCS_BUF_ADD_CMDLIST(dev, panel_update);
 	GS_DCS_BUF_ADD_CMDLIST_AND_FLUSH(dev, test_key_disable);
-	PANEL_ATRACE_END(__func__);
+	PANEL_ATRACE_END(trace_msg);
 	/* Trace end */
 
 	hw_status->vrefresh = vrefresh;
@@ -1316,6 +1340,7 @@ static int rgea_disable(struct drm_panel *panel)
 
 	/* panel register state gets reset after disabling hardware */
 	bitmap_clear(ctx->hw_status.feat, 0, FEAT_MAX);
+	set_bit(FEAT_EARLY_EXIT, ctx->hw_status.feat);
 	ctx->hw_status.vrefresh = 60;
 	ctx->sw_status.te.freq_hz = 60;
 	ctx->hw_status.te.freq_hz = 60;
@@ -1393,16 +1418,21 @@ static int rgea_detect_fault(struct gs_panel *ctx)
 
 	PANEL_ATRACE_BEGIN(__func__);
 	GS_DCS_BUF_ADD_CMDLIST_AND_FLUSH(dev, test_key_enable);
-	ret = mipi_dsi_dcs_read(dsi, ERR_FG_ADDR, buf, ERR_FG_LEN);
 
+	bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
+	ret = mipi_dsi_dcs_read(dsi, ERR_FG_ADDR, buf, ERR_FG_LEN);
 	if (ret != ERR_FG_LEN) {
-		dev_warn(dev, "Error reading ERR_FG (%pe)\n", ERR_PTR(ret));
+		ctx->ddic_read_fail_cnt++;
+		dev_warn(dev, "Error reading ERR_FG (%pe), cnt=%d\n",
+			ERR_PTR(ret), ctx->ddic_read_fail_cnt);
+		if (ctx->ddic_read_fail_cnt >= MAX_DDIC_READ_FAIL_CNT)
+			set_bit(GS_PANEL_ERR_DSI_READ_FAILURE, ctx->panel_errors);
 		goto end;
 	} else {
 		dev_dbg(dev, "ERR_FG: %02x %02x\n", buf[0], buf[1]);
+		ctx->ddic_read_fail_cnt = 0;
 	}
 
-	bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
 	if (buf[1] & ERR_FG_VLIN1_ERR)
 		set_bit(GS_PANEL_ERR_VLIN1, ctx->panel_errors);
 	if (buf[1] & ERR_FG_DSI_ERR) {
@@ -1596,8 +1626,7 @@ const struct gs_panel_desc google_rgea = {
 	.default_dsi_hs_clk_mbps = MIPI_DSI_FREQ_DEFAULT,
 	.reset_timing_ms = { 1, 1, 10 },
 	.fault_detect_interval_ms = 5000,
-	.panel_errors_mask = ~(BIT(GS_PANEL_ERR_DSI_SOT) | BIT(GS_PANEL_ERR_DSI_SOT_SYNC) |
-		BIT(GS_PANEL_ERR_DSI_HS_RX_TIMEOUT)), /* Peripheral timeout */
+	.panel_errors_mask = BIT(GS_PANEL_ERR_DSI_READ_FAILURE),
 };
 
 static const struct of_device_id gs_panel_of_match[] = {

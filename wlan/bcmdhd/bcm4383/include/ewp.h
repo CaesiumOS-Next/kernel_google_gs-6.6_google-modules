@@ -3,7 +3,7 @@
  *
  * Software-specific EWP definitions shared between device and host side
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -63,7 +63,8 @@ typedef struct ewp_hw_blk {
 #define EWP_HW_INFO_VER 0x1u
 typedef struct ewp_hw_info {
 	uint8 version;
-	uint8 pad[3];
+	uint8 pad[2];
+	uint8 pcie_hwhdr_rev;
 	ewp_hw_blk_t init_log_buf;			// Info about buffer to save init logs
 	ewp_hw_blk_t mod_dump_buf;			// Info about buffer to save module dumps
 	ewp_hw_blk_t reg_dump_buf;			// Info about uffer to save reg dumps
@@ -127,12 +128,30 @@ typedef struct etb_block {
 	uint32 rwp;					// TMC read/write pointer
 } etb_block_t;
 
-#define EWP_ETB_CONFIG_INFO_VER 0x1u
-typedef struct etb_config_info {
+#define EWP_ETB_CONFIG_INFO_VER_1 0x1u
+typedef struct etb_config_info_cmn {
 	uint8 version;					// Version
 	uint8 num_etb;					// Max no. of ETBs
 	uint8 pad[2];
+} etb_config_info_cmn_t;
+
+typedef struct etb_config_info_v1 {
+	etb_config_info_cmn_t hdr;
 	etb_block_t eblk[];				// Individual ETB blocks
-} etb_config_info_t;
+} etb_config_info_v1_t;
+
+#define EWP_ETB_CONFIG_INFO_VER_2 0x2u
+typedef struct etb_config_info_v2 {
+	etb_config_info_cmn_t hdr;
+	uint32	ram_start_pa;				// RAM start address
+	uint32	rom_start_pa;				// ROM start address
+	uint32	aslr_ram_offset;			// ASLR RAM offset
+	uint32	aslr_rom_offset;			// ASLR ROM offset
+	uint32	ram_size;				// RAM Size
+	uint32	rom_size;				// ROM size
+	etb_block_t eblk[];				// Individual ETB blocks
+} etb_config_info_v2_t;
+#define EWP_ETB_CONFIG_INFO_VER	EWP_ETB_CONFIG_INFO_VER_2
+typedef etb_config_info_v2_t etb_config_info_t;
 
 #endif	/* _bcmpcie_h_ */

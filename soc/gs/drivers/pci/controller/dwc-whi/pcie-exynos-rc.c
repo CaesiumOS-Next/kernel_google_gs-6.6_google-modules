@@ -2237,6 +2237,14 @@ void exynos_pcie_rc_print_msi_register(int ch_num)
 	struct dw_pcie_rp *pp = &pci->pp;
 	u32 val;
 	int ctrl;
+	unsigned long flags;
+
+	spin_lock_irqsave(&exynos_pcie->conf_lock, flags);
+	if (exynos_pcie->state != STATE_LINK_UP) {
+		dev_err(pci->dev, "[%s] Link is not up\n", __func__);
+		spin_unlock_irqrestore(&exynos_pcie->conf_lock, flags);
+		return;
+	}
 
 	val = exynos_elbi_read(exynos_pcie, PCIE_IRQ2_EN);
 	dev_info(pci->dev, "PCIE_IRQ2_EN: 0x%x\n", val);
@@ -2261,6 +2269,7 @@ void exynos_pcie_rc_print_msi_register(int ch_num)
 				(ctrl * MSI_REG_CTRL_BLOCK_SIZE), 4, &val);
 		dev_info(pci->dev, "PCIE_MSI_INTR0_STATUS: 0x%x\n", val);
 	}
+	spin_unlock_irqrestore(&exynos_pcie->conf_lock, flags);
 }
 EXPORT_SYMBOL_GPL(exynos_pcie_rc_print_msi_register);
 
@@ -4956,6 +4965,12 @@ skip_sep_request_irq:
 			dev_err(&pdev->dev, "Failed to set DMA mask to 32-bit.");
 		}
 	}
+
+	/*
+	 * we would like to skip the dw_pcie_wait_for_link() in the dw_pcie_host_init()
+	 * so we setup this bit to avoid waiting for the link up during the enumeration.
+	 */
+	dw_pcie_cap_set(pci, USE_LINKUP_IRQ);
 
 	ret = dw_pcie_host_init(pp);
 	if (ret) {

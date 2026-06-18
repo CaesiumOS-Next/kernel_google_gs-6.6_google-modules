@@ -1,7 +1,7 @@
 /*
  * HND generic pktq operation primitives
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -1340,13 +1340,13 @@ static spktq_suppress_cbinfo_t *spktq_suppress_cbinfo_get(void);
 
 /* Accessor function forced into RAM to keep spktq_cbinfo out of shdat */
 static spktq_cbinfo_t*
-BCMRAMFN(spktq_cbinfo_get)(void)
+BCMACCESSOR_RAMFN(spktq_cbinfo_get)(void)
 {
 	return (&spktq_cbinfo);
 }
 
 static spktq_suppress_cbinfo_t*
-BCMRAMFN(spktq_suppress_cbinfo_get)(void)
+BCMACCESSOR_RAMFN(spktq_suppress_cbinfo_get)(void)
 {
 	return (&spktq_suppress_cbinfo);
 }

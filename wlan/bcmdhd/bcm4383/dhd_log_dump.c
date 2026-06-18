@@ -1,7 +1,7 @@
 /*
  * log_dump - debugability support for dumping logs to file
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -30,6 +30,7 @@
 #include <dngl_stats.h>
 #include <dhd_linux_priv.h>
 #include <dhd_linux_wq.h>
+#include <dhd_bus.h>
 #include <dhd.h>
 #include <dhd_proto.h>
 #include <dhd_log_dump.h>
@@ -84,7 +85,7 @@ int logdump_rtt_enable = FALSE;
 
 int logdump_prsrv_tailsize = DHD_LOG_DUMP_MAX_TAIL_FLUSH_SIZE;
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifdef DHD_DMPD
 static dhd_debug_dump_ring_entry_t dhd_debug_dump_ring_map[] = {
 	{LOG_DUMP_SECTION_TIMESTAMP, DEBUG_DUMP_RING1_ID},
 	{LOG_DUMP_SECTION_ECNTRS, DEBUG_DUMP_RING2_ID},
@@ -98,7 +99,7 @@ static dhd_debug_dump_ring_entry_t dhd_debug_dump_ring_map[] = {
 	{LOG_DUMP_SECTION_COOKIE, DEBUG_DUMP_RING1_ID},
 	{LOG_DUMP_SECTION_RING, DEBUG_DUMP_RING1_ID},
 };
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* DHD_DMPD */
 
 #ifdef CUSTOMER_HW4_DEBUG
 static void
@@ -259,7 +260,6 @@ dhd_log_dump(void *handle, void *event_info, u8 event)
 	dhd_info_t *dhd = handle;
 	log_dump_type_t *type = (log_dump_type_t *)event_info;
 	dhd_pub_t *dhdp = NULL;
-	BCM_REFERENCE(dhdp);
 
 	if (!dhd || !type) {
 		DHD_ERROR(("%s: dhd/type is NULL\n", __FUNCTION__));
@@ -273,15 +273,15 @@ dhd_log_dump(void *handle, void *event_info, u8 event)
 
 	dhdp = &dhd->pub;
 
-#ifdef WL_CFG80211
+#if defined(WL_CFG80211)
 	if (!dhd_query_bus_erros(dhdp) && !dhd_os_proto_is_blocked(dhdp)) {
 		/* flush the fw preserve logs */
-		wl_flush_fw_log_buffer(dhd_linux_get_primary_netdev(&dhd->pub),
+		wl_flush_fw_log_buffer(dhd_linux_get_primary_netdev(dhdp),
 			FW_LOGSET_MASK_ALL);
 	} else {
 		DHD_PRINT(("%s: skip flush fw log buffer\n", __FUNCTION__));
 	}
-#endif
+#endif /* WL_CFG80211 */
 
 	/* there are currently 3 possible contexts from which
 	 * log dump can be scheduled -
@@ -294,13 +294,13 @@ dhd_log_dump(void *handle, void *event_info, u8 event)
 	 * before calling do_dhd_log_dump().
 	 */
 	DHD_PRINT(("%s: calling log dump.. \n", __FUNCTION__));
-	dhd_os_logdump_lock(&dhd->pub);
-	DHD_OS_WAKE_LOCK(&dhd->pub);
-	if (do_dhd_log_dump(&dhd->pub, type) != BCME_OK) {
+	dhd_os_logdump_lock(dhdp);
+	DHD_OS_WAKE_LOCK(dhdp);
+	if (do_dhd_log_dump(dhdp, type) != BCME_OK) {
 		DHD_ERROR(("%s: writing debug dump to the file failed\n", __FUNCTION__));
 	}
-	DHD_OS_WAKE_UNLOCK(&dhd->pub);
-	dhd_os_logdump_unlock(&dhd->pub);
+	DHD_OS_WAKE_UNLOCK(dhdp);
+	dhd_os_logdump_unlock(dhdp);
 }
 
 void dhd_schedule_log_dump(dhd_pub_t *dhdp, void *type)
@@ -1690,6 +1690,7 @@ do_dhd_log_dump(dhd_pub_t *dhdp, log_dump_type_t *type)
 #endif /* DHD_DUMP_PCIE_RINGS */
 
 #ifdef DHD_MAP_PKTID_LOGGING
+	dhdp->enable_pktid_log_dump = TRUE;
 	/* dump pktid data for dma map */
 	len = dhd_get_pktid_map_logging_len(NULL, dhdp, TRUE);
 	if (len) {
@@ -2315,6 +2316,7 @@ dhd_log_dump_trigger(dhd_pub_t *dhdp, int subcmd)
 	 */
 #if (defined(BCMPCIE) || defined(BCMSDIO)) && defined(DHD_FW_COREDUMP)
 	if (dhdp->memdump_enabled) {
+		dhdp->usr_trig_dmp = TRUE;
 		dhdp->memdump_type = DUMP_TYPE_BY_SYSDUMP;
 		dhd_bus_mem_dump(dhdp);
 	}
@@ -2325,7 +2327,7 @@ exit:
 	return;
 }
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifdef DHD_DMPD
 int dhd_debug_dump_get_ring_num(int sec_type)
 {
 	int idx = 0;
@@ -2337,7 +2339,7 @@ int dhd_debug_dump_get_ring_num(int sec_type)
 	}
 	return idx;
 }
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* DHD_DMPD */
 
 int
 dhd_dump_debug_ring(dhd_pub_t *dhdp, void *ring_ptr, const void *user_buf,
@@ -2350,9 +2352,9 @@ dhd_dump_debug_ring(dhd_pub_t *dhdp, void *ring_ptr, const void *user_buf,
 	unsigned long flags = 0;
 	int ret = 0;
 	dhd_dbg_ring_t *ring = (dhd_dbg_ring_t *)ring_ptr;
-#ifndef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifndef DHD_DMPD
 	int pos = 0;
-#endif /* !DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* !DHD_DMPD */
 	int fpos_sechdr = 0;
 	int tot_len = 0;
 	char *tmp_buf = NULL;
@@ -2366,7 +2368,7 @@ dhd_dump_debug_ring(dhd_pub_t *dhdp, void *ring_ptr, const void *user_buf,
 	BCM_REFERENCE(tmp_buf);
 	BCM_REFERENCE(ring_num);
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifdef DHD_DMPD
 	if (!dhdp || !ring || !sec_hdr || !text_hdr) {
 		return BCME_BADARG;
 	}
@@ -2381,7 +2383,7 @@ dhd_dump_debug_ring(dhd_pub_t *dhdp, void *ring_ptr, const void *user_buf,
 	if (!dhdp || !ring || !user_buf || !sec_hdr || !text_hdr) {
 		return BCME_BADARG;
 	}
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* DHD_DMPD */
 	/* do not allow further writes to the ring
 	 * till we flush it
 	 */
@@ -2389,7 +2391,7 @@ dhd_dump_debug_ring(dhd_pub_t *dhdp, void *ring_ptr, const void *user_buf,
 	ring->state = RING_SUSPEND;
 	DHD_DBG_RING_UNLOCK(ring->lock, flags);
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifdef DHD_DMPD
 	ring_num = dhd_debug_dump_get_ring_num(sec_type);
 	dhd_export_debug_data(text_hdr, NULL, NULL, strlen(text_hdr), &ring_num);
 
@@ -2444,7 +2446,7 @@ dhd_dump_debug_ring(dhd_pub_t *dhdp, void *ring_ptr, const void *user_buf,
 	} else {
 		DHD_ERROR(("%s: No concise buffer available !\n", __FUNCTION__));
 	}
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* DHD_DMPD */
 
 	DHD_DBG_RING_LOCK(ring->lock, flags);
 	ring->state = RING_ACTIVE;
@@ -2787,11 +2789,11 @@ dhd_log_dump_cookie_to_file(dhd_pub_t *dhdp, void *fp, const void *user_buf, uns
 	int ret = BCME_ERROR;
 	uint32 buf_size = MAX_LOGUDMP_COOKIE_CNT * LOGDUMP_COOKIE_STR_LEN;
 
-#ifdef DHD_DEBUGABILITY_DEBUG_DUMP
+#ifdef DHD_DMPD
 	if (!dhdp || !dhdp->logdump_cookie) {
 #else
 	if (!dhdp || !dhdp->logdump_cookie || (!fp && !user_buf) || !f_pos) {
-#endif /* DHD_DEBUGABILITY_DEBUG_DUMP */
+#endif /* DHD_DMPD */
 		DHD_ERROR(("%s At least one ptr is NULL "
 			"dhdp = %p cookie %p fp = %p f_pos = %p\n",
 			__FUNCTION__, dhdp, dhdp?dhdp->logdump_cookie:NULL, fp, f_pos));

@@ -24,6 +24,7 @@
 #define WONDER_2GHZ_CHANNEL 6
 #define WONDER_5GHZ_CHANNEL 149
 #define WONDER_JP_CHANNEL 44
+#define WONDER_IBSS_MODE_MTU_SIZE 8000
 
 
 struct wonder_data {

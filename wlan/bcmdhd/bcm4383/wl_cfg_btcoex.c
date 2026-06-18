@@ -1,7 +1,7 @@
 /*
  * Linux cfg80211 driver - Dongle Host Driver (DHD) related
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -528,7 +528,7 @@ int wl_cfg80211_set_btcoex_dhcp(struct net_device *dev, dhd_pub_t *dhd, char *co
 
 				/* Disable PM mode during dhpc session */
 #ifndef OEM_ANDROID
-				dev_wlc_ioctl(dev, WLC_SET_PM, &pm_local, sizeof(pm_local));
+				wl_cfg80211_set_pm(dev, pm_local, PM_STATE_BTCOEX);
 #endif
 				/* Disable BLE Scan Grant during DHCP session */
 				wldev_iovar_setint(dev, "btc_ble_grants", 0);
@@ -593,7 +593,7 @@ int wl_cfg80211_set_btcoex_dhcp(struct net_device *dev, dhd_pub_t *dhd, char *co
 
 		/* Restoring PM mode */
 #ifndef OEM_ANDROID
-		dev_wlc_ioctl(dev, WLC_SET_PM, &pm, sizeof(pm));
+		wl_cfg80211_set_pm(dev, pm, PM_STATE_BTCOEX);
 #endif
 
 		/* Stop any bt timer because DHCP session is done */

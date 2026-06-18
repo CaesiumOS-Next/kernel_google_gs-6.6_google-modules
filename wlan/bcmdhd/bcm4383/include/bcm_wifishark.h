@@ -1,7 +1,7 @@
 /*
  * Common header file for DHD logger and bcmwifi_dissector component.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -30,10 +30,12 @@
  */
 #define ETHER_TYPE_BROADCOM 0x888A
 
-typedef struct log_msgbuf_ring {
+#include <packed_section_start.h>
+typedef BWL_PRE_PACKED_STRUCT struct log_msgbuf_ring {
 	uint16 hlrd, hlwr; /* Host local rd wr */
 	uint16 hdrd, hdwr; /* Host DMA rd wr */
-} __attribute__ ((packed)) log_msgbuf_ring_t;
+} BWL_POST_PACKED_STRUCT log_msgbuf_ring_t;
+#include <packed_section_end.h>
 
 /*
  * DHD PCIe IPC(msgbuf) log format:-
@@ -48,7 +50,8 @@ typedef struct log_msgbuf_ring {
  *  3. But one of driver state payload or buf should be logged.
  */
 #define BCMWIFI_PCIESTATE_OPCODE 0xa5a5000000000007u /* 8 bytes */
-typedef struct driver_state_info {
+#include <packed_section_start.h>
+typedef BWL_PRE_PACKED_STRUCT struct driver_state_info {
 	uint8 version;
 	uint8 length;
 	uint16 max_eventbufpost;
@@ -64,14 +67,17 @@ typedef struct driver_state_info {
 	uint32 hostready_count; /* Number of hostready issued */
 	ulong host_irq_enable_count;
 	ulong host_irq_disable_count;
-} __attribute__ ((packed)) driver_state_t;
+} BWL_POST_PACKED_STRUCT driver_state_t;
+#include <packed_section_end.h>
 
 #define PCIE_STATE_DRIVERSTATE 0x00000001u /* driver_state_t payload present or not */
 
-typedef struct bcmpcie_msg_type_header_info {
+#include <packed_section_start.h>
+typedef BWL_PRE_PACKED_STRUCT struct bcmpcie_msg_type_header_info {
 	uint64 opcode; /* BCM_PCIESTATE_OPCODE */
 	uint32 flags; /* flags */
-} __attribute__ ((packed)) log_bcmpcie_msg_type_t;
+} BWL_POST_PACKED_STRUCT log_bcmpcie_msg_type_t;
+#include <packed_section_end.h>
 
 /*
  * Unlike the IPC enum bcmpcie_msg_type_t which start with 1, this is meant for logger.
@@ -88,9 +94,11 @@ typedef struct bcmpcie_msg_type_header_info {
  * | bcm_eventlogs_header_info |  event log buf     |
  * --------------------------------------------------
  */
-typedef struct bcm_eventlogs_header_info {
+#include <packed_section_start.h>
+typedef BWL_PRE_PACKED_STRUCT struct bcm_eventlogs_header_info {
 	uint64 opcode; /* BCMWIFI_EVENTLOGS_OPCODE */
 	uint32 header;
-} __attribute__ ((packed)) log_bcm_eventlogs_t;
+} BWL_POST_PACKED_STRUCT log_bcm_eventlogs_t;
+#include <packed_section_end.h>
 
 #endif /* _BCM_WIFISHARK_H_ */

@@ -74,7 +74,7 @@
 #define DEVICE_ID_PCIE_APOLLO_FPGA	0x1CF2
 
 MODULE_DESCRIPTION("PowerVR testchip framework driver");
-MODULE_IMPORT_NS(DMA_BUF);
+MODULE_IMPORT_NS(COMPAT_DMA_BUF);
 
 static int tc_core_clock;
 module_param(tc_core_clock, int, 0444);
@@ -144,10 +144,6 @@ static struct debugfs_blob_wrapper tc_debugfs_rogue_name_blobs[] = {
 	[ODIN_VERSION_ORION] = {
 		.data = "orion",
 		.size = sizeof("orion") - 1,
-	},
-	[ODIN_VERSION_VALI] = {
-		.data = "vali",
-		.size = sizeof("vali") - 1,
 	},
 };
 
@@ -334,7 +330,7 @@ int setup_io_region(struct pci_dev *pdev,
 #if defined(TC_FAKE_INTERRUPTS)
 void tc_irq_fake_wrapper(struct timer_list *t)
 {
-	struct tc_device *tc = from_timer(tc, t, timer);
+	struct tc_device *tc = timer_container_of(tc, t, timer);
 
 	if (tc->odin)
 		odin_irq_handler(0, tc);
@@ -352,8 +348,6 @@ static int tc_register_pdp_device(struct tc_device *tc)
 
 	if (tc->odin || tc->orion)
 		err = odin_register_pdp_device(tc);
-	else if (tc->vali)
-		err = 0;
 	else
 		err = apollo_register_pdp_device(tc);
 
@@ -364,7 +358,7 @@ static int tc_register_ext_device(struct tc_device *tc)
 {
 	int err = 0;
 
-	if (tc->odin || tc->orion || tc->vali)
+	if (tc->odin || tc->orion)
 		err = odin_register_ext_device(tc);
 	else
 		err = apollo_register_ext_device(tc);
@@ -456,8 +450,6 @@ static int tc_init(struct pci_dev *pdev, const struct pci_device_id *id)
 			tc->odin = true;
 		else if (pdev->device == DEVICE_ID_ORION)
 			tc->orion = true;
-		else if (pdev->device == DEVICE_ID_VALI)
-			tc->vali = true;
 
 		dev_info(&pdev->dev, "%s detected\n", odin_tc_name(tc));
 
@@ -559,7 +551,6 @@ static struct pci_device_id tc_pci_tbl[] = {
 	{ PCI_VDEVICE(POWERVR, DEVICE_ID_PCIE_APOLLO_FPGA) },
 	{ PCI_VDEVICE(POWERVR, DEVICE_ID_TBA) },
 	{ PCI_VDEVICE(ODIN, DEVICE_ID_ODIN) },
-	{ PCI_VDEVICE(ODIN, DEVICE_ID_VALI) },
 	{ PCI_VDEVICE(ODIN, DEVICE_ID_ORION) },
 	{ },
 };
@@ -654,7 +645,7 @@ int tc_enable_interrupt(struct device *dev, int interrupt_id)
 	}
 	tc->interrupt_handlers[interrupt_id].enabled = true;
 
-	if (tc->odin || tc->orion || tc->vali)
+	if (tc->odin || tc->orion)
 		odin_enable_interrupt_register(tc, interrupt_id);
 	else
 		apollo_enable_interrupt_register(tc, interrupt_id);
@@ -691,7 +682,7 @@ int tc_disable_interrupt(struct device *dev, int interrupt_id)
 	}
 	tc->interrupt_handlers[interrupt_id].enabled = false;
 
-	if (tc->odin || tc->orion || tc->vali)
+	if (tc->odin || tc->orion)
 		odin_disable_interrupt_register(tc, interrupt_id);
 	else
 		apollo_disable_interrupt_register(tc, interrupt_id);
@@ -713,7 +704,7 @@ int tc_sys_info(struct device *dev, u32 *tmp, u32 *pll)
 		goto err_out;
 	}
 
-	if (tc->odin || tc->orion || tc->vali)
+	if (tc->odin || tc->orion)
 		err = odin_sys_info(tc, tmp, pll);
 	else
 		err = apollo_sys_info(tc, tmp, pll);
@@ -756,7 +747,7 @@ int tc_sys_strings(struct device *dev,
 		goto err_out;
 	}
 
-	if (tc->odin || tc->orion || tc->vali) {
+	if (tc->odin || tc->orion) {
 		err = odin_sys_strings(tc,
 				 str_fpga_rev, size_fpga_rev,
 				 str_tcf_core_rev, size_tcf_core_rev,

@@ -2,7 +2,7 @@
  * Misc utility routines for accessing chip-specific features
  * of the BOOKER NCI (non coherent interconnect) based Broadcom chips.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -35,7 +35,7 @@ void nci_uninit(void *nci);
 uint32 nci_scan(si_t *sih);
 void nci_dump_erom(void *nci);
 void nci_cores_to_ai_cores(si_t *sih);
-void* nci_init(si_t *sih, chipcregs_t *cc, uint bustype);
+void *nci_init(si_t *sih, chipcregs_t *cc, uint bustype);
 volatile void *nci_setcore(si_t *sih, uint coreid, uint coreunit);
 volatile void *nci_setcoreidx(const si_t *sih, uint coreidx);
 volatile void *nci_setcoreidx_wrap(const si_t *sih, uint coreidx, uint wrapper_idx);
@@ -83,7 +83,7 @@ void nci_viewall(si_t *sih, bool verbose);
 #endif /* BCMDBG */
 uint32 nci_get_nth_wrapper(const si_t *sih, int32 wrap_pos);
 uint32 nci_get_axi_addr(const si_t *sih, uint32 *size, uint32 baidx);
-uint32* nci_wrapper_dump_binary_one(const si_info_t *sii, uint32 *p32, uint32 wrap_ba);
+uint32 *nci_wrapper_dump_binary_one(const si_info_t *sii, uint32 *p32, uint32 wrap_ba);
 uint32 nci_wrapper_dump_binary(const si_t *sih, uchar *p);
 uint32 nci_wrapper_dump_last_timeout(const si_t *sih, uint32 *error,
 	uint32 *core, uint32 *ba, uchar *p);
@@ -97,7 +97,7 @@ bool nci_ignore_errlog(const si_info_t *sii, const aidmp_t *ai,
 void nci_wrapper_get_last_error(const si_t *sih, uint32 *error_status, uint32 *core, uint32 *lo,
 	uint32 *hi, uint32 *id);
 uint32 nci_get_axi_timeout_reg(void);
-uint32* nci_wrapper_dump_binary_one(const si_info_t *sii, uint32 *p32, uint32 wrap_ba);
+uint32 *nci_wrapper_dump_binary_one(const si_info_t *sii, uint32 *p32, uint32 wrap_ba);
 uint32 nci_wrapper_dump_binary(const si_t *sih, uchar *p);
 uint32 nci_wrapper_dump_last_timeout(const si_t *sih, uint32 *error,
 	uint32 *core, uint32 *ba, uchar *p);
@@ -110,5 +110,7 @@ void nci_update_backplane_timeouts(const si_t *sih, bool enable, uint32 idm_time
 uint32 nci_get_coreaddr(const si_t *sih, uint coreidx);
 bool nci_is_backplane_logs_enabled(void);
 uint32 nci_get_curmap(struct nci_info *nci_info, uint coreidx);
+int nci_get_amni_slave_cfg_cc_reg_addrs(si_t *sih, volatile uint32 **idm_errstatus_addr,
+	volatile uint32 **idm_intstatus_addr);
 #endif /* SOCI_NCI_BUS */
 #endif /* _NCI_H */

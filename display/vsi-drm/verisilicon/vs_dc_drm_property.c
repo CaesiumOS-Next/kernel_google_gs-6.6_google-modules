@@ -373,7 +373,12 @@ bool vs_dc_check_crtc_std_property(struct vs_dc *dc, u8 hw_id, struct drm_crtc *
 {
 	struct drm_crtc_state *state = crtc->state;
 	const struct dc_hw_display *hw_display = vs_dc_hw_get_display(&dc->hw, hw_id);
-	const struct vs_display_info *display_info = hw_display->info;
+	const struct vs_display_info *display_info = NULL;
+
+	if (!hw_display)
+		return true;
+
+	display_info = hw_display->info;
 
 	/* check ctm */
 	if (state->ctm) {
@@ -496,6 +501,7 @@ static const void *__get_drm_property(struct device *dev,
 					      state->proto->type);
 				break;
 			}
+			break;
 		}
 	}
 	if (out_len)

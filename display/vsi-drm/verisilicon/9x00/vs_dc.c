@@ -218,6 +218,25 @@ end:
 	return 0;
 }
 
+static void _vs_dc_mark_first_frame_not_triggered(struct vs_dc *dc)
+{
+	int i;
+	int display_num;
+
+	if (dc->hw.info)
+		display_num = dc->hw.info->display_num;
+	else
+		display_num = DC_DISPLAY_NUM;
+
+	for (i = 0; i < display_num; ++i) {
+		struct vs_crtc *vs_crtc = dc->crtc[i];
+
+		if (!vs_crtc)
+			continue;
+		vs_crtc->first_frame_trigger = false;
+	}
+}
+
 static int vs_dc_res_enable(struct device *dev)
 {
 	int ret = 0;
@@ -230,7 +249,9 @@ static int vs_dc_res_enable(struct device *dev)
 	if (dc->enabled)
 		goto end;
 
+	dc_hw_force_be_csr_read(&dc->hw);
 	dc_hw_enable_clock_domain_iso(&dc->hw, false);
+	_vs_dc_mark_first_frame_not_triggered(dc);
 
 	dc->enabled = true;
 
@@ -438,85 +459,6 @@ static int dc_init(struct device *dev)
 	return ret;
 }
 
-#if IS_ENABLED(CONFIG_DEBUG_FS)
-static void vs_dc_get_plane_crc(struct vs_dc *dc, struct vs_plane *plane)
-{
-	struct device *dev = dc->hw.dev;
-	struct vs_plane_state *plane_state = to_vs_plane_state(plane->base.state);
-	struct vs_plane_info *plane_info;
-	struct dc_hw_crc crc;
-
-	dc_hw_get_plane_crc_config(&dc->hw, plane->id, &crc);
-	plane_state->crc.enable = crc.enable;
-	if (!crc.enable)
-		return;
-
-	plane_info = get_plane_info(plane->id, dc->hw.info);
-	if (!plane_info) {
-		dev_err(dev, "%s: invalid plane id: %d\n", __func__, plane->id);
-		return;
-	}
-
-	if (!plane_info->crc) {
-		dev_info(dev, "%s: vs_plane[%u] does not support crc.\n", __func__, plane->id);
-		return;
-	}
-
-	plane_state->crc.pos = crc.pos;
-	memcpy(&plane_state->crc.seed, &crc.seed, sizeof(crc.seed));
-
-	dc_hw_get_plane_crc(&dc->hw, plane->id, &crc);
-	memcpy(&plane_state->crc.result, &crc.result, sizeof(crc.result));
-}
-
-static void vs_dc_get_display_crc(struct vs_dc *dc, struct drm_crtc *crtc)
-{
-	struct device *dev = dc->hw.dev;
-	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
-	struct drm_crtc_state *state = vs_crtc->base.state;
-	struct vs_crtc_state *crtc_state = to_vs_crtc_state(state);
-	struct vs_display_info *display_info;
-	u8 hw_id;
-
-	struct dc_hw_disp_crc crc;
-
-	display_info = (struct vs_display_info *)&dc->hw.info->displays[vs_crtc->id];
-	if (!display_info) {
-		dev_err(dev, "%s: Invalid vs_crtc index.\n", __func__);
-		return;
-	}
-
-	if (!display_info->crc) {
-		dev_info(dev, "%s: vs_crtc[%u] does not support crc.\n", __func__, vs_crtc->id);
-		return;
-	}
-
-	if (crtc_state->crc.pos > VS_DISP_CRC_OFIFO_OUT) {
-		dev_err(dev, "%s: Invalid crc pos.\n", __func__);
-		return;
-	}
-
-	hw_id = display_info->id;
-	dc_hw_get_display_crc_config(&dc->hw, hw_id, &crc);
-
-	crtc_state->crc.enable = crc.enable;
-	if (!crc.enable)
-		return;
-
-	crtc_state->crc.pos = crc.pos;
-	memcpy(&crtc_state->crc.seed, &crc.seed, sizeof(crc.seed));
-
-	dc_hw_get_display_crc(&dc->hw, hw_id, &crc);
-
-	memcpy(&crtc_state->crc.result, &crc.result, sizeof(crc.result));
-
-	if (crtc_state->crc.pos == VS_DISP_CRC_OFIFO_OUT)
-		vs_crtc_set_last_crc(drm_crtc_index(crtc), crtc_state->crc.result[1]);
-	else
-		vs_crtc_set_last_crc(drm_crtc_index(crtc), crtc_state->crc.result[0]);
-}
-#endif /* CONFIG_DEBUG_FS */
-
 static void vs_dc_update_irq_status(struct vs_dc *dc, int irq_num, int irq_idx)
 {
 	ssize_t ret_masked, ret_pending;
@@ -602,9 +544,18 @@ static void _vs_dc_handle_underrun(struct vs_dc *dc, struct vs_crtc *vs_crtc,
 
 static void _vs_dc_handle_frame_start(struct vs_dc *dc, struct vs_crtc *vs_crtc, u8 display_id)
 {
+	struct device *dev = dc->hw.dev;
 	struct dc_hw_display *display = &dc->hw.display[display_id];
 	u8 output_id = display->output_id;
 	pid_t pid = vs_crtc->trace_pid;
+
+	/* Detect the issue where there is a frame start interrupt but no SOF trigger */
+	if (!vs_crtc->first_frame_trigger) {
+		dev_warn(dev,
+			 "invalid frame start event, display_id:%d output_id:%d frames_pending:%d\n",
+			 display_id, output_id, atomic_read(&vs_crtc->frames_pending));
+		return;
+	}
 
 	vs_dc_underrun_workaround(dc, &vs_crtc->base, display, display_id, true);
 	DPU_ATRACE_INT_PID_FMT(1, pid, "frame_tx[%d]", output_id);
@@ -859,6 +810,7 @@ static void vs_dc_handle_interrupts(struct vs_dc *dc)
 		for (i = 0; i < dc_info->wb_num; i++) {
 			struct vs_writeback_connector *vs_wb_conn = dc->writeback[i];
 			bool wb_stall_support = wb_info[vs_wb_conn->id].wb_stall;
+
 			if ((BIT(vs_wb_conn->id) & status.wb_datalost) && !wb_stall_support) {
 				DPU_ATRACE_INSTANT_PID_FMT(current->tgid, "wb_datalost[%d]", i);
 				dev_warn(dev, "%s: data lost intr for wb%d\n", __func__,
@@ -887,36 +839,6 @@ static void vs_dc_handle_interrupts(struct vs_dc *dc)
 
 	if (status.reset_status[BE_SW_RESET])
 		dc->hw.reset_status[BE_SW_RESET] = status.reset_status[BE_SW_RESET];
-
-#if IS_ENABLED(CONFIG_DEBUG_FS)
-	for (i = 0; i < dc_info->plane_num; i++) {
-		u8 plane_mask = 0;
-		u8 temp = 0;
-
-		display = &dc->hw.display[display_id];
-		output_id = display->output_id;
-		output_mask = BIT(output_id);
-
-		if (i >= dc_info->plane_fe0_num) {
-			temp = i - dc_info->plane_fe0_num;
-			plane_mask = BIT(dc_info->planes_fe1[temp].id);
-		} else {
-			plane_mask = BIT(dc_info->planes_fe0[i].id);
-		}
-
-		if ((output_mask & status.output_frm_done) || (plane_mask & status.layer_frm_done))
-			vs_dc_get_plane_crc(dc, dc->planes[i].base);
-	}
-
-	for (i = 0; i < dc_info->display_num; i++) {
-		display = &dc->hw.display[display_id];
-		output_id = display->output_id;
-		output_mask = BIT(output_id);
-
-		if (dc->hw.display[i].crc.enable && (output_mask & status.output_frm_done))
-			vs_dc_get_display_crc(dc, &dc->crtc[i]->base);
-	}
-#endif
 }
 
 static irqreturn_t dc_isr(int irq, void *data)
@@ -1125,8 +1047,8 @@ int vs_get_hist_bins_query_ioctl(struct drm_device *dev, void *data, struct drm_
 
 		spin_lock_irqsave(&hw->histogram_slock, flags);
 
-		/* check if enabled or in the flight */
-		if (!hw_hist_rgb->enable || hw_hist_rgb->dirty) {
+		/* check if enabled */
+		if (!hw_hist_rgb->enable) {
 			spin_unlock_irqrestore(&hw->histogram_slock, flags);
 			return -ENOTCONN;
 		}
@@ -1440,8 +1362,10 @@ static int dc_parse_dt(struct device *dev, struct vs_dc *dc)
 	of_property_read_u32(dev->of_node, "min-core-clk",
 			     &dc->min_qos_config.core_clk);
 
-	if (of_property_read_u32(dev->of_node, "boost-fabrt-freq", &dc->boost_fabrt_freq))
-		dc->boost_fabrt_freq = 0;
+	if (of_property_read_u32(dev->of_node, "boost-fab-freq", &dc->boost_fab_freq))
+		dc->boost_fab_freq = 0;
+	if (of_property_read_u32(dev->of_node, "boost-core-freq", &dc->boost_core_freq))
+		dc->boost_core_freq = 0;
 
 	return 0;
 }
@@ -1561,13 +1485,20 @@ static int dc_probe(struct platform_device *pdev)
 		goto detach_pd;
 	}
 
-	/* optional configuration, it's for boosting FABRT freq */
-	dc->fabrt_devfreq = devfreq_get_devfreq_by_phandle(dev, "fabrtfreq", 0);
-	if (IS_ERR(dc->fabrt_devfreq)) {
-		ret = PTR_ERR(dc->fabrt_devfreq);
-		dev_dbg(dev, "failed to get fabrt_devfreq source, ret=%d\n", ret);
-		/* clear fabrt_devfreq for disabling the boosting mechanism */
-		dc->fabrt_devfreq = 0;
+	/* optional configuration, it's for boosting FAB freq */
+	dc->boost_fab_devfreq = devfreq_get_devfreq_by_phandle(dev, "fabrtfreq", 0);
+	if (IS_ERR(dc->boost_fab_devfreq)) {
+		ret = PTR_ERR(dc->boost_fab_devfreq);
+		dev_dbg(dev, "failed to get fabrt_devfreq source for boosting, ret=%d\n", ret);
+		dc->boost_fab_devfreq = NULL;
+	}
+
+	/* optional configuration, it's for boosting core freq */
+	dc->boost_core_devfreq = devfreq_get_devfreq_by_phandle(dev, "devfreq", 0);
+	if (IS_ERR(dc->boost_core_devfreq)) {
+		ret = PTR_ERR(dc->boost_core_devfreq);
+		dev_dbg(dev, "failed to get core_devfreq source for boosting, ret=%d\n", ret);
+		dc->boost_core_devfreq = NULL;
 	}
 
 	ret = dc_parse_dt(dev, dc);

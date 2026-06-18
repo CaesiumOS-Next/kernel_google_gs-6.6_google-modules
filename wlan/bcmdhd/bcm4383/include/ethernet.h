@@ -1,7 +1,7 @@
 /*
  * From FreeBSD 2.2.7: Fundamental constants relating to ethernet.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -83,6 +83,7 @@
 #define ETHER_TYPE_WAI		0x88b4		/* WAI */
 #define ETHER_TYPE_89_0D	0x890d		/* 89-0d frame for TDLS */
 #define ETHER_TYPE_RRB		ETHER_TYPE_89_0D  /* RRB 802.11r 2008 */
+#define ETHER_TYPE_BRCM_AIRIQ	0x88b7		/* Broadcom Corp.AiriQ */
 
 #define ETHER_TYPE_PPP_SES	0x8864		/* PPPoE Session */
 

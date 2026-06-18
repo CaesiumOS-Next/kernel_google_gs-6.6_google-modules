@@ -88,7 +88,16 @@ struct dvfs_helper {
 
 static const struct dvfs_info *dvfs_info_g;
 
-static struct dvfs_domain_info *dvfs_helper_get_domain(const char *name)
+struct dvfs_domain_info *dvfs_helper_get_domain_from_id(u16 domain_idx)
+{
+	if (domain_idx > dvfs_info_g->num_domains - 1)
+		return NULL;
+
+	return &dvfs_info_g->domains[domain_idx];
+}
+EXPORT_SYMBOL_GPL(dvfs_helper_get_domain_from_id);
+
+struct dvfs_domain_info *dvfs_helper_get_domain(const char *name)
 {
 	if (!name)
 		return NULL;

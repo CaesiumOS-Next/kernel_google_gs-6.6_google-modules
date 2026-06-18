@@ -26,7 +26,6 @@
 #include <perf/core/gs_perf_mon.h>
 #endif
 #include "../../../../../devfreq/google/governor_memlat.h"
-#include "sched_events.h"
 #include "sched_priv.h"
 
 #if IS_ENABLED(CONFIG_PIXEL_EM)
@@ -651,14 +650,21 @@ static inline void get_scaling_target_and_freq(int cpu, unsigned int next_freq, 
 static inline void scale_freq(int target_cpu, unsigned int scaling_freq, enum constraint_type type)
 {
 	struct sugov_cpu *sg_cpu = &per_cpu(sugov_cpu, target_cpu);
+	struct sugov_policy *sg_policy;
+	struct cpufreq_policy *policy;
 
 	if (unlikely(!sg_cpu || !sg_cpu->sg_policy))
 		return;
 
+	sg_policy = sg_cpu->sg_policy;
+	policy = sg_policy->policy;
+
 	if (type == CONSTRAINT_MIN)
-		sg_cpu->sg_policy->scaling_freq_min = scaling_freq;
+		sg_policy->scaling_freq_min = max(policy->min, scaling_freq);
 	else if (type == CONSTRAINT_MAX)
-		sg_cpu->sg_policy->scaling_freq_max = scaling_freq;
+		sg_policy->scaling_freq_max = min(policy->max, scaling_freq);
+
+	sg_policy->scaling_freq_min = min(sg_policy->scaling_freq_min, sg_policy->scaling_freq_max);
 }
 
 static void scaling_freq_update(struct sugov_policy *sg_policy)
@@ -1779,8 +1785,9 @@ static ssize_t limit_frequency_store(struct gov_attr_set *attr_set, const char *
 	struct sugov_tunables *tunables = to_sugov_tunables(attr_set);
 	struct sugov_policy *sg_policy;
 	struct cpufreq_policy *policy;
-	int index;
 	unsigned int val;
+	unsigned int ceiled_freq = UINT_MAX;
+	int i;
 
 	if (kstrtouint(buf, 0, &val))
 		return -EINVAL;
@@ -1791,8 +1798,30 @@ static ssize_t limit_frequency_store(struct gov_attr_set *attr_set, const char *
 
 	policy = sg_policy->policy;
 
-	index = cpufreq_frequency_table_target(policy, val, CPUFREQ_RELATION_H);
-	tunables->limit_frequency = policy->freq_table[index].frequency;
+	/*
+	 * Manually find the lowest frequency that is greater than or equal to the
+	 * requested value (Least Upper Bound).
+	 */
+	for (i = 0; policy->freq_table[i].frequency != CPUFREQ_TABLE_END; i++) {
+		unsigned int current_freq = policy->freq_table[i].frequency;
+
+		if (current_freq == CPUFREQ_ENTRY_INVALID)
+			continue;
+
+		/* Find the best candidate for the ceiling */
+		if (current_freq >= val && current_freq < ceiled_freq)
+			ceiled_freq = current_freq;
+	}
+
+    /*
+     * Corner case: If the requested value 'val' is higher than any
+     * available frequency, no ceiling is found (ceiled_freq remains UINT_MAX).
+     * In this situation, we must select the highest available frequency.
+     */
+	if (unlikely(ceiled_freq == UINT_MAX))
+		ceiled_freq = policy->cpuinfo.max_freq;
+
+	tunables->limit_frequency = ceiled_freq;
 
 	return count;
 }

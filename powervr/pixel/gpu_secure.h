@@ -4,8 +4,8 @@
 
 
 #include <linux/completion.h>
-#include <pvrsrvkm/pvrsrv_device.h>
-#include <pvrsrvkm/physheap_config.h>
+#include <pvrsrvkm/services/server/include/pvrsrv_device.h>
+#include <pvrsrvkm/services/include/physheap_config.h>
 
 struct pixel_gpu_device;
 struct tipc_chan;

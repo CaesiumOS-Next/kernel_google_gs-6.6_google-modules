@@ -1,7 +1,7 @@
 /*
  * Common function shared by Linux WEXT, cfg80211 and p2p drivers
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -150,5 +150,8 @@ int wldev_get_band(struct net_device *dev, uint *pband);
 int wldev_get_mode(struct net_device *dev, uint8 *pband, uint8 caplen);
 int wldev_get_datarate(struct net_device *dev, int *datarate);
 int wldev_set_band(struct net_device *dev, uint band);
+int wldev_get_lpcap_enab(struct net_device *dev, wl_lpcap_iov_uint_data_t *enab_data);
+int wldev_set_lpcap_enab(struct net_device *dev, wl_lpcap_iov_uint_data_t *enab_data);
+int wldev_is_lpcap_active(struct net_device *dev);
 
 #endif /* __WLDEV_COMMON_H__ */

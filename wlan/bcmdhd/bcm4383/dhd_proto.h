@@ -4,7 +4,7 @@
  * Provides type definitions and function prototypes used to link the
  * DHD OS, bus, and protocol modules.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -33,6 +33,9 @@
 #include <dhd_flowring.h>
 #endif
 
+#ifdef DHD_FWTRACE
+#include <bcm_fwtrace.h>
+#endif
 
 #define DEFAULT_IOCTL_RESP_TIMEOUT	(5 * 1000) /* 5 seconds */
 #ifndef IOCTL_RESP_TIMEOUT
@@ -135,7 +138,7 @@ extern int dhd_prot_dump_extended_trap(dhd_pub_t *dhdp, struct bcmstrbuf *b, boo
 /* Update local copy of dongle statistics */
 extern void dhd_prot_dstats(dhd_pub_t *dhdp);
 
-extern int dhd_ioctl(dhd_pub_t *dhd_pub, dhd_ioctl_t *ioc, void *buf, uint buflen);
+extern int dhd_ioctl(dhd_pub_t *dhd_pub, int ifidx, dhd_ioctl_t *ioc, void *buf, uint buflen);
 
 extern int dhd_preinit_ioctls(dhd_pub_t *dhd);
 
@@ -165,6 +168,7 @@ extern int dhd_post_dummy_msg(dhd_pub_t *dhd);
 extern int dhdmsgbuf_lpbk_req(dhd_pub_t *dhd, uint len);
 extern void dhd_prot_rx_dataoffset(dhd_pub_t *dhd, uint32 offset);
 extern int dhd_prot_txdata(dhd_pub_t *dhd, void *p, uint8 ifidx);
+extern void dhd_msgbuf_rxbuf_post(dhd_pub_t *dhd, bool use_rsv_pktid);
 extern void dhd_prot_schedule_aggregate_h2d_db(dhd_pub_t *dhd, uint16 flow_id);
 extern int dhdmsgbuf_dmaxfer_req(dhd_pub_t *dhd,
 	uint len, uint srcdelay, uint destdelay, uint d11_lpbk, uint core_num,
@@ -189,6 +193,7 @@ extern uint32 dhd_prot_metadatalen_get(dhd_pub_t *dhd, bool rx);
 extern void dhd_prot_print_flow_ring(dhd_pub_t *dhd, void *msgbuf_flow_info, bool h2d,
 	struct bcmstrbuf *strbuf, const char *fmt);
 extern void dhd_prot_print_info(dhd_pub_t *dhd, struct bcmstrbuf *strbuf);
+extern void dhd_prot_print_traces(dhd_pub_t *dhd, struct bcmstrbuf *strbuf);
 extern bool dhd_prot_update_txflowring(dhd_pub_t *dhdp, uint16 flow_id, void *msgring_info);
 extern void dhd_prot_txdata_write_flush(dhd_pub_t *dhd, uint16 flow_id);
 extern uint32 dhd_prot_txp_threshold(dhd_pub_t *dhd, bool set, uint32 val);

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
 
-load("@kleaf//build/kernel/kleaf:kernel.bzl", "checkpatch", "kernel_module")
+load("@kleaf//build/kernel/kleaf:kernel.bzl", "kernel_module")
+load("//private/devices/google/common/kleaf:checkpatch.bzl", "checkpatch_strict")
 
-checkpatch(
+checkpatch_strict(
     name = "checkpatch",
-    checkpatch_pl = "//common:scripts/checkpatch.pl",
 )
 
 filegroup(

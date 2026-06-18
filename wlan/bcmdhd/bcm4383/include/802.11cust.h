@@ -1,7 +1,7 @@
 /*
  * Customer specific types and constants relating to 802.11
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -33,11 +33,6 @@
 
 /* Action frame type for vendor specific action frames */
 #define	VS_AF_TYPE	221
-
-#ifdef IBSS_RMC
-/* customer's OUI */
-#define RMC_PROP_OUI		"\x00\x16\x32"
-#endif
 
 /* WFA definitions for LEGACY P2P */
 #ifdef WL_LEGACY_P2P

@@ -1,7 +1,7 @@
 /*
  * Broadcom Dongle Host Driver (DHD), common DHD core.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -233,6 +233,8 @@ char fw_path2[MOD_PARAM_PATHLEN];
 extern bool softap_enabled;
 #endif
 
+extern uint dhd_rx_hc_rts_cts_noucast_interval;
+
 #ifdef REPORT_FATAL_TIMEOUTS
 #ifdef BCMINTERNAL
 /*
@@ -382,6 +384,11 @@ static int dhd_extract_mac_addr(char *msg, struct ether_addr *mac_addr, char **e
 static int dhd_process_dscp_policy_get_cmds(dhd_pub_t *dhd, char *msg, uint msglen);
 static int dhd_process_dscp_policy_set_cmds(dhd_pub_t *dhd, char *msg, uint msglen);
 #endif /* defined(DHD_DSCP_POLICY) */
+
+/* Set and Get handlers for packet llc config */
+static int dhd_process_llc_header_get_set_cmds(dhd_pub_t *dhd, int ifidx, char *msg, uint msglen,
+	char *obuf, uint o_len, bool is_set);
+int pattern_atoh_len(char *src, char *dst, int len);
 
 #ifdef DHD_LOGLEVEL
 void dhd_loglevel_set(dhd_loglevel_data_t *);
@@ -563,6 +570,8 @@ enum {
 #ifdef DHD_PKT_LOGGING
 	IOV_CLEAR_PKTLOG,
 #endif /* DHD_PKT_LOGGING */
+	IOV_PKT_LLC_ENABLE,
+	IOV_PKT_LLC_PAYLOAD,
 	IOV_LAST
 };
 
@@ -759,6 +768,9 @@ const bcm_iovar_t dhd_iovars[] = {
 #ifdef DHD_PKT_LOGGING
 	{"clear_pktlog", IOV_CLEAR_PKTLOG, 0, 0, IOVT_UINT32, 0},
 #endif /* DHD_PKT_LOGGING */
+	{"pkt_llc_enable", IOV_PKT_LLC_ENABLE, 0, 0, IOVT_BOOL, 0},
+	{"pkt_llc_payload", IOV_PKT_LLC_PAYLOAD, 0, 0, IOVT_BUFFER, 0},
+
 	/* --- add new iovars *ABOVE* this line --- */
 	{NULL, 0, 0, 0, 0, 0 }
 };
@@ -873,13 +885,31 @@ dhd_query_bus_erros(dhd_pub_t *dhdp)
 	}
 
 	if (dhd_bus_get_cto(dhdp)) {
-		DHD_ERROR_RLMT(("%s : CTO Recovery reported, cannot proceed\n",
+		DHD_ERROR_RLMT(("%s : CTO reported, cannot proceed\n",
 			__FUNCTION__));
 		ret = TRUE;
 	}
 
 	if (dhd_bus_get_read_shm(dhdp)) {
 		DHD_ERROR_RLMT(("%s : read shm check failed, cannot proceed\n",
+			__FUNCTION__));
+		ret = TRUE;
+	}
+
+	if (dhd_bus_is_wl_bp_down(dhdp)) {
+		DHD_ERROR_RLMT(("%s : wlan backplane down, cannot proceed\n",
+			__FUNCTION__));
+		ret = TRUE;
+	}
+
+	if (dhd_bus_is_common_bp_down(dhdp)) {
+		DHD_ERROR_RLMT(("%s : common backplane down, cannot proceed\n",
+			__FUNCTION__));
+		ret = TRUE;
+	}
+
+	if (dhd_bus_is_coex_bp_down(dhdp)) {
+		DHD_ERROR_RLMT(("%s : coex cpu backplane down, cannot proceed\n",
 			__FUNCTION__));
 		ret = TRUE;
 	}
@@ -936,8 +966,10 @@ dhd_coredump_t dhd_coredump_types[] = {
 	{DHD_COREDUMP_TYPE_SSSRDUMP_SAQM_BEFORE, 0, NULL},
 	{DHD_COREDUMP_TYPE_SSSRDUMP_SAQM_AFTER, 0, NULL},
 #ifdef COEX_CPU
-	{DHD_COREDUMP_TYPE_COEX_DUMP, 0, NULL}
+	{DHD_COREDUMP_TYPE_COEX_DUMP, 0, NULL},
 #endif /* COEX_CPU */
+	{DHD_COREDUMP_TYPE_SSSRDUMP_CMN, 0, NULL},
+	{DHD_COREDUMP_TYPE_SSSRDUMP_SRCB, 0, NULL}
 };
 #endif /* DHD_SSSR_DUMP */
 
@@ -968,7 +1000,7 @@ dhd_coredump_mempool_init(dhd_pub_t *dhdp)
 
 #ifdef COEX_CPU
 	coex_dump_size = sizeof(coex_combined_fw_t) + sizeof(coex_fw_tlv_t) * 2u +
-		COEX_ITCM_SIZE + COEX_DTCM_SIZE;
+		dhdp->coex_mem_length;
 	coredump_size += TLV_TYPE_LENGTH_SIZE;
 	coredump_size += coex_dump_size;
 #endif /* COEX_CPU */
@@ -1032,7 +1064,8 @@ int dhd_coredump_fill_section(uint8 **dst_buf, int dst_rlen, char *src_buf, int 
 }
 
 /* reconstruct dump memory with socram and sssr dump as TLV format */
-int dhd_collect_coredump(dhd_pub_t *dhdp, dhd_dump_t *dump, bool collect_sssr)
+int dhd_collect_coredump(dhd_pub_t *dhdp, dhd_dump_t *dump,
+	bool collect_sssr, bool collect_fis)
 {
 	uint8 *buf_ptr = dhdp->coredump_mem;
 	int buf_len = dhdp->coredump_len;
@@ -1045,19 +1078,25 @@ int dhd_collect_coredump(dhd_pub_t *dhdp, dhd_dump_t *dump, bool collect_sssr)
 	int ret = 0, i = 0;
 	int total_size = 0;
 	uint32 *magic;
+#ifdef DHD_SSSR_DUMP
 	uint8 num_d11cores = 0;
 	int saqm_buf_len = dhd_sssr_saqm_buf_size(dhdp);
+	int cmn_buf_len = dhd_sssr_cmn_buf_size(dhdp);
+	int srcb_buf_len = dhd_sssr_srcb_buf_size(dhdp);
+#endif /* DHD_SSSR_DUMP */
 
 	if (!buf_ptr) {
 		DHD_ERROR(("coredump mem is not allocated\n"));
 		return BCME_ERROR;
 	}
 
+#ifdef DHD_SSSR_DUMP
 	/* check for SSSR dump support */
-	if (!sssr_enab || !collect_sssr) {
-		DHD_ERROR(("SSSR is not enabled or not collected yet.\n"));
+	if ((!sssr_enab && !dhd_is_fis_enabled()) || (!collect_sssr && !collect_fis)) {
+		DHD_ERROR(("SSSR/FIS is not enabled or not collected yet.\n"));
 		return BCME_UNSUPPORTED;
 	}
+#endif /* DHD_SSSR_DUMP */
 
 	/* SOCRAM dump start with magic code */
 	magic = (uint32 *)buf_ptr;
@@ -1073,6 +1112,7 @@ int dhd_collect_coredump(dhd_pub_t *dhdp, dhd_dump_t *dump, bool collect_sssr)
 		return ret;
 	}
 
+#ifdef DHD_SSSR_DUMP
 	/* DHD_COREDUMP_TYPE_SSSR_ */
 	num_d11cores = dhd_d11_slices_num_get(dhdp);
 	for (i = 0; i < num_d11cores + 1; i++) {
@@ -1110,6 +1150,25 @@ int dhd_collect_coredump(dhd_pub_t *dhdp, dhd_dump_t *dump, bool collect_sssr)
 	if (ret) {
 		return ret;
 	}
+
+	if (dhdp->sssr_dump_mode == SSSR_DUMP_MODE_FIS) {
+		/* SSSR CMN BUF */
+		ret = dhd_coredump_fill_section(&buf_ptr, buf_len - total_size,
+				(char *)dhdp->sssr_cmn_buf_after, cmn_buf_len,
+				DHD_COREDUMP_TYPE_SSSRDUMP_CMN, &total_size);
+		if (ret) {
+			return ret;
+		}
+
+		/* SSSR SRCB BUF */
+		ret = dhd_coredump_fill_section(&buf_ptr, buf_len - total_size,
+				(char *)dhdp->sssr_srcb_buf_after, srcb_buf_len,
+				DHD_COREDUMP_TYPE_SSSRDUMP_SRCB, &total_size);
+		if (ret) {
+			return ret;
+		}
+	}
+#endif /* DHD_SSSR_DUMP */
 
 #ifdef DHD_SDTC_ETB_DUMP
 	ret = dhd_coredump_fill_section(&buf_ptr, buf_len - total_size,
@@ -1346,6 +1405,10 @@ dhd_dump_txrx_stats(dhd_pub_t *dhdp, struct bcmstrbuf *strbuf)
 	bcm_bprintf(strbuf, "tx_cso_cnt %lu tx_nocso_cnt %lu\n",
 		dhdp->tx_cso_cnt, dhdp->tx_nocso_cnt);
 #endif
+#ifdef DHD_VALIDATE_PKT_ADDRESS
+	bcm_bprintf(strbuf, "badaddr_pkt_cnt %lu \n", dhdp->badaddr_pkt_cnt);
+#endif /* DHD_VALIDATE_PKT_ADDRESS */
+
 	/* ----------------------------------------------------- */
 
 	/* RX Stats -- add any Rx counters in this section only */
@@ -2512,6 +2575,61 @@ dhd_extract_mac_addr(char *msg, struct ether_addr *mac_addr, char **end_ptr)
 
 #endif /* defined(DHD_MESH) */
 
+/*
+ * Handler for the dhd -i <interface> pkt_llc_payload 0x......
+ * for add llc header on interface.
+ */
+static int
+dhd_process_llc_header_get_set_cmds(dhd_pub_t *dhd, int ifidx, char *msg, uint msglen,
+	char *obuf, uint o_len, bool is_set)
+{
+	int ret_val = BCME_OK;
+	struct dhd_if *ifp;
+	uint8 llc_hdr[32] = {0};
+	int len = 0;
+
+	ifp = dhd_get_ifp(dhd, ifidx);
+
+	if (!ifp) {
+		ret_val = BCME_ERROR;
+		goto done;
+	}
+	msg[msglen - 1] = '\0';
+	DHD_PRINT(("Handle LLC Hdr msg len  = %d\n", msglen));
+	if (is_set) {
+		len = pattern_atoh_len(msg, llc_hdr, DHD_MAX_PKT_LLC_PAYLOAD_LEN);
+
+		if (len == -1) {
+			DHD_ERROR(("Rejecting: LLC HDR len = %d\n", len));
+			ret_val = BCME_ERROR;
+			goto done;
+		}
+		if (ifp->llc_hdr) {
+			MFREE(dhd->osh, ifp->llc_hdr, ifp->llc_hdr_len);
+			ifp->llc_hdr_len = 0;
+		}
+		ifp->llc_hdr = MALLOCZ(dhd->osh, len);
+		if (ifp->llc_hdr) {
+			ret_val = memcpy_s((char *)ifp->llc_hdr, len, llc_hdr, len);
+			ifp->llc_hdr_len = len;
+			prhex("LLC HDR: ", (char *) ifp->llc_hdr, len);
+		} else {
+			ret_val = BCME_NOMEM;
+		}
+	} else {
+		if (ifp->llc_hdr) {
+			unsigned int *plen = (unsigned int *)obuf;
+			*plen = ifp->llc_hdr_len;
+			ret_val = memcpy_s(((char *)obuf + sizeof(unsigned int)), o_len,
+				(char *)ifp->llc_hdr, ifp->llc_hdr_len);
+		} else {
+			ret_val = BCME_ERROR;
+		}
+	}
+done:
+	return ret_val;
+}
+
 #if defined(DHD_DSCP_POLICY)
 
 /*
@@ -2659,7 +2777,7 @@ done:
 #endif /* DHD_DSCP_POLICY */
 
 static int
-dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, uint32 actionid, const char *name,
+dhd_doiovar(dhd_pub_t *dhd_pub, int ifidx, const bcm_iovar_t *vi, uint32 actionid, const char *name,
 	void *params, int plen, void *arg, uint len, int val_size)
 {
 	int bcmerror = 0;
@@ -2812,6 +2930,7 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, uint32 actionid, const ch
 		dhd_pub->tx_realloc = 0;
 		dhd_pub->wd_dpc_sched = 0;
 		dhd_pub->tx_big_packets = 0;
+		dhd_pub->tx_errors = 0;
 #ifdef TX_CSO
 		dhd_pub->tx_cso_cnt = dhd_pub->tx_nocso_cnt = 0;
 #endif
@@ -3970,6 +4089,57 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, uint32 actionid, const ch
 		break;
 	}
 
+	case IOV_SVAL(IOV_PKT_LLC_ENABLE): {
+		bool bval = *(bool *)arg;
+		struct dhd_if *ifp;
+		if (bval != 0 && bval != 1)
+			bcmerror = BCME_ERROR;
+		else {
+			ifp = dhd_get_ifp(dhd_pub, ifidx);
+
+			if (!ifp) {
+				bcmerror = BCME_ERROR;
+				break;
+			}
+			ifp->llc_enabled = bval;
+		}
+		if (bcmerror == BCME_OK) {
+			dhd_update_ifp_headroom_len(dhd_pub, ifp);
+		}
+		break;
+	}
+
+	case IOV_GVAL(IOV_PKT_LLC_ENABLE): {
+		struct dhd_if *ifp;
+
+		ifp = dhd_get_ifp(dhd_pub, ifidx);
+
+		if (!ifp) {
+			bcmerror = BCME_ERROR;
+			break;
+		}
+		int_val = ifp->llc_enabled;
+		(void)memcpy_s(arg, val_size, &int_val, sizeof(int_val));
+		break;
+	}
+
+	case IOV_SVAL(IOV_PKT_LLC_PAYLOAD): {
+		bcmerror = dhd_process_llc_header_get_set_cmds(dhd_pub, ifidx,
+			params, plen, arg, len, TRUE);
+		if (bcmerror == BCME_OK) {
+			struct dhd_if *ifp;
+			ifp = dhd_get_ifp(dhd_pub, ifidx);
+			dhd_update_ifp_headroom_len(dhd_pub, ifp);
+		}
+		break;
+	}
+
+	case IOV_GVAL(IOV_PKT_LLC_PAYLOAD): {
+		bcmerror = dhd_process_llc_header_get_set_cmds(dhd_pub, ifidx,
+			params, plen, arg, len, FALSE);
+		break;
+	}
+
 #if defined(DHD_MESH)
 	case IOV_SVAL(IOV_MESH):
 		bcmerror = dhd_process_mesh_set_cmds(dhd_pub, arg, len);
@@ -4212,7 +4382,7 @@ dhd_prec_drop_pkts(dhd_pub_t *dhdp, struct pktq *pq, int prec, f_droppkt_t fn)
 }
 
 static int
-dhd_iovar_op(dhd_pub_t *dhd_pub, const char *name,
+dhd_iovar_op(dhd_pub_t *dhd_pub, int ifidx, const char *name,
 	void *params, int plen, void *arg, uint len, bool set)
 {
 	int bcmerror = 0;
@@ -4257,14 +4427,15 @@ dhd_iovar_op(dhd_pub_t *dhd_pub, const char *name,
 
 	actionid = set ? IOV_SVAL(vi->varid) : IOV_GVAL(vi->varid);
 
-	bcmerror = dhd_doiovar(dhd_pub, vi, actionid, name, params, plen, arg, len, val_size);
+	bcmerror = dhd_doiovar(dhd_pub, ifidx, vi, actionid, name, params, plen,
+		arg, len, val_size);
 
 exit:
 	return bcmerror;
 }
 
 int
-dhd_ioctl(dhd_pub_t *dhd_pub, dhd_ioctl_t *ioc, void *buf, uint buflen)
+dhd_ioctl(dhd_pub_t *dhd_pub, int ifidx, dhd_ioctl_t *ioc, void *buf, uint buflen)
 {
 	int bcmerror = 0;
 	unsigned long flags;
@@ -4334,13 +4505,14 @@ dhd_ioctl(dhd_pub_t *dhd_pub, dhd_ioctl_t *ioc, void *buf, uint buflen)
 					bcmstricmp((char *)buf, "pciecfgreg") &&
 					bcmstricmp((char *)buf, "devreset") &&
 					bcmstricmp((char *)buf, "sdio_suspend") &&
-					bcmstricmp((char *)buf, "control_signal")) {
+					bcmstricmp((char *)buf, "control_signal"))
 #else
 				if (bcmstricmp((char *)buf, "pcie_suspend") &&
 				    bcmstricmp((char *)buf, "pciecfgreg") &&
 				    bcmstricmp((char *)buf, "devreset") &&
-				    bcmstricmp((char *)buf, "sdio_suspend")) {
+				    bcmstricmp((char *)buf, "sdio_suspend"))
 #endif /* DHD_EFI */
+				{
 					DHD_ERROR(("%s: bus is in suspend(%d)"
 						"or suspending(0x%x) state\n",
 						__FUNCTION__, dhd_pub->busstate,
@@ -4386,10 +4558,10 @@ dhd_ioctl(dhd_pub_t *dhd_pub, dhd_ioctl_t *ioc, void *buf, uint buflen)
 			arg++, arglen--;
 			/* call with the appropriate arguments */
 			if (ioc->cmd == DHD_GET_VAR) {
-				bcmerror = dhd_iovar_op(dhd_pub, buf, arg, arglen,
+				bcmerror = dhd_iovar_op(dhd_pub, ifidx, buf, arg, arglen,
 						buf, buflen, IOV_GET);
 			} else {
-				bcmerror = dhd_iovar_op(dhd_pub, buf, NULL, 0,
+				bcmerror = dhd_iovar_op(dhd_pub, ifidx, buf, NULL, 0,
 						arg, arglen, IOV_SET);
 			}
 			if (bcmerror != BCME_UNSUPPORTED) {
@@ -4511,6 +4683,9 @@ wl_show_roam_event(dhd_pub_t *dhd_pub, uint status, uint datalen,
 				DHD_EVENT(("MACEVENT: %s, no networks found\n",
 					event_name));
 			}
+		} else if (status == WLC_E_STATUS_NOCHANS) {
+			DHD_EVENT(("MACEVENT: %s, no channel scanned\n",
+				event_name));
 		} else {
 			DHD_EVENT(("MACEVENT: %s, unexpected status %d\n",
 				event_name, (int)status));
@@ -4766,31 +4941,31 @@ wl_show_host_bcn_mute_miti_event(wl_event_msg_t *event, char *data)
 
 	switch (event_data_v1->version) {
 	case WLC_BCN_MUTE_MITI_EVENT_DATA_VER_1: {
-		DHD_EVENT(("MACEVENT: WLC_E_AP_BCN_MUTE event : %d "
-			"Reason code=%d uatbtt count=%d\n", WLC_E_AP_BCN_MUTE,
-			reason, event_data_v1->uatbtt_count));
-		break;
-	}
+			DHD_EVENT(("MACEVENT: WLC_E_AP_BCN_MUTE event : %d "
+				"Reason code=%d uatbtt count=%d\n", WLC_E_AP_BCN_MUTE,
+				reason, event_data_v1->uatbtt_count));
+			break;
+		}
 
 	case WLC_BCN_MUTE_MITI_EVENT_DATA_VER_2:
 	case WLC_BCN_MUTE_MITI_EVENT_DATA_VER_3:
-	{
-		wlc_bcn_mute_miti_event_data_v3_t *event_data_v3;
+		{
+			wlc_bcn_mute_miti_event_data_v3_t *event_data_v3;
 
-		event_data_v3 = (wlc_bcn_mute_miti_event_data_v3_t *)data;
-		DHD_EVENT(("MACEVENT: WLC_E_AP_BCN_MUTE event : %d "
-			"BSSID = %s Reason code=%d status=%d uatbtt count=%d rssi = %d\n",
-			WLC_E_AP_BCN_MUTE, bcm_ether_ntoa(&event_msg->addr, buf),
-			reason, status, event_data_v3->uatbtt_count, event_data_v3->rssi));
+			event_data_v3 = (wlc_bcn_mute_miti_event_data_v3_t *)data;
+			DHD_EVENT(("MACEVENT: WLC_E_AP_BCN_MUTE event : %d "
+				"BSSID = %s Reason code=%d status=%d uatbtt count=%d rssi = %d\n",
+				WLC_E_AP_BCN_MUTE, bcm_ether_ntoa(&event_msg->addr, buf),
+				reason, status, event_data_v3->uatbtt_count, event_data_v3->rssi));
 
-		break;
-	}
+			break;
+		}
 
 	default:
-		DHD_EVENT(("MACEVENT: WLC_E_AP_BCN_MUTE event : %d "
-			"Error: invalid version %d\n", WLC_E_AP_BCN_MUTE,
-			event_data_v1->version));
-		goto exit;
+			DHD_EVENT(("MACEVENT: WLC_E_AP_BCN_MUTE event : %d "
+				"Error: invalid version %d\n", WLC_E_AP_BCN_MUTE,
+				event_data_v1->version));
+			goto exit;
 	}
 
 exit:
@@ -4842,19 +5017,17 @@ wl_show_host_event(dhd_pub_t *dhd_pub, wl_event_msg_t *event, void *event_data,
 		break;
 	case WLC_E_DEAUTH:
 	case WLC_E_DISASSOC:
-		DHD_EVENT(("MACEVENT: %s, MAC %s ifidx %d cfgidx %d\n",
-			event_name, eabuf, ifidx, bsscfgidx));
+		DHD_EVENT(("MACEVENT: %s, MAC %s ifidx %d cfgidx %d reason %d\n",
+			event_name, eabuf, ifidx, bsscfgidx, (int)reason));
 #ifdef REPORT_FATAL_TIMEOUTS
 		dhd_clear_join_error(dhd_pub, WLC_SSID_MASK | WLC_WPA_MASK);
 #endif /* REPORT_FATAL_TIMEOUTS */
 		break;
 
-#ifdef WL_CLIENT_SAE
 	case WLC_E_AUTH_START:
 		DHD_EVENT(("MACEVENT: %s, MAC %s, reason %d ifidx %d cfgidx %d\n", event_name,
 			eabuf, (int)reason, ifidx, bsscfgidx));
 		break;
-#endif /* WL_CLIENT_SAE */
 
 	case WLC_E_BSSID:
 		DHD_EVENT(("MACEVENT: %s, MAC %s, reason %d datalen %d ifidx %d cfgidx %d\n",
@@ -5536,10 +5709,40 @@ wl_show_host_event(dhd_pub_t *dhd_pub, wl_event_msg_t *event, void *event_data,
 			break;
 		}
 #endif /* WL_MLO */
+	case WLC_E_ICM:
+		if (datalen >= sizeof(wl_icm_event_v1_t)) {
+			wl_icm_event_v1_t *info = (wl_icm_event_v1_t *)event_data;
+			DHD_EVENT(("MACEVENT: %s %d, ver:%d reason:%d assoc_status:%d "
+				"ifidx:%d cfgidx:%d\n", event_name, event_type, info->version,
+				(int)info->reason, (int)info->assoc_status, ifidx, bsscfgidx));
+		}
+		break;
 	case WLC_E_AP_BCN_MUTE:
 		{
 			DHD_INFO(("MACEVENT: WLC_E_AP_BCN_MUTE, MAC %s\n", eabuf));
 			wl_show_host_bcn_mute_miti_event(event, event_data);
+			break;
+		}
+	case WLC_E_SCHED_PM:
+		{
+			const char *sched_pm_event_type;
+			wl_sched_pm_event_t *sched_pm_event =
+				(wl_sched_pm_event_t *)event_data;
+			if (sched_pm_event->event_type == WL_SCHED_PM_EVENT_TEARDOWN) {
+				sched_pm_event_type = "TEARDOWN";
+			} else if (sched_pm_event->event_type ==
+					WL_SCHED_PM_EVENT_LEAKY_AP_DETECTION) {
+				sched_pm_event_type = "LEAKY_AP_DETECTION";
+			} else {
+				sched_pm_event_type = "UNKNOWN EVENT TYPE";
+			}
+			DHD_EVENT(("MACEVENT: %s, MAC %s, event_type %s\n",
+				event_name, eabuf, sched_pm_event_type));
+			break;
+		}
+	case WLC_E_CSI_DATA:
+		{
+			DHD_EVENT(("MACEVENT: %s, MAC %s reason:%d\n", event_name, eabuf, reason));
 			break;
 		}
 	default:
@@ -5588,6 +5791,15 @@ hck_id_to_str_t hck_sw_id_to_str[] = {
 	{WL_HC_DD_PHY, "WL_HC_DD_PHY"},
 	{WL_HC_DD_REINIT, "WL_HC_DD_REINIT"},
 	{WL_HC_DD_TXQ_STALL, "WL_HC_DD_TXQ_STALL"},
+	{WL_HC_DD_RX_STALL_V2, "WL_HC_DD_RX_STALL_V2"},
+
+	{WL_HC_DD_SBSS, "WL_HC_DD_SBSS"},
+	{WL_HC_DD_NAN, "WL_HC_DD_NAN"},
+	{WL_HC_DD_CHSW, "WL_HC_DD_CHSW"},
+	{WL_HC_DD_LHL, "WL_HC_DD_LHL"},
+	{WL_HC_DD_RX_STALL_V3, "WL_HC_DD_RX_STALL_V3"},
+	{WL_HC_DD_TX_STALL_V2, "WL_HC_DD_TX_STALL_V2"},
+	{WL_HC_DD_RX_STALL_V4, "WL_HC_DD_RX_STALL_V4"},
 	{0, NULL}
 };
 
@@ -5658,6 +5870,39 @@ dhd_parse_hck_common_sw_event(bcm_xtlv_t *wl_hc)
 				hck_sw_id_to_str);
 	}
 
+}
+
+bool
+dhd_rx_stall_v4(dhd_pub_t *dhdp, bcm_xtlv_t *wl_hc)
+{
+	uint64 cur_tm_ns;
+	wl_rx_hc_info_v4_t *hck_rx_stall_v4;
+
+	hck_rx_stall_v4 = (wl_rx_hc_info_v4_t *)wl_hc;
+
+	/*
+	 * rate limit only BCM_RX_HC_NOUDATA_RXRTS_TXCTS, since the same
+	 * can be notified to host frequently.
+	 */
+	if (ltoh32(hck_rx_stall_v4->reason) == BCM_RX_HC_NOUDATA_RXRTS_TXCTS) {
+
+		if (!dhdp->rx_hc_rts_cts_noucast) {
+			dhdp->rx_hc_rts_cts_noucast = OSL_SYSUPTIME_NS();
+			/* 1st instance, collect socram */
+			return FALSE;
+		}
+		cur_tm_ns = OSL_SYSUPTIME_NS();
+		/* collect socram only after the interval elapse */
+		if ((cur_tm_ns - dhdp->rx_hc_rts_cts_noucast) >
+			(dhd_rx_hc_rts_cts_noucast_interval * NSEC_PER_SEC)) {
+			return FALSE;
+		}
+		/* default do not collect socram for BCM_RX_HC_NOUDATA_RXRTS_TXCTS */
+		return TRUE;
+	} else {
+		/* default collect socram */
+		return FALSE;
+	}
 }
 
 #ifdef SKIP_COREDUMP_PKTDROP_RXHC
@@ -5783,179 +6028,182 @@ dngl_host_event_process(dhd_pub_t *dhdp, bcm_dngl_event_t *event,
 		return;
 	}
 	switch (type) {
-	   case DNGL_E_SOCRAM_IND:
+	case DNGL_E_SOCRAM_IND:
+	{
+		bcm_dngl_socramind_t *socramind_ptr = (bcm_dngl_socramind_t *)p;
+		uint16 tag = ltoh32(socramind_ptr->tag);
+		uint16 taglen = ltoh32(socramind_ptr->length);
+		p = (uint8 *)socramind_ptr->value;
+		DHD_EVENT(("Tag:%d Len:%d Datalen:%d\n", tag, taglen, datalen));
+		switch (tag) {
+		case SOCRAM_IND_ASSERT_TAG:
 		{
-		   bcm_dngl_socramind_t *socramind_ptr = (bcm_dngl_socramind_t *)p;
-		   uint16 tag = ltoh32(socramind_ptr->tag);
-		   uint16 taglen = ltoh32(socramind_ptr->length);
-		   p = (uint8 *)socramind_ptr->value;
-		   DHD_EVENT(("Tag:%d Len:%d Datalen:%d\n", tag, taglen, datalen));
-		   switch (tag) {
-			case SOCRAM_IND_ASSERT_TAG:
-			    {
-				/*
-				* The payload consists of -
-				* null terminated function name padded till 32 bit boundary +
-				* Line number - (32 bits)
-				* Caller address (32 bits)
-				*/
-				char *fnname = (char *)p;
-				if (datalen < (ROUNDUP(strlen(fnname) + 1, sizeof(uint32)) +
-					sizeof(uint32) * 2)) {
-					DHD_ERROR(("Wrong length:%d\n", datalen));
-					return;
-				}
-				DHD_EVENT(("ASSRT Function:%s ", p));
-				p += ROUNDUP(strlen(p) + 1, sizeof(uint32));
-				DHD_EVENT(("Line:%d ", *(uint32 *)p));
-				p += sizeof(uint32);
-				DHD_EVENT(("Caller Addr:0x%x\n", *(uint32 *)p));
+			/*
+			* The payload consists of -
+			* null terminated function name padded till 32 bit boundary +
+			* Line number - (32 bits)
+			* Caller address (32 bits)
+			*/
+			char *fnname = (char *)p;
+			if (datalen < (ROUNDUP(strlen(fnname) + 1, sizeof(uint32)) +
+				sizeof(uint32) * 2)) {
+				DHD_ERROR(("Wrong length:%d\n", datalen));
+				return;
+			}
+			DHD_EVENT(("ASSRT Function:%s ", p));
+			p += ROUNDUP(strlen(p) + 1, sizeof(uint32));
+			DHD_EVENT(("Line:%d ", *(uint32 *)p));
+			p += sizeof(uint32);
+			DHD_EVENT(("Caller Addr:0x%x\n", *(uint32 *)p));
 #ifdef PARSE_DONGLE_HOST_EVENT
-				DHD_PRINT(("DONGLE_HCK_EVENT: SOCRAM_IND_ASSERT_TAG\n"));
+			DHD_PRINT(("DONGLE_HCK_EVENT: SOCRAM_IND_ASSERT_TAG\n"));
+#endif /* PARSE_DONGLE_HOST_EVENT */
+			break;
+		}
+		case SOCRAM_IND_TAG_HEALTH_CHECK:
+		{
+			bcm_dngl_healthcheck_t *dngl_hc = (bcm_dngl_healthcheck_t *)p;
+			DHD_EVENT(("SOCRAM_IND_HEALTHCHECK_TAG:%d Len:%d datalen:%d\n",
+				ltoh32(dngl_hc->top_module_tag),
+				ltoh32(dngl_hc->top_module_len),
+				datalen));
+			if (DHD_EVENT_ON()) {
+				dhd_prhex("HEALTHCHECK", (volatile uchar *)p,
+					MIN(ltoh32(dngl_hc->top_module_len)
+					+ BCM_XTLV_HDR_SIZE, datalen), DHD_ERROR_VAL);
+			}
+#ifdef DHD_LOG_DUMP
+			bzero(dhdp->health_chk_event_data, HEALTH_CHK_BUF_SIZE);
+			memcpy(dhdp->health_chk_event_data, p,
+					MIN(ltoh32(dngl_hc->top_module_len),
+					HEALTH_CHK_BUF_SIZE));
+#endif /* DHD_LOG_DUMP */
+			p = (uint8 *)dngl_hc->value;
+
+			switch (ltoh32(dngl_hc->top_module_tag)) {
+			case HEALTH_CHECK_TOP_LEVEL_MODULE_PCIEDEV_RTE:
+			{
+				bcm_dngl_pcie_hc_t *pcie_hc;
+				pcie_hc = (bcm_dngl_pcie_hc_t *)p;
+				BCM_REFERENCE(pcie_hc);
+				if (ltoh32(dngl_hc->top_module_len) <
+						sizeof(bcm_dngl_pcie_hc_t)) {
+					DHD_ERROR(("Wrong length:%d\n",
+						ltoh32(dngl_hc->top_module_len)));
+					break;
+				}
+				DHD_EVENT(("%d:PCIE HC error:%d flag:0x%x,"
+					" control:0x%x\n",
+					ltoh32(pcie_hc->version),
+					ltoh32(pcie_hc->pcie_err_ind_type),
+					ltoh32(pcie_hc->pcie_flag),
+					ltoh32(pcie_hc->pcie_control_reg)));
+#ifdef PARSE_DONGLE_HOST_EVENT
+				dhd_print_dongle_hck_id(
+					ltoh32(pcie_hc->pcie_err_ind_type),
+						hck_pcie_module_to_str);
 #endif /* PARSE_DONGLE_HOST_EVENT */
 				break;
-			    }
-			case SOCRAM_IND_TAG_HEALTH_CHECK:
-			   {
-				bcm_dngl_healthcheck_t *dngl_hc = (bcm_dngl_healthcheck_t *)p;
-				DHD_EVENT(("SOCRAM_IND_HEALTHCHECK_TAG:%d Len:%d datalen:%d\n",
-					ltoh32(dngl_hc->top_module_tag),
-					ltoh32(dngl_hc->top_module_len),
-					datalen));
-				if (DHD_EVENT_ON()) {
-					dhd_prhex("HEALTHCHECK", (volatile uchar *)p,
-						MIN(ltoh32(dngl_hc->top_module_len)
-						+ BCM_XTLV_HDR_SIZE, datalen), DHD_ERROR_VAL);
-				}
-#ifdef DHD_LOG_DUMP
-				bzero(dhdp->health_chk_event_data, HEALTH_CHK_BUF_SIZE);
-				memcpy(dhdp->health_chk_event_data, p,
-						MIN(ltoh32(dngl_hc->top_module_len),
-						HEALTH_CHK_BUF_SIZE));
-#endif /* DHD_LOG_DUMP */
-				p = (uint8 *)dngl_hc->value;
-
-				switch (ltoh32(dngl_hc->top_module_tag)) {
-					case HEALTH_CHECK_TOP_LEVEL_MODULE_PCIEDEV_RTE:
-					   {
-						bcm_dngl_pcie_hc_t *pcie_hc;
-						pcie_hc = (bcm_dngl_pcie_hc_t *)p;
-						BCM_REFERENCE(pcie_hc);
-						if (ltoh32(dngl_hc->top_module_len) <
-								sizeof(bcm_dngl_pcie_hc_t)) {
-							DHD_ERROR(("Wrong length:%d\n",
-								ltoh32(dngl_hc->top_module_len)));
-							return;
-						}
-						DHD_EVENT(("%d:PCIE HC error:%d flag:0x%x,"
-							" control:0x%x\n",
-							ltoh32(pcie_hc->version),
-							ltoh32(pcie_hc->pcie_err_ind_type),
-							ltoh32(pcie_hc->pcie_flag),
-							ltoh32(pcie_hc->pcie_control_reg)));
-#ifdef PARSE_DONGLE_HOST_EVENT
-						dhd_print_dongle_hck_id(
-							ltoh32(pcie_hc->pcie_err_ind_type),
-								hck_pcie_module_to_str);
-#endif /* PARSE_DONGLE_HOST_EVENT */
-						break;
-					   }
+			}
 #ifdef HCHK_COMMON_SW_EVENT
-					case HCHK_SW_ENTITY_WL_PRIMARY:
-					case HCHK_SW_ENTITY_WL_SECONDARY:
-					{
-						bcm_xtlv_t *wl_hc = (bcm_xtlv_t *)p;
+			case HCHK_SW_ENTITY_WL_PRIMARY:
+			case HCHK_SW_ENTITY_WL_SECONDARY:
+			{
+				bcm_xtlv_t *wl_hc = (bcm_xtlv_t *)p;
 
-						if (ltoh32(dngl_hc->top_module_len) <
-								sizeof(bcm_xtlv_t)) {
-							DHD_ERROR(("WL SW HC Wrong length:%d\n",
-								ltoh32(dngl_hc->top_module_len)));
-							return;
-						}
-						BCM_REFERENCE(wl_hc);
-						DHD_EVENT(("WL SW HC type %d len %d\n",
-						ltoh16(wl_hc->id), ltoh16(wl_hc->len)));
+				if (ltoh32(dngl_hc->top_module_len) <
+						sizeof(bcm_xtlv_t)) {
+					DHD_ERROR(("WL SW HC Wrong length:%d\n",
+						ltoh32(dngl_hc->top_module_len)));
+					break;
+				}
+				BCM_REFERENCE(wl_hc);
+				DHD_EVENT(("WL SW HC type %d len %d\n",
+				ltoh16(wl_hc->id), ltoh16(wl_hc->len)));
 #ifdef DHD_LB_STATS
-						if ((ltoh16(wl_hc->id) == WL_HC_DD_RX_DMA_STALL) &&
-							(dhdp->lb_rxp_stop_thr_hitcnt >
-							dhdp->lb_rxp_strt_thr_hitcnt)) {
-							ignore_hc = TRUE;
-							dhdp->rx_dma_stall_hc_ignore_cnt++;
-							DHD_ERROR(("%s:lb_rxp_stop_thr_hitcnt(%llu)"
-								" > lb_rxp_strt_thr_hitcnt(%llu)"
-								" rx_dma_stall_hc_ignore_cnt(%llu)"
-								"\n",
-								__FUNCTION__,
-								dhdp->lb_rxp_stop_thr_hitcnt,
-								dhdp->lb_rxp_strt_thr_hitcnt,
-								dhdp->rx_dma_stall_hc_ignore_cnt));
-						}
+				if ((ltoh16(wl_hc->id) == WL_HC_DD_RX_DMA_STALL) &&
+					(dhdp->lb_rxp_stop_thr_hitcnt >
+					dhdp->lb_rxp_strt_thr_hitcnt)) {
+					ignore_hc = TRUE;
+					dhdp->rx_dma_stall_hc_ignore_cnt++;
+					DHD_ERROR(("%s:lb_rxp_stop_thr_hitcnt(%llu)"
+						" > lb_rxp_strt_thr_hitcnt(%llu)"
+						" rx_dma_stall_hc_ignore_cnt(%llu)"
+						"\n",
+						__FUNCTION__,
+						dhdp->lb_rxp_stop_thr_hitcnt,
+						dhdp->lb_rxp_strt_thr_hitcnt,
+						dhdp->rx_dma_stall_hc_ignore_cnt));
+				}
 #endif /* DHD_LB_STATS */
 
 #ifdef PARSE_DONGLE_HOST_EVENT
-						dhd_parse_hck_common_sw_event(wl_hc);
+				dhd_parse_hck_common_sw_event(wl_hc);
+				if (ltoh16(wl_hc->id) == WL_HC_DD_RX_STALL_V4) {
+					ignore_hc = dhd_rx_stall_v4(dhdp, wl_hc);
+				}
 #endif /* PARSE_DONGLE_HOST_EVENT */
 #ifdef SKIP_COREDUMP_PKTDROP_RXHC
-						if (dhd_skip_coredump_for_rxhc(wl_hc) == TRUE) {
-							ignore_hc = TRUE;
-						}
+				if (dhd_skip_coredump_for_rxhc(wl_hc) == TRUE) {
+					ignore_hc = TRUE;
+				}
 #endif /* SKIP_COREDUMP_PKTDROP_RXHC */
 #ifdef WL_CFGVENDOR_SEND_ALERT_EVENT
-						dhd_send_error_alert_event(dhdp, wl_hc);
+				dhd_send_error_alert_event(dhdp, wl_hc);
 #endif /* WL_CFGVENDOR_SEND_ALERT_EVENT */
-						break;
+				break;
 
-					}
+			}
 #endif /* HCHK_COMMON_SW_EVENT */
-					default:
-					{
-						DHD_ERROR(("%s:Unknown module TAG:%d\n",
-						  __FUNCTION__,
-						  ltoh32(dngl_hc->top_module_tag)));
-						break;
-					}
-				}
-				break;
-			   }
 			default:
-			   DHD_ERROR(("%s:Unknown TAG\n", __FUNCTION__));
-			   if (p && DHD_EVENT_ON()) {
-				dhd_prhex("SOCRAMIND", (volatile uchar *)p,
-					taglen, DHD_ERROR_VAL);
-			   }
-			   break;
-		   }
-		   break;
-		}
-	   case DNGL_E_PROFILE_DATA_IND:
-		{
-			bcm_dngl_profile_data_ind_t *ind_data = (bcm_dngl_profile_data_ind_t *)p;
-			dngl_host_profile_event_process(dhdp, ind_data->value, ind_data->length);
-			return;
-		}
-	case DNGL_E_SPMI_RESET_IND:
-		{
-			bcm_dngl_spmi_reset_ind_v1_t *spmi_reset_ind_v1_ptr =
-				(bcm_dngl_spmi_reset_ind_v1_t *)p;
-			uint16 ver = ltoh32(spmi_reset_ind_v1_ptr->version);
-			switch (ver) {
-			case DNGL_E_SPMI_RESET_IND_VERSION_1:
-				{
-					uint16 num_resets =
-						ltoh32(spmi_reset_ind_v1_ptr->num_resets);
-					uint16 slave_idx =
-						ltoh32(spmi_reset_ind_v1_ptr->slave_idx);
-					DHD_EVENT(("DNGL_E_SPMI_RESET_IND resets=%u "
-						"SPMI core=%u\n", num_resets, slave_idx));
-					break;
-				}
-			default:
-				DHD_ERROR(("DNGL_E_SPMI_RESET_IND: unknown version\n"));
+			{
+				DHD_ERROR(("%s:Unknown module TAG:%d\n",
+				  __FUNCTION__,
+				  ltoh32(dngl_hc->top_module_tag)));
 				break;
+			}
 			}
 			break;
 		}
-	   default:
+		default:
+			DHD_ERROR(("%s:Unknown TAG\n", __FUNCTION__));
+			if (p && DHD_EVENT_ON()) {
+				dhd_prhex("SOCRAMIND", (volatile uchar *)p,
+					taglen, DHD_ERROR_VAL);
+			}
+			break;
+		}
+		break;
+	}
+	case DNGL_E_PROFILE_DATA_IND:
+	{
+		bcm_dngl_profile_data_ind_t *ind_data = (bcm_dngl_profile_data_ind_t *)p;
+		dngl_host_profile_event_process(dhdp, ind_data->value, ind_data->length);
+		return;
+	}
+	case DNGL_E_SPMI_RESET_IND:
+	{
+		bcm_dngl_spmi_reset_ind_v1_t *spmi_reset_ind_v1_ptr =
+			(bcm_dngl_spmi_reset_ind_v1_t *)p;
+		uint16 ver = ltoh32(spmi_reset_ind_v1_ptr->version);
+		switch (ver) {
+		case DNGL_E_SPMI_RESET_IND_VERSION_1:
+		{
+			uint16 num_resets =
+				ltoh32(spmi_reset_ind_v1_ptr->num_resets);
+			uint16 slave_idx =
+				ltoh32(spmi_reset_ind_v1_ptr->slave_idx);
+			DHD_EVENT(("DNGL_E_SPMI_RESET_IND resets=%u "
+				"SPMI core=%u\n", num_resets, slave_idx));
+			break;
+		}
+		default:
+			DHD_ERROR(("DNGL_E_SPMI_RESET_IND: unknown version\n"));
+			break;
+		}
+		break;
+	}
+	default:
 		DHD_ERROR(("%s:Unknown DNGL Event Type:%d\n", __FUNCTION__, type));
 		if (p && DHD_EVENT_ON()) {
 			dhd_prhex("SOCRAMIND", (volatile uchar *)p, datalen, DHD_ERROR_VAL);
@@ -6195,17 +6443,10 @@ wl_process_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint pktlen
 						__FUNCTION__, ifevent->ifidx, event->ifname));
 					return BCME_ERROR;
 				}
-#if defined(__linux__)
-				ndev = dhd_idx2net(dhd_pub, ifevent->ifidx);
-				if (ndev) {
-					dhd_clear_del_in_progress(dhd_pub, ndev);
-				}
-#endif /* __linux__ */
 			} else if (ifevent->opcode == WLC_E_IF_DEL) {
 #if defined(__linux__)
 				ndev = dhd_idx2net(dhd_pub, ifevent->ifidx);
 				if (ndev) {
-					dhd_set_del_in_progress(dhd_pub, ndev);
 					netif_tx_disable(ndev);
 				}
 #endif /* __linux__ */
@@ -6347,6 +6588,15 @@ wl_process_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint pktlen
 			dhd_del_all_sta(dhd_pub, dhd_ifname2idx(dhd_pub->info, event->ifname));
 			dhd_flow_rings_delete(dhd_pub, (uint8)dhd_ifname2idx(dhd_pub->info,
 				event->ifname));
+#ifdef GOOGLE_DAL_CORE
+			platform_bus_notify_station_state((u8)flags, dhd_pub,
+					dhd_ifname2idx(dhd_pub->info, event->ifname));
+#endif /* GOOGLE_DAL_CORE */
+		} else {
+#ifdef GOOGLE_DAL_CORE
+			platform_bus_notify_station_state((u8)flags, dhd_pub,
+					dhd_ifname2idx(dhd_pub->info, event->ifname));
+#endif /* GOOGLE_DAL_CORE */
 		}
 #endif /* PCIE_FULL_DONGLE */
 		/* falls through */
@@ -6499,6 +6749,8 @@ wl_pattern_atoh(char *src, char *dst)
 	return i;
 }
 
+#endif /* PKT_FILTER_SUPPORT || DHD_PKT_LOGGING */
+
 int
 pattern_atoh_len(char *src, char *dst, int len)
 {
@@ -6527,7 +6779,6 @@ pattern_atoh_len(char *src, char *dst, int len)
 	}
 	return i;
 }
-#endif /* PKT_FILTER_SUPPORT || DHD_PKT_LOGGING */
 
 #ifdef PKT_FILTER_SUPPORT
 void
@@ -8989,8 +9240,12 @@ dhd_cmd_timeout(void *ctx)
 			DHD_ERROR(("%s: dhd_stop_cmd_timer() failed\n", __FUNCTION__));
 			ASSERT(0);
 		}
-		if (!dhd_query_bus_erros(pub))
+#ifdef BCMPCIE
+		dhd_msgbuf_iovar_timeout_dump(pub);
+#endif /* BCMPCIE */
+		if (!dhd_query_bus_erros(pub)) {
 			dhd_send_trap_to_fw_for_timeout(pub, DHD_REASON_COMMAND_TO);
+		}
 	} else {
 		DHD_TIMER_UNLOCK(pub->timeout_info->cmd_timer_lock, flags);
 	}
@@ -9379,12 +9634,12 @@ dhd_bus_timeout(void *ctx)
 			DHD_ERROR(("%s: dhd_stop_bus_timer() failed\n", __FUNCTION__));
 			ASSERT(0);
 		}
-		if (!dhd_query_bus_erros(pub)) {
-			dhd_send_trap_to_fw_for_timeout(pub, DHD_REASON_OQS_TO);
-		}
 #ifdef BCMPCIE
 		dhd_msgbuf_iovar_timeout_dump(pub);
 #endif /* BCMPCIE */
+		if (!dhd_query_bus_erros(pub)) {
+			dhd_send_trap_to_fw_for_timeout(pub, DHD_REASON_OQS_TO);
+		}
 	} else {
 		DHD_TIMER_UNLOCK(pub->timeout_info->bus_timer_lock, flags);
 	}
@@ -11582,6 +11837,115 @@ BCMFASTPATH(dhd_8023_llc_to_ether_hdr)(osl_t *osh, struct ether_header *eh8023, 
 }
 #endif /* HOST_SFH_LLC */
 
+/* API to get if LLC hdr fro */
+bool
+dhd_llc_hdr_insert_enabled(struct dhd_pub *dhd, uint8 ifidx)
+{
+	dhd_if_t *ifp;
+
+	ifp = dhd_get_ifp(dhd, ifidx);
+	if ((ifp == NULL) || (ifp->llc_hdr == NULL)) {
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/** Convert Ethernet to 802.3 + Configured LLC SNAP header
+ * Note:- This function will overwrite the ethernet header in the pkt 'p'
+ * with a 802.3 ethernet + LLC/SNAP header by utilising the headroom
+ * in the packet. The pkt data pointer should be pointing to the
+ * start of the packet (at the ethernet header) when the function is called.
+ * The pkt data pointer will be pointing to the
+ * start of the new 802.3 header if the function returns successfully
+ */
+int
+BCMFASTPATH(dhd_ether_to_generic_llc_hdr)(struct dhd_pub *dhd, uint8 ifidx,
+	struct ether_header *eh, void *p)
+{
+	osl_t *osh = dhd->osh;
+	struct ether_header *neh;
+	uint16 *type = NULL, ether_type, plen;
+	struct dot11_llc_snap_header *lsh;
+	int ret = BCME_OK;
+	dhd_if_t *ifp;
+
+	ifp = dhd_get_ifp(dhd, ifidx);
+	if ((ifp == NULL) || (ifp->llc_hdr == NULL)) {
+		return BCME_NOTFOUND;
+	}
+
+	if (PKTHEADROOM(osh, p) < ((ifp->llc_hdr_len) + 2)) {
+		DHD_ERROR(("%s: FATAL! not enough pkt headroom !\n", __FUNCTION__));
+		ASSERT(0);
+		return BCME_BUFTOOSHORT;
+	}
+	ether_type = ntoh16(eh->ether_type);
+	neh = (struct ether_header *)PKTPUSH(osh, p, ifp->llc_hdr_len + 2);
+
+	/* 802.3 MAC header */
+	eacopy((char *)eh->ether_dhost, (char *)neh->ether_dhost);
+	eacopy((char *)eh->ether_shost, (char *)neh->ether_shost);
+	plen = (uint16)PKTLEN(osh, p) - ETHER_HDR_LEN;
+	neh->ether_type = hton16(plen);
+
+	/* 802.2 LLC header + more from configured HDR */
+	lsh = (struct dot11_llc_snap_header *)&neh[1];
+	ret = memcpy_s(lsh, PKTLEN(dhd->osh, p), ifp->llc_hdr, ifp->llc_hdr_len);
+
+	type = (uint16 *)(((uint8 *)lsh) +  ifp->llc_hdr_len);
+	*type = hton16(ether_type);
+
+	return ret;
+}
+
+/** Convert 802.3 + LLC SNAP header to ethernet header
+ * Note:- This function will overwrite the existing
+ * 802.3 ethernet + LLC/SNAP header in the packet 'p'
+ * with a 14 byte ethernet header
+ * The pkt data pointer should be pointing to the
+ * start of the packet (at the 802.3 header) when the function is called.
+ * The pkt data pointer will be pointing to the
+ * start of the new ethernet header if the function returns successfully
+ */
+int
+dhd_generic_llc_to_eth_hdr(struct dhd_pub *dhd, uint8 ifidx, struct ether_header *eh, void *p)
+{
+	uint16 *ethertype = NULL;
+	uint8 *ptr = NULL;
+	int ret = BCME_OK;
+	dhd_if_t *ifp;
+	struct ether_header temp_eh;
+
+	if (!eh || !p || !dhd)
+		return BCME_BADARG;
+
+	ifp = dhd_get_ifp(dhd, ifidx);
+	if ((ifp == NULL) || (ifp->llc_hdr == NULL)) {
+		return BCME_NOTFOUND;
+	}
+
+	ptr = PKTDATA(dhd->osh, p);
+
+	/* copy ether type instead of length from the
+	 * end of the llc header to the ethernet header
+	 */
+	ptr += sizeof(*eh) + ifp->llc_hdr_len;
+	ethertype = (uint16 *)ptr;
+	eh->ether_type = *ethertype;
+	(void)memcpy_s(&temp_eh, sizeof(temp_eh), eh, sizeof(*eh));
+
+	/* overwrite interface llc header with ethernet header */
+	PKTPULL(dhd->osh, p, ifp->llc_hdr_len + 2);
+	ptr = PKTDATA(dhd->osh, p);
+	ret = memcpy_s(ptr, PKTLEN(dhd->osh, p), &temp_eh, sizeof(temp_eh));
+	if (ret != BCME_OK) {
+		DHD_ERROR_RLMT(("%s: memcpy_s fails !\n", __FUNCTION__));
+		ret = BCME_ERROR;
+	}
+
+	return ret;
+}
+
 int
 dhd_iovar(dhd_pub_t *pub, int ifidx, char *name, char *param_buf, uint param_len, char *res_buf,
 		uint res_len, bool set)
@@ -11828,6 +12192,27 @@ dhd_convert_memdump_type_to_str(uint32 type, char *buf, size_t buf_len, int subs
 		break;
 	case DUMP_TYPE_NO_DB7_ACK:
 		type_str = "NO_DB7_ACK";
+		break;
+	case DUMP_TYPE_WL_BP_DOWN:
+		type_str = "WL_BP_DOWN";
+		break;
+	case DUMP_TYPE_COMMON_BP_DOWN:
+		type_str = "COMMON_BP_DOWN";
+		break;
+	case DUMP_TYPE_COEXCPU_BP_DOWN:
+		type_str = "COEX_CPU_BP_DOWN";
+		break;
+	case DUMP_TYPE_STA_ASSOC_TIMEOUT:
+		type_str = "STA_ASSOC_TIMEOUT";
+		break;
+	case DUMP_TYPE_STA_4WAY_HS_TIMEOUT:
+		type_str = "STA_4WAY_HS_TIMEOUT";
+		break;
+	case DUMP_TYPE_STA_ROAM_TIMEOUT:
+		type_str = "STA_ROAM_TIMEOUT";
+		break;
+	case DUMP_TYPE_SAR_CONF_NOTFOUND:
+		type_str = "SAR_CONF_NOTFOUND";
 		break;
 	case DUMP_TYPE_DHCP_TIMEOUT:
 		type_str = "DHCP_TIMEOUT";
@@ -12086,18 +12471,6 @@ dhd_convert_hang_reason_to_str(uint32 reason, char *buf, size_t buf_len)
 		break;
 	case DUMP_TYPE_NO_DB7_ACK:
 		type_str = "NO_DB7_ACK";
-		break;
-	case DUMP_TYPE_STA_ASSOC_TIMEOUT:
-		type_str = "STA_ASSOC_TIMEOUT";
-		break;
-	case DUMP_TYPE_STA_4WAY_HS_TIMEOUT:
-		type_str = "STA_4WAY_HS_TIMEOUT";
-		break;
-	case DUMP_TYPE_STA_ROAM_TIMEOUT:
-		type_str = "STA_ROAM_TIMEOUT";
-		break;
-	case DUMP_TYPE_SAR_CONF_NOTFOUND:
-		type_str = "SAR_CONF_NOTFOUND";
 		break;
 	default:
 		type_str = "Unknown_type";

@@ -3,7 +3,7 @@
  * Also, see WFA QoS Management spec:
  * https://drive.google.com/file/d/1dj4D92kUhLKrImWkOJZ0__Meg9fZm9fL/view?usp=share_link
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -160,6 +160,17 @@ typedef struct wme_param_ie wme_param_ie_t;
 #define WFA_OUI_TYPE_SAE_PK		0x1F
 #define WFA_OUI_TYPE_TD_INDICATION	0x20
 
+/* OUI_TYPE assignments for MRSNO */
+#define WFA_OUI_TYPE_RSN_OVERRIDE		0x29
+#define WFA_OUI_TYPE_RSN_OVERRIDE_2		0x2A
+#define WFA_OUI_TYPE_RSNXE_OVERRIDE		0x2B
+#define WFA_OUI_TYPE_RSN_SELECTION		0x2C
+#define WFA_OUI_TYPE_RSN_OVERRIDE_MLO_LINK_KDE	0x2D
+
+/* Snonce Cookie for MRSNO 4way-HS and FT reassociation */
+#define EAPOL_WPA2_WFA_SNONCE_COOKIE		"\x50\x6F\x9A\x00\x00\x29"
+#define EAPOL_WPA2_WFA_SNONCE_COOKIE_LEN	6u
+
 /* WCN */
 #define WCN_OUI			"\x00\x50\xf2"	/* WCN OUI */
 #define WCN_TYPE		4	/* WCN type */
@@ -186,7 +197,6 @@ BWL_PRE_PACKED_STRUCT struct dot11_sae_pk_element {
 typedef struct dot11_sae_pk_element dot11_sae_pk_element_t;
 
 /* WPA3 Transition Mode bits */
-#define TRANSISION_MODE_WPA3_PSK		BCM_BIT(0)
 #define TRANSITION_MODE_WPA3_PSK		BCM_BIT(0)
 #define TRANSITION_MODE_SAE_PK			BCM_BIT(1)
 #define TRANSITION_MODE_WPA3_ENTERPRISE		BCM_BIT(2)
@@ -253,8 +263,16 @@ typedef struct hs20_ie hs20_ie_t;
 /* WFA Capabilities vendor specific IE OUI type */
 #define WFA_CAP_VSIE_OUI_TYPE		0x23u
 
+/* OUI Type - Identifying the type and version of the
+ * QoS Management action frames.
+ */
+#define QOS_MGMT_AF_OUI_TYPE		0x1Au
+
 /* DSCP Policy Action Frame OUI type */
-#define DSCP_POLICY_AF_OUI_TYPE		0x1Au
+#define DSCP_POLICY_AF_OUI_TYPE		QOS_MGMT_AF_OUI_TYPE
+
+/* Wi-Fi Alliance Capabilities frame, OUI type */
+#define WFA_CAP_AF_OUI_TYPE		0x1Bu
 
 /* DSCP Policy Action Frame OUI subtypes */
 #define DSCP_POLICY_QUERY_FRAME		0u
@@ -275,21 +293,46 @@ typedef struct hs20_ie hs20_ie_t;
 #define DSCP_POLICY_ATTR_LEN_LEN	1u	/* attr field length */
 #define DSCP_POLICY_ATTR_HDR_LEN	2u	/* id + 1-byte length field */
 
-/* DSCP Policy attributes as defined in the QoS Mgmt spec */
+/* QoS Management attributes as defined in the spec */
 typedef enum qos_mgmt_attrs {
 
 	/* DSCP Port Range attribute */
-	DSCP_POLICY_PORT_RANGE_ATTR	= 1,
+	DSCP_POLICY_PORT_RANGE_ATTR		= 1,
 
 	/* DSCP Policy attribute */
-	DSCP_POLICY_ATTR		= 2,
+	DSCP_POLICY_ATTR			= 2,
 
 	/* DSCP Policy TCLAS attribute for classifier type 4 */
-	DSCP_POLICY_TCLAS_ATTR		= 3,
+	DSCP_POLICY_TCLAS_ATTR			= 3,
 
 	/* DSCP Domain Name attribute */
-	DSCP_POLICY_DOMAIN_NAME_ATTR	= 4
-} qos_mgmt_attrs_e;
+	DSCP_POLICY_DOMAIN_NAME_ATTR		= 4,
+
+	/* 5G QoS Identifier (5QI) attribute */
+	QI_5G_ATTR				= 5,
+
+	/* 3GPP defined priority level for a 5G QoS flow carried over Wi-Fi access */
+	PRIORITY_LEVEL_ATTR			= 6,
+
+	/* DAR Request attribute */
+	DAR_REQ_ATTR				= 7,
+
+	/* DAR Response attribute */
+	DAR_RESP_ATTR				= 8,
+
+	/* DAR Report attribute */
+	DAR_REPORT_ATTR				= 9,
+
+	/* Latency statistics attribute */
+	DAR_LATENCY_STATISTICS_ATTR		= 10,
+
+	/* Radio Counters Statistics attribute */
+	DAR_RADIO_COUNTERS_STATISTICS_ATTR	= 11,
+
+	/* Control plane events attribute */
+	DAR_CONTROL_PLANE_EVENTS_ATTR		= 12
+
+} qos_mgmt_attrs_t;
 
 /* DSCP Policy Query frame header */
 typedef BWL_PRE_PACKED_STRUCT struct dscp_policy_query_action_vs_frmhdr {
@@ -372,8 +415,24 @@ typedef enum qos_mgmt_cap_bits {
 	/* Indicates the support for SCS traffic description when bit2 is set to 1, otherwise
 	 * not supported.
 	 */
-	QOS_MGMT_CAP_SCS_TRAFFIC_DESCRIPTION		= (1u << 2u)
-} qos_mgmt_cap_bits_e;
+	QOS_MGMT_CAP_SCS_TRAFFIC_DESCRIPTION		= (1u << 2u),
+
+	/* 5G QoS to Wi-Fi QoS Mapping */
+	QOS_MGMT_CAP_5G_QOS_TO_WIFI_QOS_MAPPING		= (1u << 3u),
+
+	/* Indicating the Dynamic Analytics Report (DAR) capability bits */
+	/* Latency Statistics */
+	QOS_MGMT_CAP_DAR_LATENCY_STATISTICS		= (1u << 4u),
+
+	/* Radio Counters Statistics */
+	QOS_MGMT_CAP_DAR_RADIO_COUNTERS_STATISTICS	= (1u << 5u),
+
+	/* Control Plane Events */
+	QOS_MGMT_CAP_DAR_CONTROL_PLANE_EVENTS		= (1u << 6u),
+
+	/* STA or AP accepts the recpetio of Unsolicited reports */
+	QOS_MGMT_CAP_DAR_UNSOLICIT_REPORT_RECEPTION	= (1u << 7u)
+} qos_mgmt_cap_bits_t;
 
 /* DSCP Port Range attribute */
 typedef BWL_PRE_PACKED_STRUCT struct dscp_policy_port_range_attr {
@@ -409,6 +468,328 @@ typedef BWL_PRE_PACKED_STRUCT struct dscp_policy_domain_name_attr {
 	uint8 data[];		/* domain name */
 } BWL_POST_PACKED_STRUCT dscp_policy_domain_name_attr_t;
 #define DSCP_POLICY_DOMAIN_NAME_ATTR_SIZE (sizeof(dscp_policy_domain_name_attr_t))
+
+/* WFA RSN/RSNXE Override Vendor Specific IE */
+#define WFA_RSN_OVERRIDE_OUI_TYPE_OFFSET	5u
+#define WFA_RSN_OVERRIDE_IE_DATA_OFFSET		6u
+typedef BWL_PRE_PACKED_STRUCT struct wfa_rsn_override_ie {
+	uint8 id;               /* DOT11_MNG_VS_ID 0xDD(221) */
+	uint8 len;              /* IE length */
+	uint8 oui[WFA_OUI_LEN]; /* WFA OUI 50:6F:9A */
+	uint8 oui_type;         /* WFA_OUI_TYPE_RSN(XE)_OVERRIDE */
+	uint8 data[];           /* RSN/RSNXE IE attributes */
+} BWL_POST_PACKED_STRUCT wfa_rsn_override_ie_t;
+#define WFA_RSN_OVERRIDE_IE_SIZE (sizeof(wfa_rsn_override_ie_t))
+
+/* WFA_RSN_SELECTION_IE definitions */
+#define RSN_SELECTION_RSNE	0u	/* RSNE */
+#define RSN_SELECTION_RSNO1E	1u	/* RSN Override Element */
+#define RSN_SELECTION_RSNO2E	2u	/* RSN Override 2 Element */
+typedef BWL_PRE_PACKED_STRUCT struct wfa_rsn_selection_ie {
+	uint8 id;               /* DOT11_MNG_VS_ID 0xDD(221) */
+	uint8 len;              /* IE length */
+	uint8 oui[WFA_OUI_LEN]; /* WFA OUI 50:6F:9A */
+	uint8 oui_type;         /* WFA_OUI_TYPE_RSN_SELECTION */
+	uint8 data;		/* 0 = RSNE, 1 = RSNE Override , 2 = RSN Override 2 */
+} BWL_POST_PACKED_STRUCT wfa_rsn_selection_ie_t;
+#define WFA_RSN_SELECTION_IE_SIZE (sizeof(wfa_rsn_selection_ie_t))
+
+#define WFA_RSNOV_LINK_KDE_IE_DATA_OFFSET 7u
+typedef BWL_PRE_PACKED_STRUCT struct wfa_rsnov_link_kde_ie {
+	uint8 id;               /* DOT11_MNG_PROPR_ID 0xDD(221) */
+	uint8 len;              /* IE length */
+	uint8 oui[WFA_OUI_LEN]; /* WFA OUI 50:6F:9A */
+	uint8 oui_type;         /* WFA_OUI_TYPE_RSN_OVERRIDE_MLO_LINK_KDE */
+	uint8 link_id;		/* Link identifier */
+	uint8 data[];		/* The set of RSN Override, Override 2, RSNXE Overrie IEs */
+} BWL_POST_PACKED_STRUCT wfa_rsnov_link_kde_ie_t;
+#define WFA_RSNOV_LINK_KDE_IE_SIZE (sizeof(wfa_rsnov_link_kde_ie_t))
+
+/* Wi-Fi Alliance Capabilities frame header */
+typedef BWL_PRE_PACKED_STRUCT struct wfa_capabilities_vs_frmhdr {
+	uint8 category;			/* Category VS/VSP; see 802.11.h */
+	uint8 oui[WFA_OUI_LEN];		/* WFA OUI */
+	uint8 oui_type;			/* DSCP_POLICY_AF_OUI_TYPE */
+	uint8 capabilities_length;	/* Length of the Capabilities field in octets */
+	uint8 data[];			/* zero or more capabilities and zero or more
+					 * Wi-Fi Alliance Capabilities attributes
+					 */
+} BWL_POST_PACKED_STRUCT wfa_capabilities_action_vs_frmhdr_t;
+#define WFA_CAPABILITIES_ACTION_FRAME_HDR_SIZE (sizeof(wfa_capabilities_action_vs_frmhdr_t))
+
+/* Wi-Fi Alliance Capabilities attributes */
+typedef enum wfa_capabilities_attrs {
+	/* Generational Capabilities Indication attribute */
+	WFA_GEN_CAP_INDICATION_ATTR	= 1
+} wfa_capabilities_attrs_t;
+
+/* Supported Generations field */
+typedef enum wifi_supported_gen_bits {
+	/* When bit is set to 1, the corresponding technology is supported */
+	SUPPORTED_GEN_WIFI_4			= (1u << 0u),
+	SUPPORTED_GEN_WIFI_5			= (1u << 1u),
+	SUPPORTED_GEN_WIFI_6			= (1u << 2u),
+	SUPPORTED_GEN_WIFI_7			= (1u << 3u)
+} wifi_supported_gen_bits_t;
+
+/* Certified Generations field */
+typedef enum wifi_certified_gen_bits {
+	/* When bit is set to 1, the corresponding technnology is certified */
+	CERTIFIED_GEN_WIFI_n			= (1u << 0u),
+	CERTIFIED_GEN_WIFI_ac			= (1u << 1u),
+	CERTIFIED_GEN_WIFI_6			= (1u << 2u),
+	CERTIFIED_GEN_WIFI_7			= (1u << 3u)
+} wifi_certified_gen_bits_t;
+
+/* Wi-Fi Alliance Capabilities attribute */
+typedef BWL_PRE_PACKED_STRUCT struct wfa_gen_cap_attr {
+	uint8 id;		/* Attribute id */
+	uint8 len;		/* Length of data */
+	uint8 data[];		/* Supported Generations Length (1 octet)
+				 * Supported Generations n (>= 1)
+				 * Certified Generations Length (0 or 1)
+				 * Certified Generations (0 or n (>=1))
+				 */
+} BWL_POST_PACKED_STRUCT wfa_gen_cap_attr_t;
+#define WFA_GEN_CAP_ATTR_SIZE (sizeof(wfa_gen_cap_attr_t))
+
+/* DAR (Dynamic Analytics Report) frames */
+/* DAR action frame subtypes */
+#define DAR_AF_REQ_OUI_SUBTYPE			3u
+#define DAR_AF_RESP_OUI_SUBTYPE			4u
+#define DAR_AF_REPORT_OUI_SUBTYPE		5u
+
+#define DAR_REQ_ATTR_REQ_TYPE_ADD		0u	/* Add */
+#define DAR_REQ_ATTR_REQ_TYPE_REMOVE		1u	/* Remove */
+
+/* DAR request attribute report method */
+#define DAR_REQ_ATTR_REPORT_METHOD_PERIODIC	0u	/* Periodic report */
+#define DAR_REQ_ATTR_REPORT_METHOD_ONE_TIME	1u	/* One-time report */
+
+/* Status codes */
+#define DAR_RESP_ATTR_SC_SUCCESS				0u
+#define DAR_RESP_ATTR_SC_ACCEPTED_WITH_CHANGES			1u
+#define DAR_RESP_ATTR_SC_REQ_DECLINED				2u
+#define DAR_RESP_ATTR_SC_REQUESTED_REPORT_NOT_SUPPORTED		3u
+#define DAR_RESP_ATTR_SC_INSUFFICIENT_PROCESSING_RESOURCES	4u
+/* 5..254 are reserved */
+#define DAR_RESP_ATTR_TERMINATE					255u
+
+/* DAR request action frame header */
+typedef BWL_PRE_PACKED_STRUCT struct dar_af_req {
+	uint8 category;		/* DOT11_ACTION_CAT_VSP, Vendor-specific Protected */
+	uint8 oui[WFA_OUI_LEN];	/* WFA OUI */
+	uint8 oui_type;		/* QOS_MGMT_AF_OUI_TYPE */
+	uint8 oui_subtype;	/* DAR_AF_REQ_OUI_SUBTYPE */
+	uint8 dialog_token;	/* Unique non-zero value to match req/resp */
+	uint8 data[];		/* One or more QoS Management elements containing
+				 * DAR attributes
+				 */
+} BWL_POST_PACKED_STRUCT dar_af_req_t;
+#define DAR_REQUEST_AF_REQ_HDR_SIZE (sizeof(dar_af_req_t));
+
+/* DAR response action frame header */
+typedef BWL_PRE_PACKED_STRUCT struct dar_af_resp {
+	uint8 category;		/* DOT11_ACTION_CAT_VSP, Vendor-specific Protected */
+	uint8 oui[WFA_OUI_LEN];	/* WFA OUI */
+	uint8 oui_type;		/* QOS_MGMT_AF_OUI_TYPE */
+	uint8 oui_subtype;	/* DAR_AF_RESP_OUI_SUBTYPE */
+	uint8 dialog_token;	/* Unique non-zero value to match req/resp */
+	uint8 data[];		/* One or more QoS Management elements containing
+				 * DAR attributes.
+				 */
+} BWL_POST_PACKED_STRUCT dar_af_resp_t;
+#define AR_RESP_AF_RESP_HDR_SIZE (sizeof(dar_af_resp_t))
+
+/* DAR report action frame header */
+typedef BWL_PRE_PACKED_STRUCT struct dar_af_report {
+	uint8 category;		/* DOT11_ACTION_CAT_VSP, Vendor-specific Protected */
+	uint8 oui[WFA_OUI_LEN];	/* WFA OUI */
+	uint8 oui_type;		/* QOS_MGMT_AF_OUI_TYPE */
+	uint8 oui_subtype;	/* DAR_AF_REPORT_OUI_SUBTYPE */
+	uint8 data[];		/* One or more QoS Management elements containing
+				 * DAR attributes.
+				 */
+}  BWL_POST_PACKED_STRUCT dar_af_report_t;
+#define DAR_REPORT_AF_HDR_SIZE (sizeof(dar_af_report_t))
+
+/* DAR request attribute */
+typedef BWL_PRE_PACKED_STRUCT struct dar_req_attr {
+	uint8 id;			/* Attribute id: DAR_REQ_ATTR */
+	uint8 len;			/* Length of the following fields */
+	uint8 request_id;		/* Non-zero value */
+	uint8 request_type;		/* 0: Add, 1:Remove, 2-255 reserved */
+	uint8 report_method;		/* periodic/one-time */
+	uint8 measurement_duration;	/* Indicats the requested measurement period
+					 * in units of ms.
+					 */
+	uint8 number_of_measurements;	/* Indicates the a non-zero value for the requested
+					 * number of measurements for periodic reporting.
+					 * This field is reserved if request_type is not 0 (Add)
+					 * or if report_method is not 0 (Periodic).
+					 */
+} BWL_POST_PACKED_STRUCT dar_req_attr_t;
+#define DAR_REQUEST_ATTR_SIZE (sizeof(dar_req_attr_t))
+
+/* DAR response attribute */
+typedef BWL_PRE_PACKED_STRUCT struct dar_resp_attr {
+	uint8 id;			/* Attribute id: DAR_RESP_ATTR */
+	uint8 len;			/* Length of the following fields in this attribute */
+	uint8 request_id;		/* Non-zero value */
+	uint8 status_code;		/* status code */
+} BWL_POST_PACKED_STRUCT dar_resp_attr_t;
+#define DAR_RESP_ATTR_SIZE (sizeof(dar_resp_attr_t))
+
+/* DAR report attribute */
+typedef BWL_PRE_PACKED_STRUCT struct dar_report_attr {
+
+	/* Attribute id: DAR_REPORT_ATTR */
+	uint8 id;
+
+	/* Length of the following fields in this attribute */
+	uint8 len;
+
+	/* Set to the same value as the Request ID in the corresponding DAR Request attribute,
+	 * or to 0 for an unsolicited report.
+	 */
+	uint8 request_id;
+
+	/* Indicates a timestamp at which the measurements for this report ended.
+	 * The timestamp is represented as the four lower octets of the TSF timer.
+	 * For an MLD, the TSF timer corresponds to the link specified in the
+	 * Report Timestamp LinkID field.
+	 */
+	uint32 report_timestamp;
+
+	/* The four LSBs of the Report Timestamp LinkID field indicates the
+	 * link identifiers that correspond to the link for which the TSF timer
+	 * is used to indicate the Report Timestamp. The four MSBs are reserved.
+	 * The field is reserved if the DAR Responder is not an MLD.
+	 */
+	uint8 report_timestamp_linkid;
+
+	/* The actual measurement duration for the report in units of ms. */
+	uint16 report_measurement_duration;
+} BWL_POST_PACKED_STRUCT dar_report_attr_t;
+#define DAR_REPORT_ATTR_SIZE (sizeof(dar_report_attr_t))
+
+/* DAR Latency statistics presense bitmap sub-fields */
+typedef enum dar_latency_statistics_presense_bitmap {
+	DAR_LATENCY_STATISTICS_PRESENSE_BITMAP_THREASHOLDS	= (1u << 0u),
+	DAR_LATENCY_STATISTICS_PRESENSE_BITMAP_STATISTICS_ENTRY	= (1u << 1u)
+} dar_latency_statistics_presense_bitmap_t;
+
+/* DAR Latency statistics attribute */
+typedef BWL_PRE_PACKED_STRUCT struct dar_latency_statistics_attr {
+
+	/* Attribute id: LATENCY_STATISTICS_ATTR */
+	uint8 id;
+
+	/* Length of the following fields in this attribute */
+	uint8 len;
+
+	/* Set to the same value as the Request ID in the corresponding DAR Request attribute,
+	 * or to 0 for an unsolicited report.
+	 */
+	uint8 request_id;
+
+	/* Bit 0 indicates presence of the Thresholds field. This bit is set to 0 if
+	 * the attribute is in a DAR Report frame.
+	 * Bit 1 indicates presence of the Number of Latency Statistics Entries and
+	 * Latency Statistics List fields. This bit is set to 1 if the attribute is in a
+	 * DAR Report frame; otherwise it is set to 0.
+	 * Bits 2-7: Reserved.
+	 */
+	uint8 parameter_presense_bitmap;
+
+	/* 0: indicates the Latency Statistics List field contains, or is requested to contain,
+	 * histogram(s) of latency measurements.
+	 * 1: indicates the Latency Statistics List field contains, or is requested to contain,
+	 * set(s) of percentile values of latency
+	 * 2: indicates the request has no preference as to the contents of the Latency
+	 * Statistics List field; this value is reserved when the attribute is included
+	 * in a DAR Response or DAR Report frame
+	 * 3-255: Reserved.
+	 */
+	uint8 report_type;
+
+	/* 0: indicates the Latency Statistics List field contains, or is requested to contain,
+	 * values with granularity at the TID level
+	 * 1: indicates the Latency Statistics List field contains, or is requested to contain,
+	 * values with granularity at the AC level
+	 * 2: indicates the Latency Statistics List field contains, or is requested to contain,
+	 * values with granularity aggregated across all ACs
+	 * 3-255: Reserved.
+	 */
+	uint8 report_granularity;
+
+	/* If the Report Granularity field is 0, Bit k is set to 1 if the latency statistics
+	 * for TID k are reported or requested, otherwise Bit k is set to 0.
+	 * If the Report Granularity field value is 1, each of bits 0-3 are set to 1 if the
+	 * latency statistics for AC_BK, AC_BE, AC_VI and AC_VO, respectively, are reported
+	 * or requested; otherwise the bit is set to 0. Bits 4-15 are reserved.
+	 * This field is reserved if Report Granularity is not 0 (TID level) or 1 (AC level).
+	 */
+	uint8 report_granularity_bitmap;
+
+	/* 0: indicates the Latency Statistics List field contains, or is requested to contain,
+	 * values at the device level. If the DAR responder is an MLD, this means at the MLD level
+	 * 1: indicates the Latency Statistics List field contains, or is requested to contain,
+	 * values at the link level (for an MLD). This value is only used if the DAR responder
+	 * is an MLD
+	 * Values 2-255 are reserved.
+	 */
+	uint8 link_granulatiry;
+
+	/* Bit i is set to 1 if Link i's latency statistics are reported or requested,
+	 * else it is set to 0.
+	 * This field is reserved if Link Granularity is not 1.
+	 */
+	uint8 link_granularity_bitmap;
+
+	/* Based on the parameter_presense_bitmap, data contains:
+	 * thresholds, number of latency statistics entries, latency statistics list
+	 */
+	uint8 data[];
+} BWL_POST_PACKED_STRUCT dar_latency_statistics_attr_t;
+#define DAR_LATENCY_STATISTICS_ATTR_SIZE (sizeof(dar_latency_statistics_attr_t))
+
+/* DAR Latency statistics entry for report_type 0 */
+typedef BWL_PRE_PACKED_STRUCT struct dar_latency_statistics_entry_rt0 {
+
+	/* The lower bound of the latency range represented by this Latency Statistics Entry
+	 * subfield, in units of ms.
+	 * The values of the Lower Bound Latency subfield in consecutive Latency Statistics
+	 * Entry subfields strictly increase within a given Latency Statistics Information
+	 * subfield.
+	 */
+	uint8 lower_bound_latency;
+
+	/* The number of unicast MPDUs transmitted by the DAR responder to the DAR initiator
+	 * for whose latency falls between the value in Lower Bound Latency subfield in this
+	 * Latency Statistics Entry subfield and the value in the Lower Bound Latency subfield
+	 * of the next Latency Statistics Entry subfield in this Latency Statistics List field.
+	 * For the final Latency Statistics Entry subfield in the Latency Statistics field,
+	 * the latency falls above the value in the Lower Bound Latency subfield of this Latency
+	 * Statistics Entry subfield.
+	 */
+	uint32 mpdu_count;
+} BWL_POST_PACKED_STRUCT dar_latency_statistics_entry_rt0_t;
+
+/* DAR Latency statistics entry for report_type 1 */
+typedef BWL_PRE_PACKED_STRUCT struct dar_latency_statistics_entry_rt1 {
+
+	/* The percentile of the point on the empirical cumulative distribution function (ECDF)
+	 * represented by this Latency Statistics Entry subfield.
+	 */
+	uint8 percentile;
+
+	/* Latency, in units of ms, at the specified Percentile of the ECDF for MPDUs
+	 * transmitted by the DAR responder to the DAR initiator during the measurement
+	 * interval.
+	 */
+	uint16 latency;
+} BWL_POST_PACKED_STRUCT dar_latency_statistics_entry_rt1_t;
 
 /* This marks the end of a packed structure section. */
 #include <packed_section_end.h>

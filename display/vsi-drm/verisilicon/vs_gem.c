@@ -422,6 +422,7 @@ static int query_handle(struct drm_device *dev, struct drm_vs_gem_query_info *in
 int vs_gem_query_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
 {
 	struct drm_vs_gem_query_info *info = data;
+
 	switch (info->type) {
 	case VS_GEM_QUERY_HANDLE:
 		return query_handle(dev, info, file);

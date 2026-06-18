@@ -61,8 +61,8 @@ void handle_fw_ap_send(struct u100_ctx *u100_ctx)
 	complete_all(&u100_ctx->tx_done_cmpl);
 }
 
-enum fw_err uwb_fw_flash_header(struct u100_ctx *u100_ctx,
-			struct uwb_tlv *tlv, int len)
+static enum fw_err uwb_fw_flash_header(struct u100_ctx *u100_ctx,
+			struct uwb_tlv *tlv, u16 len)
 {
 	enum fw_err ret;
 	uint32_t send_block_len = 0;
@@ -97,7 +97,7 @@ enum fw_err uwb_fw_flash_header(struct u100_ctx *u100_ctx,
 	return parse_iso_iblock(u100_ctx->uwb_fw_ctx.read_block, read_block_len);
 }
 
-enum fw_err uwb_fw_flash_header_fast_mode(struct u100_ctx *u100_ctx,
+static enum fw_err uwb_fw_flash_header_fast_mode(struct u100_ctx *u100_ctx,
 			struct uwb_tlv *tlv, int len)
 {
 	enum fw_err ret;
@@ -132,7 +132,7 @@ enum fw_err uwb_fw_flash_header_fast_mode(struct u100_ctx *u100_ctx,
 	return FW_OK;
 }
 
-enum fw_err uwb_flash_fw_img_fast_mode(struct u100_ctx *u100_ctx,
+static enum fw_err uwb_flash_fw_img_fast_mode(struct u100_ctx *u100_ctx,
 			uint8_t *data, uint32_t file_size, char p1)
 {
 	enum fw_err ret = FW_OK;

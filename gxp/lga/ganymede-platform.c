@@ -2,7 +2,7 @@
 /*
  * Platform device driver for Ganymede.
  *
- * Copyright (C) 2024 Google LLC
+ * Copyright (C) 2024-2025 Google LLC
  */
 
 #include <linux/device.h>
@@ -18,17 +18,9 @@
 
 #include "gxp-common-platform.c"
 
-#define GXP_MAX_VD_ACTIVATION 15
-
 void gxp_iommu_setup_shareability(struct gxp_dev *gxp)
 {
 	/* IO coherency not supported yet */
-}
-
-int gxp_iommu_get_max_vd_activation(struct gxp_dev *gxp)
-{
-	/* Number of activated VD irrespective of number of PASIDs supported. */
-	return GXP_MAX_VD_ACTIVATION;
 }
 
 static int ganymede_platform_parse_dt(struct platform_device *pdev,

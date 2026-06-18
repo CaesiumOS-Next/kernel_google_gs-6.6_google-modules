@@ -114,9 +114,7 @@ struct gcip_fw_tracing *gcip_firmware_tracing_create(const struct gcip_fw_tracin
 
 	dentry = debugfs_create_dir("fw_tracing", args->dentry);
 	if (IS_ERR(dentry)) {
-		dev_warn(args->dev, "Failed to create debug FS tracing");
 		kfree(fw_tracing);
-
 		return (struct gcip_fw_tracing *)dentry;
 	}
 

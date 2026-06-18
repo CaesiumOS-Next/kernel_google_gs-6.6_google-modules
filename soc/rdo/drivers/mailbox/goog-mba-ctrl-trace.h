@@ -54,90 +54,106 @@ TRACE_EVENT(
 TRACE_EVENT(
 	goog_mba_ctrl_send_data_nq,
 
-	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *data),
+	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *payload,
+		 unsigned int payload_words),
 
-	TP_ARGS(mbox_info, data),
+	TP_ARGS(mbox_info, payload, payload_words),
 
 	TP_STRUCT__entry(
 		__array(char, dev_name, MAX_MBOX_CTRL_NAME)
-		__array(u32, data, MAX_NQ_PAYLOAD_WORDS)
+		__field(u32, payload_words)
+		__dynamic_array(u32, payload, payload_words)
 	),
 
 	TP_fast_assign(
-		int payload_size = min(mbox_info->payload_size, MAX_NQ_PAYLOAD_WORDS);
-
 		scnprintf(__entry->dev_name, MAX_MBOX_CTRL_NAME, "%s", dev_name(mbox_info->dev));
-		memcpy(__entry->data, data, payload_size * sizeof(*data))
+		__entry->payload_words = payload_words;
+		memcpy(__get_dynamic_array(payload), payload,
+		       payload_words * sizeof(u32));
 	),
 
-	TP_printk("%s: %#010x %#010x %#010x %#010x", __entry->dev_name,
-		  __entry->data[0], __entry->data[1], __entry->data[2], __entry->data[3])
+	TP_printk("%s: %s", __entry->dev_name,
+		  __print_array(__get_dynamic_array(payload),
+				__entry->payload_words, sizeof(u32)))
 );
 
 TRACE_EVENT(
 	goog_mba_ctrl_send_data_q,
 
-	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *data),
+	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *payload,
+		 unsigned int payload_words),
 
-	TP_ARGS(mbox_info, data),
+	TP_ARGS(mbox_info, payload, payload_words),
 
 	TP_STRUCT__entry(
 		__field(u32, tx_q_wr_ptr)
-		__array(u32, data, MAX_Q_PAYLOAD_WORDS)
+		__field(u32, payload_words)
+		__dynamic_array(u32, payload, payload_words)
 	),
 
 	TP_fast_assign(
 		__entry->tx_q_wr_ptr = mbox_info->tx_q_wr_ptr;
-		memcpy(__entry->data, data, MAX_Q_PAYLOAD_WORDS * sizeof(*data));
+		__entry->payload_words = payload_words;
+		memcpy(__get_dynamic_array(payload), payload,
+		       payload_words * sizeof(u32));
 	),
 
-	TP_printk("%#010x %#010x %#010x %#010x tx_q_wr_ptr=%u",
-		  __entry->data[0], __entry->data[1], __entry->data[2], __entry->data[3],
+	TP_printk("%s tx_q_wr_ptr=%u",
+		  __print_array(__get_dynamic_array(payload),
+				__entry->payload_words, sizeof(u32)),
 		  __entry->tx_q_wr_ptr)
 );
 
 TRACE_EVENT(
 	goog_mba_ctrl_process_nq_rx,
 
-	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *data),
+	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *payload),
 
-	TP_ARGS(mbox_info, data),
+	TP_ARGS(mbox_info, payload),
 
 	TP_STRUCT__entry(
 		__field(u32, rx_q_rd_ptr)
-		__array(u32, data, MAX_Q_PAYLOAD_WORDS)
+		__field(u32, payload_words)
+		__dynamic_array(u32, payload, mbox_info->payload_size)
 		__array(char, dev_name, MAX_MBOX_CTRL_NAME)
 	),
 
 	TP_fast_assign(
 		__entry->rx_q_rd_ptr = mbox_info->rx_q_rd_ptr;
-		memcpy(__entry->data, data, MAX_Q_PAYLOAD_WORDS * sizeof(*data));
+		__entry->payload_words = mbox_info->payload_size;
+		memcpy(__get_dynamic_array(payload), payload,
+		       mbox_info->payload_size * sizeof(u32));
 		scnprintf(__entry->dev_name, MAX_MBOX_CTRL_NAME, "%s", dev_name(mbox_info->dev));
 	),
 
-	TP_printk("%s: %#010x %#010x %#010x %#010x", __entry->dev_name,
-		  __entry->data[0], __entry->data[1], __entry->data[2], __entry->data[3])
+	TP_printk("%s: %s", __entry->dev_name,
+		  __print_array(__get_dynamic_array(payload),
+				__entry->payload_words, sizeof(u32)))
 );
 
 TRACE_EVENT(
 	goog_mba_ctrl_process_q_rx,
 
-	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *data),
+	TP_PROTO(struct goog_mba_ctrl_info *mbox_info, u32 *payload),
 
-	TP_ARGS(mbox_info, data),
+	TP_ARGS(mbox_info, payload),
 
 	TP_STRUCT__entry(
 		__field(u32, rx_q_rd_ptr)
-		__array(u32, data, MAX_Q_PAYLOAD_WORDS)
+		__field(u32, payload_words)
+		__dynamic_array(u32, payload, mbox_info->payload_size)
 	),
 
 	TP_fast_assign(
 		__entry->rx_q_rd_ptr = mbox_info->rx_q_rd_ptr;
-		memcpy(__entry->data, data, MAX_Q_PAYLOAD_WORDS * sizeof(*data));
+		__entry->payload_words = mbox_info->payload_size;
+		memcpy(__get_dynamic_array(payload), payload,
+		       mbox_info->payload_size * sizeof(u32));
 	),
 
-	TP_printk("%#010x %#010x %#010x %#010x rx_q_rd_ptr=%u",
-		  __entry->data[0], __entry->data[1], __entry->data[2], __entry->data[3],
+	TP_printk("%s rx_q_rd_ptr=%u",
+		  __print_array(__get_dynamic_array(payload),
+				__entry->payload_words, sizeof(u32)),
 		  __entry->rx_q_rd_ptr)
 );
 

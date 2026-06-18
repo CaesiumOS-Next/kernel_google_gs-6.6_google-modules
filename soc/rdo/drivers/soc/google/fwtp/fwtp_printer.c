@@ -383,7 +383,7 @@ fwtp_print_tracepoint(struct fwtp_printer_ctx *printer_ctx, unsigned int type,
 			break;
 		}
 
-		/* Print newline if needed and flush the line. */
+		/* Print newline if needed and flush the tracepoint. */
 		if (!printer_ctx->dont_append_new_line)
 			fwtp_buffered_append_output(printer_ctx, "\n");
 		fwtp_flush_output_buffer(printer_ctx);

@@ -7,6 +7,7 @@
 #include <linux/platform_device.h>
 #include <linux/irq.h>
 #include <linux/gpio.h>
+#include "include/uwb_coredump.h"
 #include "include/uwb_gpio.h"
 #include "include/uwb_fw_common.h"
 #include "include/uwb_power_stats.h"
@@ -52,7 +53,7 @@ static int uwb_request_irq(struct u100_ctx *u100_ctx, unsigned long irq_flag)
 
 	if (ret) {
 		UWB_ERR("Request IRQ:%d flags:%#08lX failed:%d\n", irq->num, irq->flags, ret);
-		return FW_ERROR_IO;
+		return ret;
 	}
 
 	irq->registered = true;
@@ -75,7 +76,8 @@ int uwb_init_irq(struct u100_ctx *u100_ctx, unsigned int num)
 	if (IS_ERR_OR_NULL(irq->u100_irq))
 		UWB_WARN("Init irq(%d) desc failed, ret %d\n", num,
 				PTR_ERR_OR_ZERO(irq->u100_irq));
-
+	else
+		UWB_INFO("IRQ init cnt %d", get_irq_count(irq->u100_irq));
 	/* Set edge-triggered IRQ at the beginning. */
 	return uwb_request_irq(u100_ctx, IRQF_TRIGGER_RISING);
 }
@@ -216,16 +218,27 @@ static void uwbs_sync_power_on_init(struct u100_ctx *u100_ctx, int wanted_state)
 static int uwbs_sync_power_on_check(struct u100_ctx *u100_ctx)
 {
 	int ret = 0;
+	u32 before_irq_cnt = get_irq_count(u100_ctx->gpio_u100_irq.u100_irq);
 
-	wait_for_completion_timeout(&u100_ctx->atr_done_cmpl, PROBE_ATTR_TIMEOUT);
+	if (!wait_for_completion_timeout(&u100_ctx->atr_done_cmpl, PROBE_ATTR_TIMEOUT)) {
+		ret = -ETIMEDOUT;
+		UWB_WARN("ATR did not arrive on time, irq_cnt %u-%u.", before_irq_cnt,
+			get_irq_count(u100_ctx->gpio_u100_irq.u100_irq));
+	}
 
 	mutex_lock(&u100_ctx->atr_lock);
 	u100_ctx->waiting_atr = false;
 
 	if (u100_ctx->u100_state != u100_ctx->u100_state_wanted) {
-		UWB_ERR("U100 sync-power-on error, U100 state %#x (expected %#x).\n",
-			u100_ctx->u100_state, u100_ctx->u100_state_wanted);
-		ret = FW_ERROR;
+		UWB_ERR("U100 sync-power-on error, U100 state %#x (expected %#x), irq_cnt %u-%u.\n",
+			u100_ctx->u100_state, u100_ctx->u100_state_wanted, before_irq_cnt,
+			get_irq_count(u100_ctx->gpio_u100_irq.u100_irq));
+		/*
+		 * Distinguish the cases of unwanted value(EPROTO) vs.
+		 * no ATR received(ETIMEDOUT).
+		 */
+		if (!ret)
+			ret = -EPROTO;
 	}
 
 	mutex_unlock(&u100_ctx->atr_lock);
@@ -240,7 +253,7 @@ static void uwbs_sync_power_on_abort(struct u100_ctx *u100_ctx)
 	mutex_unlock(&u100_ctx->atr_lock);
 }
 
-int uwbs_sync_reset(struct u100_ctx *u100_ctx)
+static int do_sync_reset(struct u100_ctx *u100_ctx, const char *coredump_tag)
 {
 	int ret;
 
@@ -260,13 +273,34 @@ int uwbs_sync_reset(struct u100_ctx *u100_ctx)
 
 	if (ret) {
 		uwbs_power_off(u100_ctx);
+		if (coredump_tag)
+			u100_report_coredump_on_poweron(u100_ctx, coredump_tag, ret);
 		return ret;
 	}
 
-	UWB_DEBUG("U100 sync reset successfully.\n");
+	/*
+	 * Request a level-triggered IRQ for UCI transmission.
+	 * An IRQ request failure is considered a system-level issue, not a UWB
+	 * subsystem fault. Therefore, we power off the chip but do not generate
+	 * a coredump.
+	 */
+	ret = uwb_request_irq(u100_ctx, IRQF_TRIGGER_HIGH);
+	if (ret)
+		uwbs_power_off(u100_ctx);
+	else
+		UWB_DEBUG("U100 sync reset successfully.\n");
 
-	/* Request a level-triggered IRQ for UCI transmission */
-	return uwb_request_irq(u100_ctx, IRQF_TRIGGER_HIGH);
+	return ret;
+}
+
+int uwbs_sync_reset(struct u100_ctx *u100_ctx)
+{
+	return do_sync_reset(u100_ctx, NULL);
+}
+
+int uwbs_sync_reset_and_coredump(struct u100_ctx *u100_ctx, const char *msg)
+{
+	return do_sync_reset(u100_ctx, msg);
 }
 
 int uwbs_start_download(struct u100_ctx *u100_ctx)

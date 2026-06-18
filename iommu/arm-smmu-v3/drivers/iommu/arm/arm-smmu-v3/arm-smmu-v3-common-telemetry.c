@@ -29,7 +29,7 @@ module_param(smmu_telemetry_enable, bool, false);
  */
 static DEFINE_STATIC_KEY_FALSE(iommu_telemetry_on);
 
-/**
+/*
  * sysfs support for device telemetry
  */
 static ssize_t device_id_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -168,13 +168,12 @@ static const struct kobj_type device_ktype = {
 	.release = device_release,
 };
 
-/**
+/*
  * sysfs support smmu for domain telemetry
  */
 static ssize_t map_sg_count_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	struct arm_smmu_domain_telemetry_common *asdtc;
-	int offset = 0;
 	unsigned long map_sg_count = 0;
 
 	asdtc = container_of(kobj, struct arm_smmu_domain_telemetry_common, domain_kobj);
@@ -188,15 +187,12 @@ static ssize_t map_sg_count_show(struct kobject *kobj, struct kobj_attribute *at
 		return -EINVAL;
 	}
 
-	offset += sysfs_emit_at(buf, offset, "%lu", map_sg_count);
-
-	return offset;
+	return sysfs_emit(buf, "%lu\n", map_sg_count);
 }
 
 static ssize_t avg_sg_list_len_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	struct arm_smmu_domain_telemetry_common *asdtc;
-	int offset = 0;
 	unsigned long map_sg_count = 0;
 	unsigned long sg_len_total = 0;
 	unsigned int avg = 0;
@@ -224,60 +220,47 @@ static ssize_t avg_sg_list_len_show(struct kobject *kobj, struct kobj_attribute 
 	if (map_sg_count)
 		avg = div_u64(sg_len_total, map_sg_count);
 
-	offset += sysfs_emit_at(buf, offset, "%u", avg);
-
-	return offset;
+	return sysfs_emit(buf, "%u\n", avg);
 }
 
 static ssize_t domain_id_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	struct arm_smmu_domain_telemetry_common *asdtc;
-	int offset = 0;
 
 	asdtc = container_of(kobj, struct arm_smmu_domain_telemetry_common, domain_kobj);
 	switch (asdtc->mode) {
 	case NON_PKVM_MODE_DRIVER:
 		break;
 	case PKVM_MODE_DRIVER:
-		offset += sysfs_emit_at(buf, offset, "%d", asdtc->data.kasdt.domain_id);
-		break;
+		return sysfs_emit(buf, "%d\n", asdtc->data.kasdt.domain_id);
 	default:
 		return -EINVAL;
 	}
 
-	return offset;
+	return 0;
 }
 
 static ssize_t mode_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	struct arm_smmu_domain_telemetry_common *asdtc;
-	int offset = 0;
 
 	asdtc = container_of(kobj, struct arm_smmu_domain_telemetry_common, domain_kobj);
-	offset += sysfs_emit_at(buf, offset, "%s",
-				asdtc->mode ? "pKVM mode" : "non-pKVM mode");
-
-	return offset;
+	return sysfs_emit(buf, "%s\n", asdtc->mode ? "pKVM mode" : "non-pKVM mode");
 }
 
 static ssize_t type_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	struct arm_smmu_domain_telemetry_common *asdtc;
-	int offset = 0;
 
 	asdtc = container_of(kobj, struct arm_smmu_domain_telemetry_common, domain_kobj);
 	switch (asdtc->type) {
 	case DOMAIN_TYPE_S1:
-		offset += sysfs_emit_at(buf, offset, "%s", "S1");
-		break;
+		return sysfs_emit(buf, "S1\n");
 	case DOMAIN_TYPE_S2:
-		offset += sysfs_emit_at(buf, offset, "%s", "S2");
-		break;
+		return sysfs_emit(buf, "S2\n");
 	default:
 		return 0;
 	}
-
-	return offset;
 }
 
 static ssize_t iova_span_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -504,7 +487,7 @@ static const struct kobj_type domain_ktype = {
 	.release = domain_release,
 };
 
-/**
+/*
  * sysfs support for s2 telemetry
  */
 static ssize_t s2_atomic_pool_alloc_reqs_show(struct kobject *kobj,
@@ -525,6 +508,12 @@ static ssize_t s2_atomic_pool_pages_in_use_show(struct kobject *kobj,
 	return sysfs_emit(buf, "%lld\n", shared_telemetry->hs2t.s2_atomic_pages.pages_in_use);
 }
 
+static ssize_t s2_atomic_pool_max_pages_used_show(struct kobject *kobj,
+						  struct kobj_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%lld\n", shared_telemetry->hs2t.s2_atomic_pages.max_pages_used);
+}
+
 static ssize_t num_s2_tlb_invalidates_show(struct kobject *kobj,
 					   struct kobj_attribute *attr, char *buf)
 {
@@ -538,6 +527,8 @@ static struct kobj_attribute s2_atomic_pool_alloc_reqs_attr = __ATTR_RO(s2_atomi
 static struct kobj_attribute s2_atomic_pool_free_reqs_attr = __ATTR_RO(s2_atomic_pool_free_reqs);
 static struct kobj_attribute s2_atomic_pool_pages_in_use_attr =
 							__ATTR_RO(s2_atomic_pool_pages_in_use);
+static struct kobj_attribute s2_atomic_pool_max_pages_used_attr =
+							__ATTR_RO(s2_atomic_pool_max_pages_used);
 static struct kobj_attribute num_s2_tlb_invalidates_attr = __ATTR_RO(num_s2_tlb_invalidates);
 
 #define DEFINE_S2_MAP_ATTR(size, idx)							\
@@ -565,6 +556,7 @@ static struct attribute *stage2_idmap_attrs[] = {
 	&s2_atomic_pool_alloc_reqs_attr.attr,
 	&s2_atomic_pool_free_reqs_attr.attr,
 	&s2_atomic_pool_pages_in_use_attr.attr,
+	&s2_atomic_pool_max_pages_used_attr.attr,
 	&num_s2_tlb_invalidates_attr.attr,
 	&num_s2_4K_mapping_attr.attr,
 	&num_s2_16K_mapping_attr.attr,
@@ -582,7 +574,7 @@ static const struct attribute_group stage2_idmap_group = {
 	.attrs = stage2_idmap_attrs,
 };
 
-/**
+/*
  * sysfs support for files at root level
  */
 static ssize_t enable_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -619,7 +611,7 @@ static const struct attribute *root_attrs[] = {
 	NULL
 };
 
-/**
+/*
  * Telemetry recording APIs
  */
 void arm_smmu_dom_tlm_inc_map_sg_cnt(struct arm_smmu_domain_telemetry_common *asdtc)
@@ -845,7 +837,7 @@ void arm_smmu_dom_tlm_rec_iova_pa_alignment(struct arm_smmu_domain_telemetry_com
 	}
 }
 
-/**
+/*
  * Telemetry initialization for root level, domain level or device level
  */
 static void update_hyp_tel_enable(int set)

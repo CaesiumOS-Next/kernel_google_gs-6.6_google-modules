@@ -3,7 +3,7 @@
  * Contents are wifi-specific, used by any kernel or app-level
  * software that might want wifi things as it grows.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -29,13 +29,17 @@
 
 /* 320Mhz Chan Id to Center Channel map */
 static const uint8 BCMPOST_TRAP_RODATA(map_320m_chanid_cc)[] = {
-	31,    /* CC 31 */
-	95,    /* CC 63 */
-	159,   /* CC 95 */
+	31,    /* chanid 0 */
+	95,    /* chanid 1 */
+	159,   /* chanid 2 */
+#ifdef BCMWIFI_BAND6G_BAND7
+	223,   /* chanid 3 */
+#else
 	0,     /* INVALCHAN */
-	63,    /* CC 127 */
-	127,   /* CC 159 */
-	191,   /* CC 191 */
+#endif
+	63,    /* chanid 4 */
+	127,   /* chanid 5 */
+	191,   /* chanid 6 */
 };
 
 /**

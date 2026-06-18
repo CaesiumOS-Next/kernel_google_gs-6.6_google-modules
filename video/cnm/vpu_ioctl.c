@@ -27,6 +27,7 @@
 #include <uapi/linux/dma-buf.h>
 #include <soc/google/google-cdd.h>
 
+#include "vpu_common.h"
 #include "vpu_priv.h"
 #include "vpu_pm.h"
 #include "vpu_of.h"
@@ -67,6 +68,10 @@ static int vpu_set_inst(struct vpu_core *core, uint32_t inst_idx, struct vpu_ins
 		return -ENODEV;
 	}
 	spin_lock_irqsave(&core->inst_lock, flags);
+	if (!inst && !core->instances[inst_idx]) {
+		spin_unlock_irqrestore(&core->inst_lock, flags);
+		return -ENODEV;
+	}
 	if (inst && core->instances[inst_idx]) {
 		spin_unlock_irqrestore(&core->inst_lock, flags);
 		pr_err("%s previous instance index %u is not closed properly\n",
@@ -135,28 +140,29 @@ static void vpu_put_inst(struct vpu_inst *inst)
 	kref_put(&inst->refcount, vpu_inst_release);
 }
 
-struct vpu_dmabuf_info *vpu_get_fw_debug_buf(struct vpu_core *core)
+static void vpu_get_fw_debug_buf(struct vpu_core *core)
 {
 	struct vpu_dmabuf_info *curr, *temp;
 	/* vpuapi is using index 0 when allocating debug buf */
 	struct vpu_dmabuf_list *dmabuf_list = &core->dmabuf_list[0];
-	struct vpu_dmabuf_info *dmabuf_info = NULL;
 	uint32_t debug_buf_iova = READ_VPU_REGISTER(core, CMD_COMMON_MEM_DEBUG_BASE);
 
 	if (!debug_buf_iova)
-		return NULL;
+		return;
 
 	mutex_lock(&dmabuf_list->lock);
+	if (core->fw_debug_buf) {
+		mutex_unlock(&dmabuf_list->lock);
+		return;
+	}
 	list_for_each_entry_safe(curr, temp, &dmabuf_list->allocs, list) {
 		if (curr->iova == debug_buf_iova) {
-			dmabuf_info = curr;
+			core->fw_debug_buf = curr;
 			dev_dbg(core->dev, "found debug buf iova %pad\n", &curr->iova);
 			break;
 		}
 	}
 	mutex_unlock(&dmabuf_list->lock);
-
-	return dmabuf_info;
 }
 
 static int vpu_open_inst(struct vpu_core *core, uint32_t inst_idx)
@@ -189,8 +195,7 @@ static int vpu_open_inst(struct vpu_core *core, uint32_t inst_idx)
 	 * TODO: Add an ioctl to explicitly set fw debug buf if we need to know debug memory
 	 * before the first VPU_IOCX_OPEN_INSTANCE
 	 */
-	if (!core->fw_debug_buf)
-		core->fw_debug_buf = vpu_get_fw_debug_buf(core);
+	vpu_get_fw_debug_buf(core);
 
 	/* don't access inst after vpu_set_inst to avoid UAF issue
 	 * when vpu_close_inst is called before vpu_open_inst returns
@@ -240,6 +245,7 @@ static int vpu_close_inst(struct vpu_inst *inst)
 {
 	struct vpu_core *core;
 	unsigned int inst_idx;
+	int rc;
 
 	if (!inst) {
 		pr_err("VPU instance is NULL");
@@ -248,7 +254,13 @@ static int vpu_close_inst(struct vpu_inst *inst)
 
 	core = inst->core;
 	inst_idx = inst->idx;
-	vpu_set_inst(core, inst->idx, NULL);
+	rc = vpu_set_inst(core, inst->idx, NULL);
+	if (rc) {
+		if (rc == -ENODEV)
+			dev_info(core->dev, "VPU instance %d is already closed\n", inst_idx);
+		return rc;
+	}
+
 	kref_put(&inst->refcount, vpu_inst_release);
 
 	pr_info("closed VPU instance index %d\n", inst_idx);
@@ -425,20 +437,33 @@ err_find_dma_heap:
 	return -ENOMEM;
 }
 
-static struct vpu_dmabuf_info * pull_dmabuf_info(struct list_head *l, struct mutex *list_lock, struct vpu_dmabuf *dmabuf)
+static struct vpu_dmabuf_info *pull_dmabuf_info(struct vpu_core *core,
+					       struct list_head *l,
+					       struct mutex *list_lock,
+					       struct vpu_dmabuf *dmabuf)
 {
 	struct vpu_dmabuf_info *curr, *next;
 	struct vpu_dmabuf_info *found = NULL;
+	bool is_debug_buf = false;
 
 	mutex_lock(list_lock);
 	list_for_each_entry_safe(curr, next, l, list) {
 		if (curr->fd == dmabuf->fd) {
+			if (core->fw_debug_buf == curr) {
+				is_debug_buf = true;
+				dev_dbg(core->dev, "defer release fw debug buffer fd %d\n", dmabuf->fd);
+				break;
+			}
 			list_del(&curr->list);
 			found = curr;
 			break;
 		}
 	}
 	mutex_unlock(list_lock);
+
+	if (!found && !is_debug_buf)
+		dev_err(core->dev, "Failed to find dmabuf fd : %d\n", dmabuf->fd);
+
 	return found;
 }
 
@@ -455,15 +480,14 @@ static void _vpu_free_dma_info(struct vpu_dmabuf_info *dma_info)
 	kfree(dma_info);
 }
 
-static void vpu_free_dma_buf(struct list_head *l, struct mutex *list_lock, struct vpu_dmabuf *dmabuf)
+static void vpu_free_dma_buf(struct vpu_core *core, struct list_head *l,
+			     struct mutex *list_lock, struct vpu_dmabuf *dmabuf)
 {
 	struct vpu_dmabuf_info *dma_info;
 
-	dma_info = pull_dmabuf_info(l, list_lock, dmabuf);
-	if (!dma_info) {
-		pr_err("Failed to find dmabuf fd : %d\n", dmabuf->fd);
+	dma_info = pull_dmabuf_info(core, l, list_lock, dmabuf);
+	if (!dma_info)
 		return;
-	}
 	_vpu_free_dma_info(dma_info);
 }
 
@@ -730,7 +754,7 @@ static int vpu_set_bandwidth(struct vpu_core *core, const struct vpu_bandwidth_i
 	return rc;
 }
 
-int vpu_dma_buf_sync(struct vpu_buf_sync *sync)
+static int vpu_dma_buf_sync(struct vpu_buf_sync *sync)
 {
 	int ret;
 	struct dma_buf *dmabuf;
@@ -865,11 +889,7 @@ static long vpu_unlocked_ioctl(struct file *fp, unsigned int cmd,
 					rc = -EINVAL;
 					break;
 				}
-				if (core->fw_debug_buf && core->fw_debug_buf->fd == dmabuf.fd) {
-					/* defer release fw debug buffer */
-					break;
-				}
-				vpu_free_dma_buf(alloc_list, list_lock, &dmabuf);
+				vpu_free_dma_buf(core, alloc_list, list_lock, &dmabuf);
 				if (copy_to_user(user_desc, &dmabuf, sizeof(dmabuf))) {
 					pr_err("Failed to copy to user\n");
 					rc = -EFAULT;
@@ -911,7 +931,7 @@ static long vpu_unlocked_ioctl(struct file *fp, unsigned int cmd,
 					pr_err("Put iova with invalid index %u\n", dmabuf.inst_idx);
 					return -EINVAL;
 				}
-				vpu_free_dma_buf(&core->dmabuf_list[dmabuf.inst_idx].mappings,
+				vpu_free_dma_buf(core, &core->dmabuf_list[dmabuf.inst_idx].mappings,
 						 &core->dmabuf_list[dmabuf.inst_idx].lock,
 						 &dmabuf);
 				if (copy_to_user(user_desc, &dmabuf, sizeof(dmabuf))) {
@@ -1192,8 +1212,9 @@ static int vpu_release(struct inode *inode, struct file *file)
 
 		mutex_lock(&dmabuf_list->lock);
 		list_for_each_entry_safe(curr, temp, &dmabuf_list->allocs, list) {
-			if (core->fw_debug_buf && core->fw_debug_buf->iova == curr->iova) {
+			if (core->fw_debug_buf && core->fw_debug_buf == curr) {
 				dev_dbg(core->dev, "free debug buffer iova %pad\n", &curr->iova);
+				core->fw_debug_buf = NULL;
 			} else {
 				dev_warn(core->dev,
 					"inst[%d] has leaked allocation fd %d iova %pad\n",
@@ -1211,8 +1232,6 @@ static int vpu_release(struct inode *inode, struct file *file)
 		}
 		mutex_unlock(&dmabuf_list->lock);
 	}
-
-	core->fw_debug_buf = NULL;
 
 	return 0;
 }

@@ -5398,6 +5398,8 @@ static void gti_input_set_timestamp(struct goog_touch_interface *gti, ktime_t ti
 			ktime_sub(gti->resample_latency, RESAMPLE_LATENCY_DEFAULT));
 		input_set_timestamp(gti->vendor_input_dev, final_timestamp);
 		ATRACE_INT("Input subsystem timestamp", final_timestamp);
+		ATRACE_INT("Resample latency offset",
+			   ktime_sub(gti->resample_latency, RESAMPLE_LATENCY_DEFAULT));
 		gti->input_dev_mono_ktime = timestamp;
 	}
 }
@@ -5408,6 +5410,8 @@ static irqreturn_t gti_irq_handler(int irq, void *data)
 	struct goog_touch_interface *gti = (struct goog_touch_interface *)data;
 
 	gti->irq_index++;
+	__ATRACE_INT_PID(0, "gti_th_irq_index", gti->irq_index);
+
 	if (gti->vendor_irq_handler != NULL && gti->vendor_irq_cookie != NULL)
 		ret = gti->vendor_irq_handler(irq, gti->vendor_irq_cookie);
 	else
@@ -5418,11 +5422,13 @@ static irqreturn_t gti_irq_handler(int irq, void *data)
 
 static irqreturn_t gti_irq_thread_fn(int irq, void *data)
 {
+	char trace_tag[64];
 	int pm_ret;
 	irqreturn_t ret = IRQ_NONE;
 	struct goog_touch_interface *gti = (struct goog_touch_interface *)data;
 
-	ATRACE_BEGIN(__func__);
+	scnprintf(trace_tag, sizeof(trace_tag), "%s: IRQ_IDX=%lld.", __func__, gti->irq_index);
+	ATRACE_BEGIN(trace_tag);
 	/*
 	 * Allow vendor driver to handle wake-up gesture events by irq_thread_fn()
 	 * after pm_suspend() complete without requiring a prior request for an IRQ

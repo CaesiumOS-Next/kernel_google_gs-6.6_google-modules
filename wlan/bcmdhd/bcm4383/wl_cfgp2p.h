@@ -1,7 +1,7 @@
 /*
  * Linux cfgp2p driver
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -53,10 +53,12 @@ typedef enum {
 	P2P_SCAN_PURPOSE_MAX
 } p2p_scan_purpose_t;
 
+
 /** vendor ies max buffer length for probe response or beacon */
 #define VNDR_IES_MAX_BUF_LEN	1400
 /** normal vendor ies buffer length */
-#define VNDR_IES_BUF_LEN 		512
+#define VNDR_IES_BUF_LEN 	512
+
 
 struct p2p_bss {
 	s32 bssidx;

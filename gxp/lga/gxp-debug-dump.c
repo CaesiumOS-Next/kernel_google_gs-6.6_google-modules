@@ -588,6 +588,11 @@ static int gxp_map_ns_image_config_section(struct gxp_dev *gxp, struct gxp_virtu
 		if (daddr != vd->ns_regions[idx].daddr)
 			continue;
 
+		/*
+		 * Sync the SG buffer for CPU access before adding it to the segments.
+		 * This ensures the latest data is visible to the CPU for dumping.
+		 */
+		gxp_dma_sync_sg_for_cpu(gxp, sgt->sgl, sgt->orig_nents, DMA_BIDIRECTIONAL);
 		return gxp_add_seg(
 			mgr, core_id, seg_idx, gcip_noncontiguous_sgt_to_mem(sgt),
 			gcip_ns_config_to_size(
@@ -984,10 +989,11 @@ static int gxp_debug_dump_add_segments(struct gxp_dev *gxp, struct gxp_virtual_d
 #endif /* GXP_HAS_MCU */
 
 	core_cfg = vd->core_cfg.virt_addr + (vd->core_cfg.size / GXP_NUM_CORES) * virt_core_id;
-	scnprintf(mgr->sscd_segments[core_id].sscd_msg, SSCD_MSG_LENGTH - 1,
-		  "gxp debug dump (vdid %d)(core %0x)(exccause:0x%x, excvaddr:0x%x, epc1:0x%x)",
-		  vd->vdid, core_id, core_cfg->crash_exccause, core_cfg->crash_excvaddr,
-		  core_cfg->crash_epc1);
+	scnprintf(
+		mgr->sscd_segments[core_id].sscd_msg, SSCD_MSG_LENGTH - 1,
+		"gxp debug dump (vdid %d)(core %0x)(device_id: 0x%x)(exccause:0x%x, excvaddr:0x%x, epc1:0x%x)",
+		vd->vdid, core_id, core_cfg->device_id, core_cfg->crash_exccause,
+		core_cfg->crash_excvaddr, core_cfg->crash_epc1);
 
 out_add_seg:
 	if (ret)

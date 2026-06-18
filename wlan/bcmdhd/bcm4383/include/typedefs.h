@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -115,7 +115,7 @@ typedef unsigned __int64 uint64;
 #define TYPEDEF_ULONG
 #endif
 
-#if defined(__linux__) && !(defined(EFI) || defined(WL_UNITTEST))
+#if defined(__linux__) && defined(__KERNEL__) && !(defined(EFI) || defined(WL_UNITTEST))
 /*
  * If this is either a Linux hybrid build or the per-port code of a hybrid build
  * then use the Linux header files to get some of the typedefs.  Otherwise, define
@@ -348,9 +348,17 @@ typedef float64 float_t;
 /* Force inlining. */
 #if defined(BWL_COMPILER_GNU)
 #define INLINE_ALWAYS	inline  __attribute__ ((always_inline))
+#if defined(DATAPATH_NOINLINE_PERF)
+/* do not use always inline to avoid increase in DP fn size
+ * this can be used for select DP api's based on size
+ */
+#define INLINE_ALWAYS_DP	INLINE
+#else
+#define INLINE_ALWAYS_DP	INLINE_ALWAYS
+#endif /* WL_DATAPATH_PERF */
 #else
 #define INLINE_ALWAYS	INLINE
-#endif
+#endif /* BWL_COMPILER_GNU */
 
 #undef TYPEDEF_BOOL
 #undef TYPEDEF_UCHAR

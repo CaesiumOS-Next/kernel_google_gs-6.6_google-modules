@@ -1,7 +1,7 @@
 /*
  * DHD Linux header file (dhd_linux exports for cfg80211 and other components)
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -43,15 +43,15 @@
 #if defined(CONFIG_HAS_EARLYSUSPEND) && defined(DHD_USE_EARLYSUSPEND)
 #include <linux/earlysuspend.h>
 #endif /* defined(CONFIG_HAS_EARLYSUSPEND) && defined(DHD_USE_EARLYSUSPEND) */
-#if defined(CONFIG_WIFI_CONTROL_FUNC) || defined(CUSTOMER_HW4)
-#include <linux/wlan_plat.h>
-#else
 #include <dhd_plat.h>
-#endif /* CONFIG_WIFI_CONTROL_FUNC */
 
 #ifdef BCMPCIE
 #include <bcmmsgbuf.h>
 #endif /* BCMPCIE */
+
+#if defined(RTT_SUPPORT) && defined(WL_CFG80211)
+#include <dhd_rtt.h>
+#endif /* RTT_SUPPORT && WL_CFG80211 */
 
 #ifdef PCIE_FULL_DONGLE
 #include <etd.h>
@@ -73,6 +73,7 @@
 #define ALL_ADDR_VAL (PC_FOUND_BIT | LR_FOUND_BIT)
 #define READ_NUM_BYTES 1000
 #define DHD_FUNC_STR_LEN 80
+#define DHD_TRAP_CODE_LEN 12u
 #define DHD_TRAP_STR_LEN (DHD_FUNC_STR_LEN * 2)
 
 #define DHD_COREDUMP_MAGIC 0xDDCEDACF
@@ -102,7 +103,9 @@ enum coredump_types {
 #ifdef COEX_CPU
 	DHD_COREDUMP_TYPE_COEX_DUMP             = 12,
 #endif /* COEX_CPU */
-	DHD_COREDUMP_TYPE_MAX			= 13
+	DHD_COREDUMP_TYPE_SSSRDUMP_CMN		= 13,
+	DHD_COREDUMP_TYPE_SSSRDUMP_SRCB		= 14,
+	DHD_COREDUMP_TYPE_MAX			= 15
 };
 
 #ifdef DHD_SSSR_DUMP
@@ -359,6 +362,7 @@ typedef struct dhd_if {
 	uint8 tx_paths_active;
 	bool del_in_progress;
 	bool static_if;			/* used to avoid some operations on static_if */
+	bool mgmt_if;			/* differentiate interfaces exposed only for mgmt purpose */
 #ifdef DHD_4WAYM4_FAIL_DISCONNECT
 	struct delayed_work m4state_work;
 	atomic_t m4state;
@@ -377,6 +381,10 @@ typedef struct dhd_if {
 #endif /* DHD_POST_EAPOL_M1_AFTER_ROAM_EVT */
 	uint64 rx_pkts;		/* per interface total rx pkts, can be cleared with iovar */
 	uint64 tx_pkts;		/* per interface total tx pkts, can be cleared with iovar */
+	bool	llc_enabled;	/* Indicate/configure  Additional llc header enabled */
+	uint8	*llc_hdr;	/* Additional llc header data */
+	uint8	llc_hdr_len;	/* Additional llc header data length */
+	uint8	llc_headroom_added_len;	/* Headroom length added to this net dev for LLC */
 	bool	dhcp_request_pending;
 } dhd_if_t;
 
@@ -507,4 +515,7 @@ void dhd_set_platform_ext_name_for_chip_version(char *chip_version);
 #endif /* USE_CID_CHECK */
 #endif /* SUPPORT_MULTIPLE_NVRAM || SUPPORT_MULTIPLE_CLMBLOB */
 extern void dhd_os_skbq_dump(struct sk_buff_head *qdump, char *qname);
+#if defined(RTT_SUPPORT) && defined(WL_CFG80211)
+int dhd_dev_rtt_capability_mc_az(struct net_device *dev, rtt_capabilities_mc_az_t *capa);
+#endif /* RTT_SUPPORT && WL_CFG80211 */
 #endif /* __DHD_LINUX_H__ */

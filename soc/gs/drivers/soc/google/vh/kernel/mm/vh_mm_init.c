@@ -20,6 +20,7 @@
 #include "../../include/pixel_mm.h"
 
 static struct task_struct *tsk_kswapd, *tsk_kcompactd;
+static atomic_t gup_longterm_lock_fail_count = ATOMIC_INIT(0);
 
 /*
  * Last requested kcompactd CPU affinity.
@@ -293,6 +294,39 @@ static void vh_kvmalloc_high_order_skip_direct_reclaim(void *data,
 		*gfp_flags &= ~__GFP_DIRECT_RECLAIM;
 }
 
+static void rvh_gup_longterm_locked(void *data,
+				    long rc,
+				    long nr_pinned_pages,
+				    unsigned long start,
+				    unsigned long nr_pages,
+				    struct page **pages)
+{
+	/* increment fail cnt while gup longterm vh is called */
+	atomic_inc(&gup_longterm_lock_fail_count);
+
+	/*
+	 * Determine the final return code. If rc is set, it indicates a failure
+	 * after the initial pinning (e.g., migration failure). Otherwise, the
+	 * result is from the initial pinning attempt itself.
+	 */
+	pr_warn_ratelimited("FOLL_LONGTERM failed for %s PID:%d start=0x%lx, nr_pages=%lu error: %ld nr_pinned_pages: %ld\n",
+			    current->comm, task_pid_nr(current),
+			    start, nr_pages, rc, nr_pinned_pages);
+
+	/*
+	 * Only case rc == -ENOMEM indicates migration fail
+	 * Dump only the first page to avoid log spam. Dumping the full list
+	 * doesn't reveal the elevated refcount holder regardless.
+	 * To debug refcounts, we should eventually enable page_pinnder.
+	 * For now, this hook focuses on failure statistics and error codes
+	 */
+	if (rc == -ENOMEM && pages && pages[0]) {
+		dump_page(pages[0],
+			  "FOLL_LONGTERM migration fail - pinned page");
+		pr_warn_ratelimited("dump_page call completed for page[0]\n");
+	}
+}
+
 static void reset_page_oem_fields(unsigned long *check_flags)
 {
 	*check_flags = *check_flags & ~(1UL << PG_oem_reserved_1);
@@ -335,11 +369,35 @@ static void vh_check_new_page(void *data, unsigned long *check_flags)
 
 VENDOR_MM_RW(kcompactd_cpu_affinity);
 
+static ssize_t fail_of_gup_longterm_locked_show(struct kobject *kobj,
+						struct kobj_attribute *attr,
+						char *buf)
+{
+	return sysfs_emit(buf, "%u\n", atomic_read(&gup_longterm_lock_fail_count));
+}
+
+static ssize_t fail_of_gup_longterm_locked_store(struct kobject *kobj,
+						 struct kobj_attribute *attr,
+						 const char *buf,
+						 size_t len)
+{
+	int ret = -EINVAL;
+	u32 val = 0;
+
+	if (kstrtou32(buf, 10, &val))
+		return ret;
+	atomic_set(&gup_longterm_lock_fail_count, val);
+	return len;
+}
+
+VENDOR_MM_RW(fail_of_gup_longterm_locked);
+
 static struct attribute *vendor_mm_attrs[] = {
 	&kswapd_cpu_affinity_attr.attr,
 	&kswapd_uclamp_min_attr.attr,
 	&kcompactd_cpu_affinity_attr.attr,
 	&kcompactd_uclamp_min_attr.attr,
+	&fail_of_gup_longterm_locked_attr.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(vendor_mm);
@@ -447,6 +505,10 @@ static int vh_mm_init(void)
 		goto out_err;
 
 	ret = register_trace_android_vh_do_async_mmap_readahead(vh_do_async_mmap_readahead, NULL);
+	if (ret)
+		goto out_err;
+
+	ret = register_trace_android_rvh_gup_longterm_locked(rvh_gup_longterm_locked, NULL);
 	if (ret)
 		goto out_err;
 

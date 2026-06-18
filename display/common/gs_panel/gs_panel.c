@@ -1264,6 +1264,34 @@ void gs_dsi_cmd_align(struct gs_panel *ctx)
 }
 EXPORT_SYMBOL_GPL(gs_dsi_cmd_align);
 
+/**
+ * gs_log_brightness() - log brightness updates with conditional levels
+ * @ctx: panel context
+ * @req: requested brightness level
+ * @br: actual brightness level applied to hardware
+ */
+static void gs_log_brightness(struct gs_panel *ctx, int req, int br)
+{
+	struct gs_bl_stats *stats = &ctx->bl_stats;
+	struct device *dev = ctx->dev;
+	bool is_lp_mode = ctx->current_mode ? ctx->current_mode->gs_mode.is_lp_mode : false;
+
+	/* Print brightness in these scenarios
+	 * 1. Power transitions (ON <-> OFF, AOD->ON/OFF)
+	 * 2. HBM mode transition
+	 * 3. Request brightness is constrained
+	 */
+	if (((br != 0) != (stats->last_br != 0)) || (ctx->hbm_mode != stats->last_hbm) ||
+	    (!is_lp_mode && stats->was_lp_mode) || (req != br)) {
+		dev_info(dev, "req: %d, br: %d, hbm: %d\n", req, br, ctx->hbm_mode);
+	} else {
+		dev_dbg(dev, "req: %d, br: %d, hbm: %d\n", req, br, ctx->hbm_mode);
+	}
+	stats->last_br = br;
+	stats->last_hbm = ctx->hbm_mode;
+	stats->was_lp_mode = is_lp_mode;
+}
+
 static int gs_update_backlight_status(struct backlight_device *bl)
 {
 	struct gs_panel *ctx = bl_get_data(bl);
@@ -1311,7 +1339,7 @@ static int gs_update_backlight_status(struct backlight_device *bl)
 		dev_dbg(dev, "bl range is changed to %d\n", bl_range);
 	}
 
-	dev_info(dev, "req: %d, br: %d\n", bl->props.brightness, brightness);
+	gs_log_brightness(ctx, bl->props.brightness, brightness);
 
 	mutex_unlock(&ctx->mode_lock); /*TODO(b/267170999): MODE*/
 	PANEL_ATRACE_END(__func__);

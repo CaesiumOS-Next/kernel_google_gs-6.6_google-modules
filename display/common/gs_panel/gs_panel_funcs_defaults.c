@@ -337,7 +337,7 @@ void gs_panel_set_binned_lp_helper(struct gs_panel *ctx, const u16 brightness)
 	gs_panel_send_cmdset(ctx, &binned_lp->cmdset);
 
 	ctx->current_binned_lp = binned_lp;
-	dev_dbg(ctx->dev, "enter lp_%s\n", ctx->current_binned_lp->name);
+	dev_info(ctx->dev, "enter lp_%s\n", ctx->current_binned_lp->name);
 
 	panel_state = !binned_lp->bl_threshold ? GPANEL_STATE_BLANK : GPANEL_STATE_LP;
 	gs_panel_set_backlight_state(ctx, panel_state);

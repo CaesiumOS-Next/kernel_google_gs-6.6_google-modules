@@ -140,8 +140,10 @@ static int dump_old_state(char **out_buffer, size_t *out_buffer_size,
 	/* first call is to find buffer size */
 	count = __dump_old_state(NULL, INT_MAX, old_state);
 	*out_buffer = vzalloc(count + 1);
-	if (!out_buffer)
+	if (!out_buffer) {
+		DPU_ATRACE_END("vs_drm_dump_old_state");
 		return -ENOMEM;
+	}
 	/* second call writes to buffer */
 	__dump_old_state(*out_buffer, count, old_state);
 	*out_buffer_size = count;
@@ -180,8 +182,10 @@ static int dump_current_state(char **out_buffer, size_t *out_buffer_size,
 	/* first call is to find buffer size */
 	count = __dump_current_state(NULL, INT_MAX, drm_dev);
 	*out_buffer = vzalloc(count + 1);
-	if (!out_buffer)
+	if (!out_buffer) {
+		DPU_ATRACE_END("vs_drm_dump_current_state");
 		return -ENOMEM;
+	}
 	/* second call writes to buffer */
 	__dump_current_state(*out_buffer, count, drm_dev);
 	*out_buffer_size = count;

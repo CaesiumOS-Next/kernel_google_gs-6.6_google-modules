@@ -5,7 +5,7 @@
  * IEEE Std 802.1X-2001
  * IEEE 802.1X RADIUS Usage Guidelines
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -110,6 +110,7 @@ typedef BWL_PRE_PACKED_STRUCT struct {
 #define EAPOL_WPA_KEY_RSC_LEN		8u
 #define EAPOL_WPA_KEY_ID_LEN		8u
 #define EAPOL_WPA_KEY_DATA_LEN		(EAPOL_WPA_MAX_KEY_SIZE + EAPOL_AKW_BLOCK_LEN)
+#define EAPOL_WPA_MIN_KEY_SIZE		16u
 #define EAPOL_WPA_MAX_KEY_SIZE		32u
 #define EAPOL_WPA_KEY_MAX_MIC_LEN	32u
 #define EAPOL_WPA_ENCR_KEY_MAX_LEN	64u
@@ -252,6 +253,14 @@ typedef BWL_PRE_PACKED_STRUCT struct {
 #define WPA2_KEY_DATA_SUBTYPE_MLO_IGTK		17
 #define WPA2_KEY_DATA_SUBTYPE_MLO_BIGTK		18
 #define WPA2_KEY_DATA_SUBTYPE_MLO_LINK_KDE	19
+
+#ifdef WL_RCM
+/* note: RCM comes after WPA2 but SUBTYPE space is same as WPA2 */
+#define RSN_KEY_DATA_SUBTYPE_RCM_DEV_ID		20u
+#define RSN_KEY_DATA_SUBTYPE_RCM_IRM		21u
+#define WPA2_KEY_DATA_SUBTYPE_RCM_DEV_ID RSN_KEY_DATA_SUBTYPE_RCM_DEV_ID
+#define WPA2_KEY_DATA_SUBTYPE_RCM_IRM RSN_KEY_DATA_SUBTYPE_RCM_IRM
+#endif /* WL_RCM */
 
 #define WPA2_GTK_INDEX_MASK			0x03
 #define WPA2_GTK_INDEX_SHIFT			0x00

@@ -2,8 +2,9 @@
 
 #include "genpd.h"
 
-#include <pvrsrvkm/rgxpower.h>
-#include <pvrsrvkm/volcanic/rgxdevice.h>
+#include <pvrsrvkm/services/server/env/linux/power_trace_events.h>
+#include <pvrsrvkm/services/server/devices/rgxpower.h>
+#include <pvrsrvkm/services/server/devices/volcanic/rgxdevice.h>
 
 #include <misc/sbbm.h>
 
@@ -63,6 +64,11 @@ static void update_power_state(struct pixel_gpu_device *pixel_dev, int new_state
 
 	dev_dbg(pixel_dev->dev, "%s: %s -> %s", __func__,
 		power_state_str(cur_state), power_state_str(new_state));
+
+#if defined(PVRSRV_ANDROID_TRACE_GPU_POWER_STATE)
+	trace_gpu_power_state(cur_state,
+			      new_state);
+#endif
 
 	if (cur_state == new_state) {
 		dev_warn(pixel_dev->dev,

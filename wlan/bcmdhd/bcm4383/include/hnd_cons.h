@@ -1,7 +1,7 @@
 /*
  * Console support for RTE - for host use only.
  *
- * Copyright (C) 2025, Broadcom.
+ * Copyright (C) 2026, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -30,7 +30,7 @@
  *  In case of ASD commands we are not sure about how much is the command size
  *  To be on the safe side, input buf len CBUF_LEN is increased to max (512) bytes.
  */
-#define RWL_MAX_DATA_LEN 	(512 + 8)	/* allow some extra bytes for '/n' termination */
+#define RWL_MAX_DATA_LEN	(512 + 8)	/* allow some extra bytes for '/n' termination */
 #define CBUF_LEN	(RWL_MAX_DATA_LEN + 64)  /* allow 64 bytes for header ("rwl...") */
 #else
 #define CBUF_LEN	(128)

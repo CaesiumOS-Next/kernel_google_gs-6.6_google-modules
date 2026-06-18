@@ -195,9 +195,23 @@ void pdp_modeset_early_cleanup(struct pdp_drm_private *dev_priv);
 void pdp_modeset_late_cleanup(struct pdp_drm_private *dev_priv);
 
 #if defined(CONFIG_DRM_FBDEV_EMULATION)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0))
 struct pdp_fbdev *pdp_fbdev_create(struct pdp_drm_private *dev);
+#endif
 void pdp_fbdev_destroy(struct pdp_fbdev *fbdev);
 #endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0))
+#if defined(CONFIG_DRM_FBDEV_EMULATION)
+int pdp_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
+				 struct drm_fb_helper_surface_size *sizes);
+#define PDP_FBDEV_DRIVER_OPS \
+	.fbdev_probe = pdp_fbdev_driver_fbdev_probe
+#else
+#define PDP_FBDEV_DRIVER_OPS \
+	.fbdev_probe = NULL
+#endif /* defined(CONFIG_DRM_FBDEV_EMULATION) */
+#endif /* (LINUX_VERSION_CODE < KERNEL_VERSION(6, 15, 0)) */
 
 int pdp_modeset_validate_init(struct pdp_drm_private *dev_priv,
 			      struct drm_mode_fb_cmd2 *mode_cmd,
