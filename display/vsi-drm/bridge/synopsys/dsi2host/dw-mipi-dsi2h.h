@@ -421,9 +421,6 @@ struct dw_mipi_dsi2h {
 	struct regmap_field	*field_pkg_num;
 	struct regmap_field	*field_type_enum;
 	struct regmap_field	*field_pwr_up;
-	struct regmap_field	*field_ipi_rstn;
-	struct regmap_field	*field_phy_rstn;
-	struct regmap_field	*field_sys_rstn;
 	struct regmap_field	*field_mode_ctrl;
 	struct regmap_field	*field_mode_status;
 	struct regmap_field	*field_core_busy;
@@ -658,9 +655,6 @@ struct dw_mipi_dsi2h_variant {
 	struct reg_field	cfg_pkg_num;
 	struct reg_field	cfg_type_enum;
 	struct reg_field	cfg_pwr_up;
-	struct reg_field	cfg_ipi_rstn;
-	struct reg_field	cfg_phy_rstn;
-	struct reg_field	cfg_sys_rstn;
 	struct reg_field	cfg_mode_ctrl;
 	struct reg_field	cfg_mode_status;
 	struct reg_field	cfg_core_busy;

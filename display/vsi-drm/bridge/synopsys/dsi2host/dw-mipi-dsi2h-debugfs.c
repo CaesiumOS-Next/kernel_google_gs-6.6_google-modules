@@ -71,9 +71,6 @@ void dw_create_debugfs_hwv_files(struct dw_mipi_dsi2h *dsi2h)
 	REGISTER(pkg_num);
 	REGISTER(type_enum);
 	REGISTER(pwr_up);
-	REGISTER(ipi_rstn);
-	REGISTER(phy_rstn);
-	REGISTER(sys_rstn);
 	//REGISTER(int_st_phy);
 	//REGISTER(int_st_to);
 	//REGISTER(int_st_ack);

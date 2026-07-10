@@ -153,9 +153,6 @@ static const struct dw_mipi_dsi2h_variant dw_mipi_dsi2h_lca01_layout = {
 	.cfg_pkg_num = REG_FIELD(DW_DSI2H_VERSION, 24, 27),
 	.cfg_type_enum = REG_FIELD(DW_DSI2H_VERSION, 28, 31),
 	.cfg_pwr_up = REG_FIELD(DW_DSI2H_PWR_UP, 0, 0),
-	.cfg_ipi_rstn = REG_FIELD(DW_DSI2H_SOFT_RESET, 0, 0),
-	.cfg_phy_rstn = REG_FIELD(DW_DSI2H_SOFT_RESET, 1, 1),
-	.cfg_sys_rstn = REG_FIELD(DW_DSI2H_SOFT_RESET, 2, 2),
 	.cfg_mode_ctrl = REG_FIELD(DW_DSI2H_MODE_CTRL, 0, 2),
 	.cfg_mode_status = REG_FIELD(DW_DSI2H_MODE_STATUS, 0, 2),
 	.cfg_core_busy = REG_FIELD(DW_DSI2H_CORE_STATUS, 0, 0),
@@ -1015,12 +1012,6 @@ exit:
 		dev_WARN(dsi2h->dev, "%s: failed to runtime put autosuspend %d\n", __func__, ret);
 }
 
-static void dw_mipi_dsi2h_soft_reset(struct dw_mipi_dsi2h *dsi2h)
-{
-	dw_dsi2h_write_reg(dsi2h->regs, DW_DSI2H_SOFT_RESET, 0);
-	dev_err(dsi2h->dev, "DSI soft reset due to message transfer fail\n");
-}
-
 static int _dw_mipi_dsi2h_host_transfer(struct dw_mipi_dsi2h *dsi2h, const struct mipi_dsi_msg *msg)
 {
 	ssize_t num_bytes_transferred = 0;
@@ -1102,15 +1093,8 @@ static ssize_t dw_mipi_dsi2h_host_transfer(struct mipi_dsi_host *host,
 	}
 
 	ret = _dw_mipi_dsi2h_host_transfer(dsi2h, msg);
-
-	if (ret < 0) {
-		/* If message transfer failed, reset DSI and retry */
-		dw_mipi_dsi2h_soft_reset(dsi2h);
-		ret = _dw_mipi_dsi2h_host_transfer(dsi2h, msg);
-	}
-
 	if (ret < 0)
-		dev_err(dsi2h->dev, "DSI message transfer failed even after dsi reset\n");
+		dev_err(dsi2h->dev, "DSI message transfer failed: %d\n", ret);
 
 	if (dsi2h_pre_state == DSI2H_STATE_ULPS || dsi2h_pre_state == DSI2H_STATE_PENDING_ULPS ||
 	    dsi2h_pre_state == DSI2H_STATE_SUSPEND) {
@@ -1978,7 +1962,8 @@ int dw_mipi_dsi2h_suspend(void *handle)
 	}
 	mutex_unlock(&dsi2h->dsi2h_lock);
 
-	return ret;
+	/* return non-zero value will abort runtime_suspend() flow. */
+	return 0;
 }
 EXPORT_SYMBOL_GPL(dw_mipi_dsi2h_suspend);
 
@@ -2608,9 +2593,6 @@ static int dw_mipi_dsi2h_regmap_fields_init(struct dw_mipi_dsi2h *dsi2h)
 	INIT_FIELD(pkg_num);
 	INIT_FIELD(type_enum);
 	INIT_FIELD(pwr_up);
-	INIT_FIELD(ipi_rstn);
-	INIT_FIELD(phy_rstn);
-	INIT_FIELD(sys_rstn);
 	INIT_FIELD(mode_ctrl);
 	INIT_FIELD(mode_status);
 	INIT_FIELD(core_busy);
