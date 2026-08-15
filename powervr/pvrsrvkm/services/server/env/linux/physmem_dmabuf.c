@@ -299,6 +299,7 @@ static struct sg_table *PVRDmaBufOpsMapCommon(PMR_DMA_BUF_WRAPPER *psPMRWrapper,
 	struct scatterlist *psSg;
 	int iRet = 0;
 	IMG_UINT32 uiDevPageShift, uiDevPageSize;
+	IMG_UINT32 current_seg_len;
 
 	OSLockAcquire(psPMRWrapper->hDeviceMappingLock);
 
@@ -382,6 +383,7 @@ static struct sg_table *PVRDmaBufOpsMapCommon(PMR_DMA_BUF_WRAPPER *psPMRWrapper,
 
 	sPAddrPrev = psPAddr[i];
 	uiNents = 1;
+	current_seg_len = uiDevPageSize;
 
 	PVR_DPF((PVR_DBG_MESSAGE, "%s(): %03u paddr: 0x%" IMG_UINT64_FMTSPECx,
 	         __func__, i, sPAddrPrev.uiAddr));
@@ -400,9 +402,15 @@ static struct sg_table *PVRDmaBufOpsMapCommon(PMR_DMA_BUF_WRAPPER *psPMRWrapper,
 		         ", pprev: 0x%" IMG_UINT64_FMTSPECx ", valid: %u", __func__,
 		         i, sPAddrCurr.uiAddr, sPAddrPrev.uiAddr, pbValid[i]));
 
-		if (sPAddrCurr.uiAddr != (sPAddrPrev.uiAddr + uiDevPageSize))
+		if (sPAddrCurr.uiAddr != (sPAddrPrev.uiAddr + uiDevPageSize) ||
+			current_seg_len > IMG_UINT32_MAX - uiDevPageSize)
 		{
 			uiNents++;
+			current_seg_len = uiDevPageSize;
+		}
+		else
+		{
+			current_seg_len += uiDevPageSize;
 		}
 
 		sPAddrPrev = sPAddrCurr;
@@ -430,6 +438,7 @@ static struct sg_table *PVRDmaBufOpsMapCommon(PMR_DMA_BUF_WRAPPER *psPMRWrapper,
 
 	sg_dma_address(psSg) = sPAddrPrev.uiAddr;
 	sg_dma_len(psSg) = uiDevPageSize;
+	current_seg_len = uiDevPageSize;
 
 	for (i = i + 1; i < uiNumVirtPages; i++)
 	{
@@ -440,19 +449,21 @@ static struct sg_table *PVRDmaBufOpsMapCommon(PMR_DMA_BUF_WRAPPER *psPMRWrapper,
 
 		sPAddrCurr = psPAddr[i];
 
-		if (sPAddrCurr.uiAddr != (sPAddrPrev.uiAddr + uiDevPageSize))
+		if (sPAddrCurr.uiAddr != (sPAddrPrev.uiAddr + uiDevPageSize) ||
+			current_seg_len > IMG_UINT32_MAX - uiDevPageSize)
 		{
 			psSg = sg_next(psSg);
 			PVR_ASSERT(psSg != NULL);
 
 			sg_dma_address(psSg) = sPAddrCurr.uiAddr;
 			sg_dma_len(psSg) = uiDevPageSize;
+			current_seg_len = uiDevPageSize;
 		}
 		else
 		{
 			sg_dma_len(psSg) += uiDevPageSize;
+			current_seg_len += uiDevPageSize;
 		}
-
 		sPAddrPrev = sPAddrCurr;
 	}
 
@@ -509,7 +520,6 @@ static void PVRDmaBufOpsUnmapCommon(PMR_DMA_BUF_WRAPPER *psPMRWrapper,
 		goto ErrUnlock;
 	}
 
-	dma_unmap_sg(psAttachment->dev, psTable->sgl, psTable->nents, eDirection);
 	sg_free_table(psTable);
 
 	eError = PMRUnlockPhysAddresses(psPMRWrapper->psPMR);

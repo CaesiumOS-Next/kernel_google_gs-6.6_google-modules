@@ -183,6 +183,7 @@ $(PVRSRV_MODNAME)-y += \
  services/server/common/srvcore.o \
  services/server/common/sync_checkpoint.o \
  services/server/common/sync_server.o \
+ services/server/common/sync_qbs.o \
  services/server/common/tlintern.o \
  services/shared/common/tlclient.o \
  services/server/common/tlserver.o \

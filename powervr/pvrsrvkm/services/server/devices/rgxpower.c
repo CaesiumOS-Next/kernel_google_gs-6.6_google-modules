@@ -1339,6 +1339,22 @@ PVRSRV_ERROR RGXPostPowerState(PVRSRV_DEVICE_NODE		*psDeviceNode,
 
 #endif /* defined(PDUMP) */
 
+#if defined(RGX_SUPPORT_DUAL_MEMCTX) && !defined(PDUMP)
+	if (RGX_IS_FEATURE_SUPPORTED(psDevInfo, ALBIORIX_TOP_INFRASTRUCTURE))
+	{
+		RGXFwSharedMemCacheOpValue(psDevInfo->psRGXFWIfFwOsData->ui32FwOsDataFlags, INVALIDATE);
+		if (BITMASK_HAS(psDevInfo->psRGXFWIfFwOsData->ui32FwOsDataFlags,
+		                RGXFWIF_OSDATA_FLAG_FW_SUPPORTS_DUALCTX))
+		{
+			RGXFwSharedMemCacheOpValue(psDevInfo->psRGXFWIfFwOsData->ui32FwOsConfigFlags, INVALIDATE);
+			/* Set the flag to let FW know that KM configured the dual-ctx PC address */
+			BITMASK_SET(psDevInfo->psRGXFWIfFwOsData->ui32FwOsConfigFlags,
+			            RGXFWIF_INICFG_OS_KM_SUPPORTS_DUALCTX);
+			RGXFwSharedMemCacheOpValue(psDevInfo->psRGXFWIfFwOsData->ui32FwOsConfigFlags, FLUSH);
+		}
+	}
+#endif
+
 #if defined(SUPPORT_GPUVIRT_VALIDATION_MTS)
 	eError = _RGXVirtualisationPowerupSidebandTest(psDeviceNode, psDevInfo->psRGXFWIfSysInit, psDevInfo);
 	PVR_LOG_GOTO_IF_ERROR(eError, "_RGXVirtualisationPowerupSidebandTest", fail);

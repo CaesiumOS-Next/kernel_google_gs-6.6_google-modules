@@ -58,27 +58,24 @@ void vpu_update_system_state(struct vpu_core *core)
 						((core->user_idle & 0x1)        << 4));
 }
 
-static int vpu_set_inst(struct vpu_core *core, uint32_t inst_idx, struct vpu_inst *inst)
+static int vpu_set_inst(struct vpu_core *core, uint32_t inst_idx,
+			struct vpu_inst *new_inst, struct vpu_inst *old_inst)
 {
 	unsigned long flags;
 
 	if (inst_idx >= MAX_NUM_INST) {
-		pr_err("%s instance index exceeds max allowed: %u\n",
+		dev_err(core->dev, "%s instance index exceeds max allowed: %u\n",
 			__func__, inst_idx);
 		return -ENODEV;
 	}
 	spin_lock_irqsave(&core->inst_lock, flags);
-	if (!inst && !core->instances[inst_idx]) {
+	if (core->instances[inst_idx] != old_inst) {
+		dev_warn(core->dev, "expect instance[%d] %p to be %p\n", inst_idx,
+			 core->instances[inst_idx], old_inst);
 		spin_unlock_irqrestore(&core->inst_lock, flags);
 		return -ENODEV;
 	}
-	if (inst && core->instances[inst_idx]) {
-		spin_unlock_irqrestore(&core->inst_lock, flags);
-		pr_err("%s previous instance index %u is not closed properly\n",
-			__func__, inst_idx);
-		return -EINVAL;
-	}
-	core->instances[inst_idx] = inst;
+	core->instances[inst_idx] = new_inst;
 	spin_unlock_irqrestore(&core->inst_lock, flags);
 
 	return 0;
@@ -202,7 +199,7 @@ static int vpu_open_inst(struct vpu_core *core, uint32_t inst_idx)
 	 */
 	inst->core = core;
 	inst->idx = inst_idx;
-	rc = vpu_set_inst(core, inst_idx, inst);
+	rc = vpu_set_inst(core, inst_idx, inst, NULL);
 	if (rc) {
 		pr_err("failed to set vpu instance\n");
 		goto err_inst_idx;
@@ -254,7 +251,7 @@ static int vpu_close_inst(struct vpu_inst *inst)
 
 	core = inst->core;
 	inst_idx = inst->idx;
-	rc = vpu_set_inst(core, inst->idx, NULL);
+	rc = vpu_set_inst(core, inst->idx, NULL, inst);
 	if (rc) {
 		if (rc == -ENODEV)
 			dev_info(core->dev, "VPU instance %d is already closed\n", inst_idx);

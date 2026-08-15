@@ -1404,6 +1404,29 @@ static void _SetupPxE(MMU_CONTEXT *psMMUContext,
 		}
 	}
 
+#if defined(RGX_SUPPORT_DUAL_MEMCTX)
+	if (psDevNode->pfnInterceptMMUEntry)
+	{
+		PVRSRV_ERROR eError;
+		IMG_BOOL bSkipWrite;
+
+		eError = psDevNode->pfnInterceptMMUEntry(psDevNode,
+		                                         psMMUContext,
+		                                         uiIndex,
+		                                         psConfig,
+		                                         eMMULevel,
+		                                         psDevPAddr,
+		                                         uiProtFlags,
+		                                         uiLog2DataPageSize,
+		                                         &bSkipWrite);
+
+		if (bSkipWrite || eError != PVRSRV_OK)
+		{
+			return;
+		}
+	}
+#endif
+
 	switch (eMMULevel)
 	{
 		case MMU_LEVEL_3:
@@ -4122,7 +4145,7 @@ MMU_MapPMRFast(MMU_CONTEXT *psMMUContext,
 	IMG_HANDLE hPriv;
 
 	IMG_UINT32 i, uiChunkStart, uiLastPTEIndex, uiNumEntriesToWrite;
-	IMG_UINT32 ui32PagesDone=0, uiPTEIndex=0;
+	IMG_UINT32 ui32PagesDone=0, ui32PagesUnwind=0, uiPTEIndex=0;
 
 	IMG_UINT8 uiAddrLog2Align, uiAddrShift, uiParityShift;
 	IMG_UINT64 uiAddrMask, uiProtFlags;
@@ -4278,7 +4301,7 @@ MMU_MapPMRFast(MMU_CONTEXT *psMMUContext,
 
 			if (uiBytesPerEntry == 8)
 			{
-				for (i=0; i<uiNumPagesInBlock; i++)
+				for (i=0; i<uiNumPagesInBlock; i++, ui32PagesUnwind++)
 				{
 					if (bSetParity)
 					{
@@ -4301,7 +4324,7 @@ MMU_MapPMRFast(MMU_CONTEXT *psMMUContext,
 			}
 			else if (uiBytesPerEntry == 4)
 			{
-				for (i=0; i<uiNumPagesInBlock; i++)
+				for (i=0; i<uiNumPagesInBlock; i++, ui32PagesUnwind++)
 				{
 #if defined(PVRSRV_NEED_PVR_ASSERT)
 					/* assert that the result fits into 32 bits before writing
@@ -4422,14 +4445,11 @@ MMU_MapPMRFast(MMU_CONTEXT *psMMUContext,
 	return PVRSRV_OK;
 
 unlock_mmu_context:
-	if (eError != PVRSRV_ERROR_MMU_REMAP_BLOCKED)
-	{
-		/* Unmap starting from the address passed as an argument. */
-		(void) MMU_UnmapPMRFastUnlocked(psMMUContext,
-		                                sDevVAddrBaseCopy,
-		                                uiNumPages,
-		                                uiLog2HeapPageSize);
-	}
+	/* Unmap starting from the address passed as an argument. */
+	(void) MMU_UnmapPMRFastUnlocked(psMMUContext,
+	                                sDevVAddrBaseCopy,
+	                                ui32PagesUnwind,
+	                                uiLog2HeapPageSize);
 	OSLockRelease(psMMUContext->hLock);
 put_mmu_context:
 	_MMU_PutPTConfig(psMMUContext, hPriv);

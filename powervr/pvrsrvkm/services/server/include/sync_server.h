@@ -50,6 +50,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "pvrsrv_error.h"
 #include "connection_server.h"
 #include "pdump_km.h"
+#include "sync_qbs.h"
 
 #ifndef SYNC_SERVER_H
 #define SYNC_SERVER_H
@@ -62,6 +63,10 @@ typedef struct _SYNC_ADDR_LIST_
 {
 	IMG_UINT32 ui32NumSyncs;
 	PRGXFWIF_UFO_ADDR *pasFWAddrs;
+	IMG_UINT32 ui32NumQBSs;
+#if defined(SYNC_QBS_ENABLED)
+	SYNC_QBS *pasQBSs[PVRSRV_MAX_SYNCS];
+#endif
 } SYNC_ADDR_LIST;
 
 PVRSRV_ERROR
@@ -74,6 +79,68 @@ SyncAddrListInit(SYNC_ADDR_LIST *psList);
 
 void
 SyncAddrListDeinit(SYNC_ADDR_LIST *psList);
+
+#if defined(SYNC_QBS_ENABLED)
+void
+SyncAddrListCountQBSsFromSyncBlocks(SYNC_ADDR_LIST *psList,
+                                    IMG_UINT32 ui32NumSyncs,
+                                    SYNC_PRIMITIVE_BLOCK **apsSyncPrimBlock);
+
+PVRSRV_ERROR
+SyncAddrListAppendQBSsToUFOArray(SYNC_ADDR_LIST *psList);
+
+PVRSRV_ERROR
+SyncAddrListAppendQBSsFromSyncBlocks(SYNC_ADDR_LIST *psList,
+                                     IMG_UINT32 *pui32NumSyncs,
+                                     SYNC_PRIMITIVE_BLOCK **apsSyncPrimBlock);
+
+void SyncAddrListRollbackQBSs(SYNC_ADDR_LIST *psList);
+SYNC_QBS* SyncPrimBlockGetQBS(SYNC_PRIMITIVE_BLOCK *psBlk);
+#else
+static INLINE void
+SyncAddrListCountQBSsFromSyncBlocks(SYNC_ADDR_LIST *psList,
+                                     IMG_UINT32 ui32NumSyncs,
+                                     SYNC_PRIMITIVE_BLOCK **apsSyncPrimBlock)
+{
+	PVR_UNREFERENCED_PARAMETER(psList);
+	PVR_UNREFERENCED_PARAMETER(ui32NumSyncs);
+	PVR_UNREFERENCED_PARAMETER(apsSyncPrimBlock);
+}
+
+static INLINE PVRSRV_ERROR
+SyncAddrListAppendQBSsToUFOArray(SYNC_ADDR_LIST *psList)
+{
+	PVR_UNREFERENCED_PARAMETER(psList);
+
+	return PVRSRV_OK;
+}
+
+static INLINE PVRSRV_ERROR
+SyncAddrListAppendQBSsFromSyncBlocks(SYNC_ADDR_LIST *psList,
+                                     IMG_UINT32 *pui32NumSyncs,
+                                     SYNC_PRIMITIVE_BLOCK **apsSyncPrimBlock)
+{
+	PVR_UNREFERENCED_PARAMETER(psList);
+	PVR_UNREFERENCED_PARAMETER(pui32NumSyncs);
+	PVR_UNREFERENCED_PARAMETER(apsSyncPrimBlock);
+
+	return PVRSRV_OK;
+}
+
+static INLINE void
+SyncAddrListRollbackQBSs(SYNC_ADDR_LIST *psList)
+{
+	PVR_UNREFERENCED_PARAMETER(psList);
+}
+
+static INLINE SYNC_QBS*
+SyncPrimBlockGetQBS(SYNC_PRIMITIVE_BLOCK *psBlk)
+{
+	PVR_UNREFERENCED_PARAMETER(psBlk);
+
+	return NULL;
+}
+#endif
 
 PVRSRV_ERROR
 SyncAddrListPopulate(SYNC_ADDR_LIST *psList,

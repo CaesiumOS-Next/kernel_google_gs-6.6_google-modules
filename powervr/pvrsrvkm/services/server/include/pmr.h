@@ -812,10 +812,6 @@ PMRMarkForDeferFree(PMR *psPMR);
 IMG_BOOL
 PMRQueueZombiesForCleanup(PPVRSRV_DEVICE_NODE psDevNode);
 
-void
-PMR_SetZombieIsPMREmptyFlag(PMR *psPMR);
-
-
 IMG_BOOL
 PMR_SetExclusiveUse(PMR *psPMR, IMG_BOOL bFlag);
 

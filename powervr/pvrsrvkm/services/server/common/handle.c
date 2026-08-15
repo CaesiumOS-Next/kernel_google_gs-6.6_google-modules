@@ -1453,6 +1453,19 @@ static PVRSRV_ERROR HandleUnrefAndMaybeMarkForFreeWrapper(PVRSRV_HANDLE_BASE *ps
 	return HandleUnrefAndMaybeMarkForFree(psBase, psHandleData, hHandle, PVRSRV_HANDLE_TYPE_NONE);
 }
 
+static PVRSRV_ERROR HandleUnwindChildrenMarkForFree(PVRSRV_HANDLE_BASE *psBase,
+                                                    IMG_HANDLE hHandle)
+{
+	HANDLE_DATA *psHandleData;
+	PVRSRV_ERROR eError = GetHandleData(psBase, &psHandleData, hHandle,
+	                                    PVRSRV_HANDLE_TYPE_NONE);
+	PVR_RETURN_IF_ERROR(eError);
+
+	psHandleData->bCanLookup = IMG_TRUE;
+
+	return PVRSRV_OK;
+}
+
 static PVRSRV_ERROR HandleUnrefAndMaybeMarkForFree(PVRSRV_HANDLE_BASE *psBase,
                                                    HANDLE_DATA *psHandleData,
                                                    IMG_HANDLE hHandle,
@@ -1639,6 +1652,9 @@ static PVRSRV_ERROR DestroyHandle(PVRSRV_HANDLE_BASE *psBase,
 		if (PVRSRVIsRetryError(eError))
 		{
 			psHandleData->bCanLookup = IMG_TRUE;
+
+			IterateOverChildren(psBase, psHandleData,
+			                    HandleUnwindChildrenMarkForFree);
 		}
 
 		return eError;

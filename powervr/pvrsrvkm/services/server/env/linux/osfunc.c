@@ -2022,7 +2022,10 @@ PVRSRV_ERROR OSDebugSignalPID(IMG_UINT32 ui32PID)
 	int err;
 	struct pid *psPID;
 
-	psPID = find_vpid(ui32PID);
+	rcu_read_lock();
+	psPID = get_pid(find_vpid(ui32PID));
+	rcu_read_unlock();
+
 	if (psPID == NULL)
 	{
 		PVR_DPF((PVR_DBG_ERROR, "%s: Failed to get PID struct.", __func__));
@@ -2030,6 +2033,8 @@ PVRSRV_ERROR OSDebugSignalPID(IMG_UINT32 ui32PID)
 	}
 
 	err = kill_pid(psPID, SIGTRAP, 0);
+	put_pid(psPID);
+
 	if (err != 0)
 	{
 		PVR_DPF((PVR_DBG_ERROR, "%s: Signal Failure %d", __func__, err));

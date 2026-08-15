@@ -2602,11 +2602,6 @@ PMRChangeSparseMemLocalMem(PMR_IMPL_PRIVDATA pPriv,
 		eError = _ExtractPages(psPMRPageArrayData, &pai32FreeIndices[ui32Loop], ui32AdtnlFreePages, &psExtractedPagesPageArray);
 		PVR_LOG_GOTO_IF_ERROR(eError, "_ExtractPages", e0);
 
-		if (psPMRPageArrayData->iNumChunksAllocated == 0)
-		{
-			PMR_SetZombieIsPMREmptyFlag(psPMR);
-		}
-
 		/* Zombify pages to get proper stats */
 		eError = PMRZombifyLocalMem(psExtractedPagesPageArray, NULL);
 		PVR_LOG_IF_ERROR(eError, "PMRZombifyLocalMem");

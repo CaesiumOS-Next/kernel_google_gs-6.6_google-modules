@@ -537,6 +537,15 @@ PVRSRV_ERROR PVRSRVRGXKickCDMKM(RGX_SERVER_COMPUTE_CONTEXT	*psComputeContext,
 	{
 		goto err_populate_sync_addr_list;
 	}
+
+	eError = SyncAddrListAppendQBSsFromSyncBlocks(&psComputeContext->sSyncAddrListUpdate,
+	                                              &ui32IntClientUpdateCount,
+	                                              pauiClientUpdateUFODevVarBlock);
+	if (eError != PVRSRV_OK)
+	{
+		goto fail_append_qbs;
+	}
+
 	if (ui32IntClientUpdateCount)
 	{
 		pauiIntUpdateUFOAddress = psComputeContext->sSyncAddrListUpdate.pasFWAddrs;
@@ -1152,6 +1161,9 @@ PVRSRV_ERROR PVRSRVRGXKickCDMKM(RGX_SERVER_COMPUTE_CONTEXT	*psComputeContext,
 	if (iExportFenceToSignal != PVRSRV_NO_FENCE &&
 	    iUpdateTimeline != PVRSRV_NO_TIMELINE)
 	{
+		/* Drop the extra reference taken on the export fence sync checkpoint
+		 * by SyncCheckpointResolveExportFence */
+		SyncCheckpointFree(psExportFenceSyncCheckpoint);
 		SyncCheckpointFinaliseExportFence(iExportFenceToSignal);
 	}
 
@@ -1187,6 +1199,8 @@ fail_alloc_update_values_mem:
 fail_check_fence_includes_export_fence:
 	if (psExportFenceSyncCheckpoint)
 	{
+		/* Drop the extra reference taken by SyncCheckpointResolveExportFence */
+		SyncCheckpointFree(psExportFenceSyncCheckpoint);
 		SyncCheckpointRollbackExportFence(iExportFenceToSignal);
 	}
 fail_resolve_export_fence:
@@ -1214,7 +1228,6 @@ fail_free_buffer_sync_data:
 fail_resolve_input_fence:
 #endif /* defined(SUPPORT_BUFFER_SYNC) */
 
-err_populate_sync_addr_list:
 	/* Free the memory that was allocated for the sync checkpoint list returned by ResolveFence() */
 	if (apsFenceSyncCheckpoints != NULL)
 	{
@@ -1226,6 +1239,11 @@ err_populate_sync_addr_list:
 		OSFreeMem(pui32IntAllocatedUpdateValues);
 		pui32IntAllocatedUpdateValues = NULL;
 	}
+
+	SyncAddrListRollbackQBSs(&psComputeContext->sSyncAddrListUpdate);
+
+fail_append_qbs:
+err_populate_sync_addr_list:
 	OSLockRelease(psComputeContext->hLock);
 	return eError;
 }

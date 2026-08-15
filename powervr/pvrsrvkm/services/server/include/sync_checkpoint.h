@@ -514,7 +514,10 @@ SyncCheckpointResolveFence(PSYNC_CHECKPOINT_CONTEXT psSyncCheckpointContext,
                                         new sync checkpoint for the export fence
 
 @Output         ppsSyncCheckpoint       The sync checkpoint the fence
-                                        contains
+                                        contains. An extra reference is
+                                        taken on the returned checkpoint;
+                                        the caller must release it with
+                                        SyncCheckpointFree() when done.
 
 @Return         PVRSRV_OK if a valid fence was provided.
                 PVRSRV_ERROR_SYNC_NATIVESYNC_NOT_REGISTERED if the OS native

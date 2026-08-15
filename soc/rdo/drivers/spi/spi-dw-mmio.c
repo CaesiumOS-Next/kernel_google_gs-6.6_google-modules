@@ -398,14 +398,12 @@ static void spi_google_set_cs(struct spi_device *spi, bool enable)
 	 * control.
 	 */
 
-	if (cs_high == enable)
+	if (cs_high == enable) {
 		dw_writel(dws, DW_SPI_SER, BIT(0));
-	else
+		if (dwsmmio->cs_delay)
+			udelay(dwsmmio->cs_delay);
+	} else
 		dw_writel(dws, DW_SPI_SER, 0);
-
-	/* Add extra delay between CS and clock if requested */
-	if (enable && dwsmmio->cs_delay)
-		usleep_range(dwsmmio->cs_delay, dwsmmio->cs_delay + 10);
 }
 
 static int spi_google_init(struct platform_device *pdev,

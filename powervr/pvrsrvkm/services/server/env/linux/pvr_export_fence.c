@@ -616,6 +616,10 @@ pvr_exp_fence_assign_checkpoint(PVRSRV_FENCE fence_to_resolve,
 	}
 #endif
 
+	/* Take a reference for the exposed sync checkpoint. Callers of this function
+	 * are required to unref when finished. */
+	SyncCheckpointTakeRef(new_sync_checkpoint);
+
 	pvr_exp_fence->checkpoint_handle = new_sync_checkpoint;
 	*assigned_checkpoint = new_sync_checkpoint;
 

@@ -1870,6 +1870,24 @@ PVRSRV_ERROR RGXCreateFreeList(CONNECTION_DATA       *psConnection,
 
 	sFreeListBaseDevVAddr.uiAddr = sFreeListStateDevVAddr.uiAddr + uiFreeListOffset;
 
+#if defined(RGX_SUPPORT_DUAL_MEMCTX)
+	if (RGX_IS_FEATURE_SUPPORTED(psDevInfo, ALBIORIX_TOP_INFRASTRUCTURE))
+	{
+		/* Check if freelist and state buffer is within the bounds of the heap.
+		No need to check for base+size as this is verified on mapping
+		in ReserveRangeParamValidation */
+		if (sFreeListStateDevVAddr.uiAddr < RGX_PM_ONLY_HEAP_BASE ||
+			sFreeListStateDevVAddr.uiAddr >= (RGX_PM_ONLY_HEAP_BASE + RGX_PM_ONLY_HEAP_SIZE))
+		{
+			PVR_DPF((PVR_DBG_ERROR,
+			        "%s: Freelist needs to be allocated on PM_ONLY_HEAP",
+			        __func__));
+			eError = PVRSRV_ERROR_INVALID_PARAMS;
+			goto ErrorAllocHost;
+		}
+	}
+#endif
+
 	/* Allocate kernel freelist struct */
 	psFreeList = OSAllocZMem(sizeof(*psFreeList));
 	if (psFreeList == NULL)
@@ -3626,6 +3644,10 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 	PRGXFWIF_UFO_ADDR  *pauiClient3DUpdateUFOAddress = NULL;
 	PRGXFWIF_UFO_ADDR  uiPRFenceUFOAddress;
 
+#if defined(SYNC_QBS_ENABLED)
+	PRGXFWIF_UFO_ADDR  *pauiPRFenceQBSUpdateIncludedAddress = NULL;
+#endif
+
 	IMG_UINT64         uiCheckTAFenceUID = 0;
 	IMG_UINT64         uiCheck3DFenceUID = 0;
 	IMG_UINT64         uiUpdateTAFenceUID = 0;
@@ -3835,10 +3857,23 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 
 	OSLockAcquire(psRenderContext->hLock);
 
-	ui32TAFenceCount = ui32ClientTAFenceCount;
+	/* Prepare sync block counter syncs */
+	SyncAddrListCountQBSsFromSyncBlocks(&psRenderContext->sSyncAddrListTAFence,
+	                                    ui32ClientTAFenceCount,
+	                                    apsClientTAFenceSyncPrimBlock);
+
+	SyncAddrListCountQBSsFromSyncBlocks(&psRenderContext->sSyncAddrListTAUpdate,
+	                                    ui32ClientTAUpdateCount,
+	                                    apsClientTAUpdateSyncPrimBlock);
+
+	SyncAddrListCountQBSsFromSyncBlocks(&psRenderContext->sSyncAddrList3DUpdate,
+	                                    ui32Client3DUpdateCount,
+	                                    apsClient3DUpdateSyncPrimBlock);
+
+	ui32TAFenceCount = ui32ClientTAFenceCount + psRenderContext->sSyncAddrListTAFence.ui32NumQBSs;
 	ui323DFenceCount = ui32Client3DFenceCount;
-	ui32TAUpdateCount = ui32ClientTAUpdateCount;
-	ui323DUpdateCount = ui32Client3DUpdateCount;
+	ui32TAUpdateCount = ui32ClientTAUpdateCount + psRenderContext->sSyncAddrListTAUpdate.ui32NumQBSs;
+	ui323DUpdateCount = ui32Client3DUpdateCount + psRenderContext->sSyncAddrList3DUpdate.ui32NumQBSs;
 	ui32PRUpdateCount = ui32ClientPRUpdateCount;
 
 #if defined(SUPPORT_BUFFER_SYNC)
@@ -4110,7 +4145,11 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 			0, /* empty ui64FBSCEntryMask it is assumed that PRs should
 		        * not invalidate FBSC */
 		    0,
+#if defined(SYNC_QBS_ENABLED)
+		    ui32PRUpdateCount + 1, /* +1 for QBS */
+#else
 		    ui32PRUpdateCount,
+#endif
 		    /* if the client has not provided a 3DPR command, the regular 3D
 		     * command should be used instead */
 		    pui83DPRDMCmd ? ui323DPRCmdSize : ui323DCmdSize,
@@ -4123,6 +4162,15 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 
 	if (bKick3D || bAbort)
 	{
+#if defined(SYNC_QBS_ENABLED)
+		IMG_UINT32 uiPRQBSCount = 0;
+
+		if (bUseCombined3DAnd3DPR)
+		{
+			/* +1 for PR QBS */
+			uiPRQBSCount++;
+		}
+#endif
 		if (!bKickTA)
 		{
 			CHKPT_DBG((PVR_DBG_ERROR, "%s:   calling RGXCmdHelperInitCmdCCB(),"
@@ -4135,7 +4183,11 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 			ui64FBSCEntryMask, /* equals: [a] 0 if 3D is preceded by TA
 		                        *         [b] value from the MMU ctx otherwise */
 			bKickTA ? 0 : ui323DFenceCount,
+#if defined(SYNC_QBS_ENABLED)
+		    ui323DUpdateCount + uiPRQBSCount,
+#else
 		    ui323DUpdateCount,
+#endif
 		    ui323DCmdSize,
 			(bKickTA ? NULL : & pPreAddr),
 			&pPostAddr,
@@ -4188,6 +4240,13 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 		goto err_populate_sync_addr_list_ta_fence;
 	}
 
+	eError = SyncAddrListAppendQBSsToUFOArray(&psRenderContext->sSyncAddrListTAFence);
+	if (unlikely(eError != PVRSRV_OK))
+	{
+		goto err_fail_append_qbs_ta_fence;
+	}
+	ui32ClientTAFenceCount += psRenderContext->sSyncAddrListTAFence.ui32NumQBSs;
+
 	if (ui32ClientTAFenceCount)
 	{
 		pauiClientTAFenceUFOAddress = psRenderContext->sSyncAddrListTAFence.pasFWAddrs;
@@ -4208,6 +4267,13 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 	{
 		goto err_populate_sync_addr_list_ta_update;
 	}
+
+	eError = SyncAddrListAppendQBSsToUFOArray(&psRenderContext->sSyncAddrListTAUpdate);
+	if (unlikely(eError != PVRSRV_OK))
+	{
+		goto err_fail_append_qbs_ta_update;
+	}
+	ui32ClientTAUpdateCount += psRenderContext->sSyncAddrListTAUpdate.ui32NumQBSs;
 
 	if (ui32ClientTAUpdateCount)
 	{
@@ -4240,6 +4306,13 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 	{
 		goto err_populate_sync_addr_list_3d_update;
 	}
+
+	eError = SyncAddrListAppendQBSsToUFOArray(&psRenderContext->sSyncAddrList3DUpdate);
+	if (unlikely(eError != PVRSRV_OK))
+	{
+		goto err_fail_append_qbs_3d_update;
+	}
+	ui32Client3DUpdateCount += psRenderContext->sSyncAddrList3DUpdate.ui32NumQBSs;
 
 	if (ui32Client3DUpdateCount || (iUpdate3DTimeline != PVRSRV_NO_TIMELINE && piUpdate3DFence && bKick3D))
 	{
@@ -5007,6 +5080,19 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 
 		if (!bUseCombined3DAnd3DPR)
 		{
+#if defined(SYNC_QBS_ENABLED)
+			IMG_UINT32 ui32ClientPRUpdateCountWithQBS = ui32ClientPRUpdateCount + 1;
+			SYNC_QBS* psQBS = SyncPrimBlockGetQBS(psPRFenceSyncPrimBlock);
+			pauiPRFenceQBSUpdateIncludedAddress = OSAllocMem(sizeof(PRGXFWIF_UFO_ADDR) * ui32ClientPRUpdateCountWithQBS);
+			PVR_LOG_GOTO_IF_NOMEM(pauiPRFenceQBSUpdateIncludedAddress, eError, fail_qbspr3dinclude);
+
+			OSCachedMemCopy(pauiPRFenceQBSUpdateIncludedAddress,
+			                pauiClientPRUpdateUFOAddress,
+			                sizeof(PRGXFWIF_UFO_ADDR) * ui32ClientPRUpdateCount);
+
+			pauiPRFenceQBSUpdateIncludedAddress[ui32ClientPRUpdateCount].ui32Addr = QBSGetFirmwareAddrEnqueue(psQBS);
+#endif
+
 			CHKPT_DBG((PVR_DBG_ERROR,
 					   "%s:   calling RGXCmdHelperInitCmdCCB(), ui32ClientPRUpdateCount=%d",
 					   __func__, ui32ClientPRUpdateCount));
@@ -5015,8 +5101,14 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 			                                 0,
 			                                 NULL,
 			                                 NULL,
+#if defined(SYNC_QBS_ENABLED)
+			                                 /* Used patched count and address to include QBS */
+			                                 ui32ClientPRUpdateCountWithQBS,
+			                                 pauiPRFenceQBSUpdateIncludedAddress,
+#else
 			                                 ui32ClientPRUpdateCount,
 			                                 pauiClientPRUpdateUFOAddress,
+#endif
 			                                 paui32ClientPRUpdateValue,
 			                                 pui83DPRDMCmd ? ui323DPRCmdSize : ui323DCmdSize, // If the client has not provided a 3DPR command, the regular 3D command should be used instead
 			                                 pui83DPRDMCmd ? pui83DPRDMCmd : pui83DDMCmd,
@@ -5039,6 +5131,28 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 		RGX_SERVER_RC_3D_DATA *ps3DData = &psRenderContext->s3DData;
 		const RGXFWIF_CCB_CMD_TYPE e3DCmdType = bAbort ? RGXFWIF_CCB_CMD_TYPE_ABORT : RGXFWIF_CCB_CMD_TYPE_3D;
 
+#if defined(SYNC_QBS_ENABLED)
+		IMG_UINT32 ui32Client3DUpdateCountOverride = ui32Client3DUpdateCount;
+		PRGXFWIF_UFO_ADDR  *pauiClient3DUpdateUFOAddressOverride = pauiClient3DUpdateUFOAddress;
+
+		if (bUseCombined3DAnd3DPR)
+		{
+			IMG_UINT32 ui32Client3DUpdateCountWithPRQBS = ui32Client3DUpdateCount + 1;
+			SYNC_QBS* psQBS = SyncPrimBlockGetQBS(psPRFenceSyncPrimBlock);
+			pauiPRFenceQBSUpdateIncludedAddress = OSAllocMem(sizeof(PRGXFWIF_UFO_ADDR) * ui32Client3DUpdateCountWithPRQBS);
+			PVR_LOG_GOTO_IF_NOMEM(pauiPRFenceQBSUpdateIncludedAddress, eError, fail_qbspr3dinclude);
+
+			OSCachedMemCopy(pauiPRFenceQBSUpdateIncludedAddress,
+			                pauiClient3DUpdateUFOAddress,
+			                sizeof(PRGXFWIF_UFO_ADDR) * ui32Client3DUpdateCount);
+
+			pauiPRFenceQBSUpdateIncludedAddress[ui32Client3DUpdateCount].ui32Addr = QBSGetFirmwareAddrEnqueue(psQBS);
+
+			ui32Client3DUpdateCountOverride = ui32Client3DUpdateCountWithPRQBS;
+			pauiClient3DUpdateUFOAddressOverride = pauiPRFenceQBSUpdateIncludedAddress;
+		}
+#endif
+
 #if defined(SUPPORT_WORKLOAD_ESTIMATION)
 		if (!PVRSRV_VZ_MODE_IS(GUEST, DEVNODE, psRenderContext->psDeviceNode))
 		{
@@ -5059,8 +5173,14 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 		                                 bKickTA ? 0 : ui32Client3DFenceCount,  /* For a kick with a TA, the 3D fences are added before the PR command instead */
 		                                 bKickTA ? NULL : pauiClient3DFenceUFOAddress,
 		                                 NULL,
+#if defined(SYNC_QBS_ENABLED)
+		                                 /* Used patched count and address to include QBS */
+		                                 ui32Client3DUpdateCountOverride,
+		                                 pauiClient3DUpdateUFOAddressOverride,
+#else
 		                                 ui32Client3DUpdateCount,
 		                                 pauiClient3DUpdateUFOAddress,
+#endif
 		                                 paui32Client3DUpdateValue,
 		                                 ui323DCmdSize,
 		                                 pui83DDMCmd,
@@ -5457,6 +5577,12 @@ PVRSRV_ERROR PVRSRVRGXKickTA3DKM(RGX_SERVER_RENDER_CONTEXT	*psRenderContext,
 	{
 		OSFreeMem(s3DSyncData.paui32ClientUpdateValue);
 	}
+#if defined(SYNC_QBS_ENABLED)
+	if (pauiPRFenceQBSUpdateIncludedAddress)
+	{
+		OSFreeMem(pauiPRFenceQBSUpdateIncludedAddress);
+	}
+#endif
 
 	OSLockRelease(psRenderContext->hLock);
 
@@ -5467,6 +5593,15 @@ fail_3dattachcleanupctls:
 fail_taattachcleanupctls:
 fail_3dacquirecmd:
 fail_3dcmdinit:
+#if defined(SYNC_QBS_ENABLED)
+if (pauiPRFenceQBSUpdateIncludedAddress)
+{
+	SYNC_QBS* psQBS = SyncPrimBlockGetQBS(psPRFenceSyncPrimBlock);
+	QBSCCBRollback(psQBS);
+	OSFreeMem(pauiPRFenceQBSUpdateIncludedAddress);
+}
+fail_qbspr3dinclude:
+#endif
 fail_taacquirecmd:
 	SyncAddrListRollbackCheckpoints(psRenderContext->psDeviceNode, &psRenderContext->sSyncAddrListTAFence);
 	SyncAddrListRollbackCheckpoints(psRenderContext->psDeviceNode, &psRenderContext->sSyncAddrListTAUpdate);
@@ -5498,9 +5633,15 @@ fail_create_ta_fence:
 err_no_buffer_sync_invalid_params:
 #endif /* !defined(SUPPORT_BUFFER_SYNC) */
 err_pr_fence_address:
+SyncAddrListRollbackQBSs(&psRenderContext->sSyncAddrList3DUpdate);
+err_fail_append_qbs_3d_update:
 err_populate_sync_addr_list_3d_update:
 err_populate_sync_addr_list_3d_fence:
+SyncAddrListRollbackQBSs(&psRenderContext->sSyncAddrListTAUpdate);
+err_fail_append_qbs_ta_update:
 err_populate_sync_addr_list_ta_update:
+SyncAddrListRollbackQBSs(&psRenderContext->sSyncAddrListTAFence);
+err_fail_append_qbs_ta_fence:
 err_populate_sync_addr_list_ta_fence:
 err_not_enough_space:
 fail_tacmdinvalfbsc:

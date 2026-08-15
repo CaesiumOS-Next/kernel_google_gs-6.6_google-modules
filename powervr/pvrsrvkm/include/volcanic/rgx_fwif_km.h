@@ -153,7 +153,7 @@ typedef enum
 #define RGXFWIF_INICFG_ALL								(0xFFFFF7FFU)
 
 /* Extended Flag definitions affecting the firmware globally */
-#define RGXFWIF_INICFG_EXT_ALL							(0x0U)
+#define RGXFWIF_INICFG_EXT_ALL							(0U)
 
 #define RGXFWIF_INICFG_SYS_CTXSWITCH_CLRMSK				~(RGXFWIF_INICFG_CTXSWITCH_MODE_RAND | \
 														  RGXFWIF_INICFG_CTXSWITCH_SRESET_EN)
@@ -217,7 +217,10 @@ typedef enum
 #define RGXFWIF_INICFG_FDTI_PROFILE_SHIFT			(16)
 #define RGXFWIF_INICFG_FDTI_PROFILE_MASK			(IMG_UINT32_C(0x3) << RGXFWIF_INICFG_FDTI_PROFILE_SHIFT)
 
-#define RGXFWIF_INICFG_OS_ALL						(0x3FFFFU)
+/* Compatibility flag to indicate KM supports dual-ctx setup */
+#define RGXFWIF_INICFG_OS_KM_SUPPORTS_DUALCTX		(IMG_UINT32_C(0x1) << 18U)
+
+#define RGXFWIF_INICFG_OS_ALL						(0x7FFFFU)
 
 #define RGXFWIF_FILTCFG_TRUNCATE_HALF					(IMG_UINT32_C(0x1) << 3)
 #define RGXFWIF_FILTCFG_TRUNCATE_INT					(IMG_UINT32_C(0x1) << 2)
@@ -315,6 +318,9 @@ typedef struct
 	IMG_UINT8               aui8Padding53[3];
 #endif
 
+#if defined(RGX_SUPPORT_DUAL_MEMCTX)
+	IMG_DEV_PHYADDR			RGXFW_ALIGN sPCPMDevPAddr;	/*!< device physical address of context's page catalogue for workaround */
+#endif
 } UNCACHED_ALIGN RGXFWIF_FWMEMCONTEXT;
 
 /*!

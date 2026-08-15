@@ -101,8 +101,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #define PMR_FLAG_INTERNAL_NO_LAYOUT_CHANGE    (1 << 1)
 #define PMR_FLAG_INTERNAL_DEFER_FREE          (1 << 2)
 #define PMR_FLAG_INTERNAL_IS_ZOMBIE_PMR       (1 << 3)
-#define PMR_FLAG_INTERNAL_IS_ZOMBIE_PMR_EMPTY (1 << 5)
 #define PMR_FLAG_INTERNAL_IS_EXCLUSIVE        (1 << 4)
+#define PMR_FLAG_INTERNAL_EMPTY               (1 << 5)
 
 /* Indicates PMR should be destroyed immediately and not deferred. */
 #define PMR_NO_ZOMBIE_FENCE IMG_UINT64_MAX
@@ -565,7 +565,7 @@ _PMRCreate(PMR_SIZE_T uiLogicalSize,
 		}
 	}
 
-	pvPMRLinAddr = OSAllocMem(sizeof(*psPMR) + sizeof(*psMappingTable) + IMG_FLEX_ARRAY_SIZE(sizeof(IMG_UINT32), ui32NumLogicalChunks));
+	pvPMRLinAddr = OSAllocZMem(sizeof(*psPMR) + sizeof(*psMappingTable) + IMG_FLEX_ARRAY_SIZE(sizeof(IMG_UINT32), ui32NumLogicalChunks));
 	PVR_RETURN_IF_NOMEM(pvPMRLinAddr);
 
 	psPMR = (PMR *) pvPMRLinAddr;
@@ -613,11 +613,19 @@ _PMRCreate(PMR_SIZE_T uiLogicalSize,
 	psPMR->uiLog2ContiguityGuarantee = uiLog2ContiguityGuarantee;
 	psPMR->uiFlags = uiFlags;
 	psPMR->psMappingTable = psMappingTable;
-	psPMR->uiInternalFlags = bSparse ? PMR_FLAG_INTERNAL_SPARSE_ALLOC : 0;
 	psPMR->szAnnotation[0] = '\0';
 	PMR_ENV_INITIALIZE(psPMR, sEnvData);
 
 	psPMR->uiDevImportBitmap = 0;
+
+	if (bSparse)
+	{
+		BITMASK_SET(psPMR->uiInternalFlags, PMR_FLAG_INTERNAL_SPARSE_ALLOC);
+		if (ui32NumPhysChunks == 0)
+		{
+			BITMASK_SET(psPMR->uiInternalFlags, PMR_FLAG_INTERNAL_EMPTY);
+		}
+	}
 
 	psPMR->sHeader.eZombieType = PMR_ZOMBIE_TYPE_PMR;
 #if !defined(PVRSRV_USE_LOCKLESS_PMR_ZOMBIE_LIST)
@@ -808,11 +816,6 @@ _FactoryUnlock(const PMR_IMPL_FUNCTAB *psFuncTable)
 	{
 		psFuncTable->pfnReleasePMRFactoryLock();
 	}
-}
-
-void PMR_SetZombieIsPMREmptyFlag(PMR *psPMR)
-{
-	(void) _IntFlagSetIfNotSet(psPMR, PMR_FLAG_INTERNAL_IS_ZOMBIE_PMR_EMPTY);
 }
 
 static IMG_BOOL _IsDeviceOnAndOperating(PVRSRV_DEVICE_NODE *psDevNode)
@@ -1168,7 +1171,7 @@ _UnrefAndMaybeDestroy(PMR *psPMR, IMG_UINT32 uiRefCount)
 	{
 		_PMRDestroy(psPMR);
 	}
-	else if (_IntFlagIsSet(psPMR, PMR_FLAG_INTERNAL_IS_ZOMBIE_PMR_EMPTY))
+	else if (_IntFlagIsSet(psPMR, PMR_FLAG_INTERNAL_EMPTY))
 	{
 		_PMRDestroy(psPMR);
 	}
@@ -3555,6 +3558,15 @@ PVRSRV_ERROR PMR_ChangeSparseMemUnlocked(PMR *psPMR,
 	/* This PVR_ASSERT is only relevant when uiSparseFlags does not have the
 	 * SPARSE_RESIZE_FREE bit set. */
 	PVR_ASSERT((uiSparseFlags & SPARSE_RESIZE_FREE) ? IMG_TRUE : pvZombiePages == NULL);
+
+	if (psPMR->psMappingTable->ui32NumPhysChunks == 0)
+	{
+		_IntFlagSet(psPMR, PMR_FLAG_INTERNAL_EMPTY);
+	}
+	else
+	{
+		_IntFlagClr(psPMR, PMR_FLAG_INTERNAL_EMPTY);
+	}
 
 	/* Call _ProcessZombiePage() to either queue the excess pages for deferred free or if
 	 * no excess pages then free the pre-allocated psPMRZombiePages which is no longer needed.

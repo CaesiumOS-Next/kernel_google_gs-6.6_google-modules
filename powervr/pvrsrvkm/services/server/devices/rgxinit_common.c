@@ -59,40 +59,6 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "pvrsrv_apphint.h"
 #include "os_apphint.h"
 
-/* b/491454290: Once memory has been used for UFOs, it must forever remain so.
- *              Implement this by keeping a pool of freed UFO blocks.
- */
-struct free_ufo_block
-{
-	struct list_head node;
-	DEVMEM_MEMDESC  *memory;
-};
-static DEFINE_MUTEX(free_ufo_mutex);
-
-
-static void return_ufo_block_to_pool(PVRSRV_DEVICE_NODE *psDeviceNode,
-                                     DEVMEM_MEMDESC *psMemDesc)
-{
-	struct free_ufo_block *block;
-
-	mutex_lock(&free_ufo_mutex);
-
-	/* b/491454290: As we have a UFO block to free, there must be an empty block
-	 *              at the tail of the pool ready to receive it. */
-	BUG_ON(list_empty(&psDeviceNode->sFreeUFOBlocks));
-	block = list_last_entry(&psDeviceNode->sFreeUFOBlocks, struct free_ufo_block, node);
-
-	/* Stash the UFO block in it */
-	BUG_ON(block->memory);
-	block->memory = psMemDesc;
-
-	/* Move the block to the head of the pool, as it's now full */
-	list_del(&block->node);
-	list_add(&block->node, &psDeviceNode->sFreeUFOBlocks);
-
-	mutex_unlock(&free_ufo_mutex);
-}
-
 static PVRSRV_ERROR RGXAllocUFOBlock(PVRSRV_DEVICE_NODE *psDeviceNode,
                                      IMG_UINT32 ui32RequestedSize,
                                      DEVMEM_MEMDESC **psMemDesc,
@@ -105,9 +71,6 @@ static PVRSRV_ERROR RGXAllocUFOBlock(PVRSRV_DEVICE_NODE *psDeviceNode,
 	IMG_DEVMEM_ALIGN_T uiUFOBlockAlign = MAX(sizeof(IMG_UINT32), sizeof(SYNC_CHECKPOINT_FW_OBJ));
 	IMG_DEVMEM_SIZE_T uiUFOBlockSize = PVR_ALIGN(ui32RequestedSize, uiUFOBlockAlign);
 
-	struct free_ufo_block *block = NULL;
-	struct list_head *list_node;
-
 	psDevInfo = psDeviceNode->pvDevice;
 
 	/* Size and align are 'expanded' because we request an Exportalign allocation */
@@ -117,101 +80,49 @@ static PVRSRV_ERROR RGXAllocUFOBlock(PVRSRV_DEVICE_NODE *psDeviceNode,
 
 	if (eError != PVRSRV_OK)
 	{
-		return eError;
+		goto e0;
 	}
 
-	/* b/491454290: Look for a free UFO block we can re-use first */
-	mutex_lock(&free_ufo_mutex);
-	list_for_each(list_node, &psDeviceNode->sFreeUFOBlocks)
+	eError = DevmemFwAllocateExportable(psDeviceNode,
+	                                    uiUFOBlockSize,
+	                                    uiUFOBlockAlign,
+	                                    PVRSRV_MEMALLOCFLAG_PHYS_HEAP_HINT(FW_MAIN) |
+	                                    PVRSRV_MEMALLOCFLAG_DEVICE_FLAG(PMMETA_PROTECT) |
+	                                    PVRSRV_MEMALLOCFLAG_KERNEL_CPU_MAPPABLE |
+	                                    PVRSRV_MEMALLOCFLAG_ZERO_ON_ALLOC |
+	                                    PVRSRV_MEMALLOCFLAG_GPU_READABLE |
+	                                    PVRSRV_MEMALLOCFLAG_GPU_WRITEABLE |
+	                                    PVRSRV_MEMALLOCFLAG_CPU_READABLE |
+	                                    PVRSRV_MEMALLOCFLAG_CPU_WRITEABLE |
+	                                    PVRSRV_MEMALLOCFLAG_UNCACHED,
+	                                    "FwExUFOBlock",
+	                                    psMemDesc);
+	if (eError != PVRSRV_OK)
 	{
-		struct free_ufo_block *this_block = list_entry(list_node, struct free_ufo_block, node);
-
-		/* Stop when we reach empty blocks at the tail of the pool */
-		if (!this_block->memory)
-			break;
-
-		/* Find the best fit */
-		if (this_block->memory->uiAllocSize >= uiUFOBlockSize)
-		{
-			if (!block || this_block->memory->uiAllocSize < block->memory->uiAllocSize)
-				block = this_block;
-		}
-	}
-
-	if (block)
-	{
-		/* b/491454290: Take ownership of the block's memory */
-		*psMemDesc = block->memory;
-		block->memory = NULL;
-
-		/* b/491454290: Move the now-empty block to the tail of the pool */
-		list_del(&block->node);
-		list_add_tail(&block->node, &psDeviceNode->sFreeUFOBlocks);
-
-		mutex_unlock(&free_ufo_mutex);
-	}
-	else
-	{
-		mutex_unlock(&free_ufo_mutex);
-
-		/* b/491454290: Allocate an empty tracking block first */
-		block = kzalloc(sizeof(*block), GFP_KERNEL);
-		if (!block)
-		{
-			return PVRSRV_ERROR_OUT_OF_MEMORY;
-		}
-
-		/* b/491454290: Now allocate the UFO memory itself */
-		eError = DevmemFwAllocateExportable(psDeviceNode,
-		                                    uiUFOBlockSize,
-		                                    uiUFOBlockAlign,
-		                                    PVRSRV_MEMALLOCFLAG_PHYS_HEAP_HINT(FW_MAIN) |
-		                                    PVRSRV_MEMALLOCFLAG_DEVICE_FLAG(PMMETA_PROTECT) |
-		                                    PVRSRV_MEMALLOCFLAG_KERNEL_CPU_MAPPABLE |
-		                                    PVRSRV_MEMALLOCFLAG_ZERO_ON_ALLOC |
-		                                    PVRSRV_MEMALLOCFLAG_GPU_READABLE |
-		                                    PVRSRV_MEMALLOCFLAG_GPU_WRITEABLE |
-		                                    PVRSRV_MEMALLOCFLAG_CPU_READABLE |
-		                                    PVRSRV_MEMALLOCFLAG_CPU_WRITEABLE |
-		                                    PVRSRV_MEMALLOCFLAG_UNCACHED,
-		                                    "FwExUFOBlock",
-		                                    psMemDesc);
-
-		if (eError != PVRSRV_OK)
-		{
-			kfree(block);
-			return eError;
-		}
-
-		/* Add the empty tracking block to the tail of the pool, we'll need it later */
-		mutex_lock(&free_ufo_mutex);
-		list_add_tail(&block->node, &psDeviceNode->sFreeUFOBlocks);
-		mutex_unlock(&free_ufo_mutex);
+		goto e0;
 	}
 
 	eError = RGXSetFirmwareAddress(&pFirmwareAddr, *psMemDesc, 0, RFW_FWADDR_FLAG_NONE);
-
-	if (eError != PVRSRV_OK)
-	{
-		/* b/491454290: Return the UFO allocation to the pool */
-		return_ufo_block_to_pool(psDeviceNode, *psMemDesc);
-		*psMemDesc = NULL;
-		return eError;
-	}
+	PVR_GOTO_IF_ERROR(eError, e1);
 
 	*puiSyncPrimVAddr = pFirmwareAddr.ui32Addr;
 	*puiSyncPrimBlockSize = TRUNCATE_64BITS_TO_32BITS(uiUFOBlockSize);
 
 	return PVRSRV_OK;
+
+e1:
+	DevmemFwUnmapAndFree(psDevInfo, *psMemDesc);
+e0:
+	return eError;
 }
 
 static void RGXFreeUFOBlock(PVRSRV_DEVICE_NODE *psDeviceNode,
                             DEVMEM_MEMDESC *psMemDesc)
 {
-	RGXUnsetFirmwareAddress(psMemDesc);
+	PVRSRV_RGXDEV_INFO *psDevInfo = psDeviceNode->pvDevice;
 
-	/* b/491454290: Return the UFO allocation to the pool */
-	return_ufo_block_to_pool(psDeviceNode, psMemDesc);
+	RGXUnsetFirmwareAddress(psMemDesc);
+	DevmemFwUnmapAndFree(psDevInfo, psMemDesc);
 }
 
 /**************************************************************************/ /*!
@@ -424,9 +335,6 @@ void RGXDeviceInitCallbacks(PVRSRV_DEVICE_NODE *psDeviceNode)
 	/* Register callbacks for Unified Fence Objects */
 	psDeviceNode->pfnAllocUFOBlock = RGXAllocUFOBlock;
 	psDeviceNode->pfnFreeUFOBlock = RGXFreeUFOBlock;
-
-	/* b/491454290: Initialize the pool of free UFO blocks */
-	INIT_LIST_HEAD(&psDeviceNode->sFreeUFOBlocks);
 
 #if defined(SUPPORT_AUTOVZ)
 	/* Register callback for updating the virtualization watchdog */

@@ -638,6 +638,15 @@ PVRSRV_ERROR PVRSRVRGXTDMSubmitTransferKM(
 		{
 			goto fail_populate_sync_addr_list;
 		}
+
+		eError = SyncAddrListAppendQBSsFromSyncBlocks(&psTransferContext->sSyncAddrListUpdate,
+		                                              &ui32IntClientUpdateCount,
+		                                              pauiClientUpdateUFODevVarBlock);
+		if (eError != PVRSRV_OK)
+		{
+			goto fail_append_qbs;
+		}
+
 		paui32IntUpdateValue    = paui32ClientUpdateValue;
 		pauiIntUpdateUFOAddress = psTransferContext->sSyncAddrListUpdate.pasFWAddrs;
 
@@ -1192,6 +1201,9 @@ PVRSRV_ERROR PVRSRVRGXTDMSubmitTransferKM(
 	if (iExportFenceToSignal != PVRSRV_NO_FENCE &&
 	    iUpdateTimeline != PVRSRV_NO_TIMELINE)
 	{
+		/* Drop the extra reference taken on the export fence sync checkpoint
+		 * by SyncCheckpointResolveExportFence */
+		SyncCheckpointFree(psExportFenceSyncCheckpoint);
 		SyncCheckpointFinaliseExportFence(iExportFenceToSignal);
 	}
 
@@ -1240,6 +1252,8 @@ fail_alloc_update_values_mem:
 fail_check_fence_includes_export_fence:
 	if (psExportFenceSyncCheckpoint)
 	{
+		/* Drop the extra reference taken by SyncCheckpointResolveExportFence */
+		SyncCheckpointFree(psExportFenceSyncCheckpoint);
 		SyncCheckpointRollbackExportFence(iExportFenceToSignal);
 	}
 fail_resolve_export_fence:
@@ -1265,7 +1279,8 @@ fail_resolve_input_fence:
 		kfree(apsBufferFenceSyncCheckpoints);
 	}
 #endif /* defined(SUPPORT_BUFFER_SYNC) */
-
+fail_append_qbs:
+	SyncAddrListRollbackQBSs(&psTransferContext->sSyncAddrListUpdate);
 fail_populate_sync_addr_list:
 	OSFreeMem(psCmdHelper);
 fail_allochelper:

@@ -2262,20 +2262,15 @@ _AllocOSPage_CMA(PMR_OSPAGEARRAY_DATA *psPageArrayData,
  *
  * If the order is higher than 0, it splits the page into multiples and
  * stores them at position uiPageIndex to uiPageIndex+(1<<uiAllocOrder).
- *
- * This function is supposed to be used for uiMinOrder == 0 only! */
+ */
 static PVRSRV_ERROR
 _AllocOSPage_noprof(PMR_OSPAGEARRAY_DATA *psPageArrayData,
 			gfp_t gfp_flags,
 			IMG_UINT32 uiAllocOrder,
-			IMG_UINT32 uiMinOrder,
 			IMG_UINT32 uiPageIndex)
 {
 	struct page *psPage;
 	IMG_UINT32 ui32Count;
-
-	/* Parameter check. If it fails we write into the wrong places in the array. */
-	PVR_ASSERT(uiMinOrder == 0);
 
 	/* Allocate the page */
 	DisableOOMKiller();
@@ -2492,7 +2487,6 @@ _AllocOSPages_Fast(PMR_OSPAGEARRAY_DATA *psPageArrayData)
 			eError = _AllocOSPage(psPageArrayData,
 								  ui32GfpFlags,
 								  ui32Order,
-								  ui32MinOrder,
 								  uiArrayIndex);
 		}
 
@@ -2861,7 +2855,6 @@ _AllocOSPages_Sparse(PMR_OSPAGEARRAY_DATA *psPageArrayData,
 			eError = _AllocOSPage(psPageArrayData,
 								  ui32GfpFlags,
 								  uiOrder,
-								  uiOrder,
 								  uiOSPageAllocIndex);
 			if (eError != PVRSRV_OK)
 			{
@@ -2976,6 +2969,12 @@ _AllocOSPages_Sparse(PMR_OSPAGEARRAY_DATA *psPageArrayData,
 	return PVRSRV_OK;
 
 e_free_pages:
+	/* Upon failure, `i` holds a 0..uiDevPagesToAlloc value, which represents
+	 * an index of a page that was about to be allocated. This range may hold
+	 * two distinct types of pages: pages (count == uiDevPagesFromPool) taken
+	 * from a pre-existing pool, and a number of newly allocated pages, which
+	 * account for the remainder of pages allocated (total == i - 1).
+	 */
 	if (BIT_ISSET(ui32AllocFlags, FLAG_DMA_CMA))
 	{
 		IMG_UINT32 uiDevPageSize = PAGE_SIZE << uiOrder;
@@ -2983,25 +2982,24 @@ e_free_pages:
 		/* Free the pages we just allocated from the CMA */
 		for (; i > uiDevPagesFromPool; i--)
 		{
-			IMG_UINT32 idx = (i - 1) << uiOrder;
+			IMG_UINT32 uiAdjustedIndex = i - 1;
+			IMG_UINT32 uiOSPageIndex = pauiDevPageAllocIndices[uiAdjustedIndex] << uiOrder;
 			IMG_UINT32 uiSubPageInOrder;
+
 			_FreeOSPage_CMA(psPageArrayData->psDevNode->psDevConfig->pvOSDevice,
 			                uiDevPageSize,
 			                uiOrder,
-			                psPageArrayData->dmavirtarray[pauiDevPageAllocIndices[idx]],
-			                psPageArrayData->dmaphysarray[pauiDevPageAllocIndices[idx]],
-			                ppsPageArray[pauiDevPageAllocIndices[idx]]);
-			psPageArrayData->dmaphysarray[pauiDevPageAllocIndices[idx]]= (dma_addr_t) 0;
-			psPageArrayData->dmavirtarray[pauiDevPageAllocIndices[idx]] = NULL;
-			ppsPageArray[pauiDevPageAllocIndices[idx]] = NULL;
+			                psPageArrayData->dmavirtarray[uiOSPageIndex],
+			                psPageArrayData->dmaphysarray[uiOSPageIndex],
+			                ppsPageArray[uiOSPageIndex]);
 
-			for (uiSubPageInOrder = 1;
+			for (uiSubPageInOrder = 0;
 				 uiSubPageInOrder < (1 << uiOrder);
 				 uiSubPageInOrder++)
 			{
-				ppsPageArray[idx + uiSubPageInOrder] = NULL;
-				psPageArrayData->dmaphysarray[idx + uiSubPageInOrder] = (dma_addr_t)0;
-				psPageArrayData->dmavirtarray[idx + uiSubPageInOrder] = NULL;
+				ppsPageArray[uiOSPageIndex + uiSubPageInOrder] = NULL;
+				psPageArrayData->dmaphysarray[uiOSPageIndex + uiSubPageInOrder] = (dma_addr_t)0;
+				psPageArrayData->dmavirtarray[uiOSPageIndex + uiSubPageInOrder] = NULL;
 			}
 		}
 
@@ -3011,8 +3009,18 @@ e_free_pages:
 		/* Free the pages we just allocated from the OS */
 		for (; i > uiDevPagesFromPool; i--)
 		{
-			_FreeOSPage(0, IMG_FALSE, psPageArrayData, ppsPageArray[pauiDevPageAllocIndices[i-1]]);
-			ppsPageArray[pauiDevPageAllocIndices[i-1]] = NULL;
+			IMG_UINT32 uiAdjustedIndex = i - 1;
+			IMG_UINT32 uiOSPageIndex = pauiDevPageAllocIndices[uiAdjustedIndex] << uiOrder;
+			IMG_UINT32 uiSubPageInOrder;
+
+			/* Free each OS page in the order range */
+			for (uiSubPageInOrder = 0;
+			     uiSubPageInOrder < (1 << uiOrder);
+			     uiSubPageInOrder++)
+			{
+				_FreeOSPage(0, IMG_FALSE, psPageArrayData, ppsPageArray[uiOSPageIndex + uiSubPageInOrder]);
+				ppsPageArray[uiOSPageIndex + uiSubPageInOrder] = NULL;
+			}
 		}
 	}
 
@@ -3526,7 +3534,10 @@ _FreeOSPages_Fast(PMR_OSPAGEARRAY_DATA *psPageArrayData)
 
 		for (i = 0; i < uiOSNumPages; i++)
 		{
-			_FreeOSPage(uiOrder, IMG_FALSE, psPageArrayData, ppsPageArray[i]);
+			/* Pages allocated via the non DMA_CMA path always get split into
+			 * order 0 OS pages.
+			 */
+			_FreeOSPage(0, IMG_FALSE, psPageArrayData, ppsPageArray[i]);
 			ppsPageArray[i] = NULL;
 		}
 	}
@@ -4371,7 +4382,6 @@ PMRChangeSparseMemOSMem(PMR_IMPL_PRIVDATA pPriv,
 		}
 	}
 
-
 	ui32Index = ui32Loop;
 
 	/* Move the corresponding free pages to alloc request */
@@ -4414,11 +4424,6 @@ PMRChangeSparseMemOSMem(PMR_IMPL_PRIVDATA pPriv,
 		if (eError != PVRSRV_OK)
 		{
 			goto e0;
-		}
-
-		if (psPMRPageArrayData->iNumOSPagesAllocated == 0)
-		{
-			PMR_SetZombieIsPMREmptyFlag(psPMRPageArrayData->hPMR);
 		}
 
 		/* Zombify pages to get proper stats */

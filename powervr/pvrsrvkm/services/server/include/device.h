@@ -50,6 +50,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "pvrsrv_device.h"
 #include "sync_checkpoint.h"
 #include "sync_checkpoint_internal.h"
+#include "sync_qbs.h"
 #include "srvkm.h"
 #include "physheap.h"
 #include "sync_internal.h"
@@ -400,7 +401,18 @@ typedef struct _PVRSRV_DEVICE_NODE_
 			                     PVRSRV_MEMALLOCFLAGS_T uiMappingFlags,
 			                     MMU_PROTFLAGS_T *uiMMUProtFlags);
 
-
+#if defined(RGX_SUPPORT_DUAL_MEMCTX)
+	/* Callback pfnInterceptMMUEntry may be NULL if not required */
+	PVRSRV_ERROR (*pfnInterceptMMUEntry)(struct _PVRSRV_DEVICE_NODE_ *psDevNode,
+                                MMU_CONTEXT *psMMUContext,
+                                const IMG_UINT32 uiIndex,
+                                const MMU_PxE_CONFIG *psConfig,
+                                const MMU_LEVEL eMMULevel,
+                                const IMG_DEV_PHYADDR *psDevPAddr,
+                                const MMU_PROTFLAGS_T uiProtFlags,
+                                const IMG_UINT32 uiLog2DataPageSize,
+                                IMG_BOOL* bSkipWrite);
+#endif
 	void (*pfnDumpDebugInfo)(struct _PVRSRV_DEVICE_NODE_ *psDevNode);
 
 	PVRSRV_ERROR (*pfnUpdateHealthStatus)(struct _PVRSRV_DEVICE_NODE_ *psDevNode,
@@ -541,7 +553,6 @@ typedef struct _PVRSRV_DEVICE_NODE_
 	/* Functions for allocation/freeing of UFOs */
 	AllocUFOBlockCallback	pfnAllocUFOBlock;	/*!< Callback for allocation of a block of UFO memory */
 	FreeUFOBlockCallback	pfnFreeUFOBlock;	/*!< Callback for freeing of a block of UFO memory */
-	struct list_head		sFreeUFOBlocks;		/*!< b/491454290: List of free UFO memory blocks */
 
 	IMG_HANDLE				hSyncServerRecordNotify;
 	POS_LOCK				hSyncServerRecordLock;
@@ -564,6 +575,7 @@ typedef struct _PVRSRV_DEVICE_NODE_
 	DLLIST_NODE				sSyncCheckpointSyncsList;
 
 	PSYNC_CHECKPOINT_CONTEXT hSyncCheckpointContext;
+	SYNC_QBS_CONTEXT		*hQBSContext;
 	PSYNC_PRIM_CONTEXT		hSyncPrimContext;
 
 	/* With this sync-prim we make sure the MMU cache is flushed

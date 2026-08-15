@@ -61,6 +61,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "sync_checkpoint_internal.h"
 #include "sync_checkpoint.h"
+#include "sync_qbs.h"
 
 /* Include this to obtain MAX_SYNC_CHECKPOINTS_PER_FENCE */
 #include "sync_checkpoint_external.h"
@@ -83,7 +84,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  * sync implementation (used for timeline debug), the size calculated from
  * PVRSRV_MAX_DEV_VARS+MAX_SYNC_CHECKPOINTS_PER_FENCE should be ample.
  */
-#define PVRSRV_MAX_SYNC_ADDR_LIST_SIZE (PVRSRV_MAX_DEV_VARS+MAX_SYNC_CHECKPOINTS_PER_FENCE)
+#define PVRSRV_MAX_SYNC_ADDR_LIST_SIZE ((PVRSRV_MAX_DEV_VARS*2)+MAX_SYNC_CHECKPOINTS_PER_FENCE)
 /* Check that helper functions will not be preparing longer lists of
  * UFOs than the FW can handle.
  */
@@ -103,6 +104,7 @@ struct _SYNC_PRIMITIVE_BLOCK_
 	DLLIST_NODE			sConnectionNode;
 	SYNC_CONNECTION_DATA *psSyncConnectionData;	/*!< Link back to the sync connection data if there is one */
 	PRGXFWIF_UFO_ADDR		uiFWAddr;	/*!< The firmware address of the sync prim block */
+	SYNC_QBS				*psQBS; /*!< QBS added as update to commands using this block */
 };
 
 struct _SYNC_CONNECTION_DATA_
@@ -238,6 +240,7 @@ SyncAddrListInit(SYNC_ADDR_LIST *psList)
 {
 	psList->ui32NumSyncs = 0;
 	psList->pasFWAddrs   = NULL;
+	psList->ui32NumQBSs  = 0;
 }
 
 /*!
@@ -258,6 +261,121 @@ SyncAddrListDeinit(SYNC_ADDR_LIST *psList)
 		OSFreeMem(psList->pasFWAddrs);
 	}
 }
+
+#if defined(SYNC_QBS_ENABLED)
+void
+SyncAddrListCountQBSsFromSyncBlocks(SYNC_ADDR_LIST *psList,
+                                    IMG_UINT32 ui32NumSyncs,
+                                    SYNC_PRIMITIVE_BLOCK **apsSyncPrimBlock)
+{
+	SYNC_PRIMITIVE_BLOCK *apsUniquePrimBlocks[PVRSRV_MAX_SYNCS] = {NULL};
+	IMG_UINT32 uiSyncBlockItr, uiUniqueEntryItr, uiUniqueBlockCount = 0;
+
+	/* Reset List QBS count */
+	psList->ui32NumQBSs = 0;
+
+	if (ui32NumSyncs == 0)
+	{
+		return;
+	}
+
+	/* Find each unique prim block as a QBS checkpoint will also be added for each */
+	for (uiSyncBlockItr = 0; uiSyncBlockItr < ui32NumSyncs; uiSyncBlockItr++)
+	{
+		IMG_BOOL bSuperContinue = IMG_FALSE;
+		for (uiUniqueEntryItr = 0; apsUniquePrimBlocks[uiUniqueEntryItr] != NULL; uiUniqueEntryItr++)
+		{
+			if (apsSyncPrimBlock[uiSyncBlockItr] == apsUniquePrimBlocks[uiUniqueEntryItr])
+			{
+				bSuperContinue = IMG_TRUE;
+				break;
+			}
+		}
+
+		if (bSuperContinue)
+		{
+			/* This is not a unique element */
+			continue;
+		}
+
+		apsUniquePrimBlocks[uiUniqueEntryItr] = apsSyncPrimBlock[uiSyncBlockItr];
+		uiUniqueBlockCount++;
+	}
+
+	for (uiUniqueEntryItr = 0; uiUniqueEntryItr < uiUniqueBlockCount; uiUniqueEntryItr++)
+	{
+		SYNC_QBS *psQBS = apsUniquePrimBlocks[uiUniqueEntryItr]->psQBS;
+		psList->pasQBSs[uiUniqueEntryItr] = psQBS;
+		psList->ui32NumQBSs++;
+	}
+}
+
+PVRSRV_ERROR
+SyncAddrListAppendQBSsToUFOArray(SYNC_ADDR_LIST *psList)
+{
+	IMG_UINT32 i;
+	PVRSRV_ERROR eError;
+	IMG_UINT32 uiCurrentSyncIdx = psList->ui32NumSyncs;
+
+	/* Ensure there's room in psList for the additional QBS checkpoints */
+	eError = SyncAddrListGrow(psList, psList->ui32NumSyncs + psList->ui32NumQBSs);
+	PVR_LOG_RETURN_IF_ERROR(eError, "SyncAddrListGrow");
+
+	for (i = 0; i < psList->ui32NumQBSs; i++)
+	{
+		SYNC_QBS *psQBS = psList->pasQBSs[i];
+
+		psList->pasFWAddrs[uiCurrentSyncIdx + i].ui32Addr =
+			QBSGetFirmwareAddrEnqueue(psQBS);
+	}
+
+	return PVRSRV_OK;
+}
+
+PVRSRV_ERROR
+SyncAddrListAppendQBSsFromSyncBlocks(SYNC_ADDR_LIST *psList,
+                                     IMG_UINT32 *pui32NumSyncs,
+                                     SYNC_PRIMITIVE_BLOCK **apsSyncPrimBlock)
+{
+	PVRSRV_ERROR eError = PVRSRV_OK;
+
+	SyncAddrListCountQBSsFromSyncBlocks(psList,
+	                                    *pui32NumSyncs,
+	                                    apsSyncPrimBlock);
+
+	if (psList->ui32NumQBSs == 0)
+	{
+		return PVRSRV_OK;
+	}
+
+	eError = SyncAddrListAppendQBSsToUFOArray(psList);
+	PVR_LOG_RETURN_IF_ERROR(eError, "SyncAddrListAppendQBSs");
+
+	/* We have added QBS UFOs to the sync list in the function above */
+	*pui32NumSyncs += psList->ui32NumQBSs;
+
+	return PVRSRV_OK;
+}
+
+void SyncAddrListRollbackQBSs(SYNC_ADDR_LIST *psList)
+{
+	IMG_UINT32 ui32QBSIndex;
+
+	for (ui32QBSIndex = 0;
+	     ui32QBSIndex < psList->ui32NumQBSs;
+	     ui32QBSIndex++)
+	{
+		QBSCCBRollback(psList->pasQBSs[ui32QBSIndex]);
+	}
+
+	psList->ui32NumQBSs = 0;
+}
+
+SYNC_QBS* SyncPrimBlockGetQBS(SYNC_PRIMITIVE_BLOCK *psBlk)
+{
+	return psBlk->psQBS;
+}
+#endif
 
 /*!
 *****************************************************************************
@@ -767,7 +885,7 @@ void _SyncConnectionRemoveBlock(SYNC_PRIMITIVE_BLOCK *psBlock)
 }
 
 static inline
-void _DoPrimBlockFree(SYNC_PRIMITIVE_BLOCK *psSyncBlk)
+PVRSRV_ERROR _DoPrimBlockFree(SYNC_PRIMITIVE_BLOCK *psSyncBlk)
 {
 	PVRSRV_DEVICE_NODE *psDevNode = psSyncBlk->psDevNode;
 
@@ -776,10 +894,28 @@ void _DoPrimBlockFree(SYNC_PRIMITIVE_BLOCK *psSyncBlk)
 
 	PVR_ASSERT(OSAtomicRead(&psSyncBlk->sRefCount) == 1);
 
+	if ((psSyncBlk->psDevNode->eDevState == PVRSRV_DEVICE_STATE_PCI_ERROR ||
+	     psSyncBlk->psDevNode->eDevState == PVRSRV_DEVICE_STATE_DESTRUCTING) &&
+	    QBSGetFWAckCount(psSyncBlk->psQBS) == RGX_PCI_ERROR_VALUE_DWORD)
+	{
+		PVR_DPF((PVR_DBG_WARNING, "%s: PCI state error, force free sync prim block!",
+				 __func__));
+	}
+	else if (QBSGetEnqueuedCount(psSyncBlk->psQBS) !=
+	         QBSGetFWAckCount(psSyncBlk->psQBS))
+	{
+		PVR_DPF((PVR_DBG_WARNING, "%s: Failed to free prim block, still referenced!",
+		         __func__));
+		return PVRSRV_ERROR_RETRY;
+	}
+
+	QBSDestroy(psSyncBlk->psQBS);
 	_SyncConnectionRemoveBlock(psSyncBlk);
 	DevmemReleaseCpuVirtAddr(psSyncBlk->psMemDesc);
 	psDevNode->pfnFreeUFOBlock(psDevNode, psSyncBlk->psMemDesc);
 	OSFreeMem(psSyncBlk);
+
+	return PVRSRV_OK;
 }
 
 PVRSRV_ERROR
@@ -813,9 +949,14 @@ PVRSRVAllocSyncPrimitiveBlockKM(CONNECTION_DATA *psConnection,
 									  (void **) &psNewSyncBlk->pui32LinAddr);
 	PVR_GOTO_IF_ERROR(eError, e2);
 
+	eError = QBSAlloc(psDevNode->hQBSContext,
+	                  "PrimBlkQBS",
+	                  &psNewSyncBlk->psQBS);
+	PVR_GOTO_IF_ERROR(eError, e3);
+
 	eError = DevmemLocalGetImportHandle(psNewSyncBlk->psMemDesc, (void **) ppsSyncPMR);
 
-	PVR_GOTO_IF_ERROR(eError, e3);
+	PVR_GOTO_IF_ERROR(eError, e4);
 
 	OSAtomicWrite(&psNewSyncBlk->sRefCount, 1);
 
@@ -831,6 +972,8 @@ PVRSRVAllocSyncPrimitiveBlockKM(CONNECTION_DATA *psConnection,
 
 	return PVRSRV_OK;
 
+e4:
+	QBSDestroy(psNewSyncBlk->psQBS);
 e3:
 	DevmemReleaseCpuVirtAddr(psNewSyncBlk->psMemDesc);
 e2:
@@ -849,8 +992,7 @@ PVRSRVFreeSyncPrimitiveBlockKM(SYNC_PRIMITIVE_BLOCK *psSyncBlk)
 	 * With the removal of sync prim ops for server syncs we no longer have to
 	 * reference count prim blocks as the reference will never be incremented /
 	 * decremented by a prim op */
-	_DoPrimBlockFree(psSyncBlk);
-	return PVRSRV_OK;
+	return _DoPrimBlockFree(psSyncBlk);
 }
 
 static INLINE IMG_BOOL _CheckSyncIndex(SYNC_PRIMITIVE_BLOCK *psSyncBlk,
@@ -1229,16 +1371,36 @@ static void SyncRecordListDeinit(PVRSRV_DEVICE_NODE *psDevNode)
 
 PVRSRV_ERROR SyncServerInit(PVRSRV_DEVICE_NODE *psDevNode)
 {
+	PVRSRV_ERROR eError;
+
+	eError = QBSContextCreate(psDevNode, &psDevNode->hQBSContext);
+	PVR_LOG_RETURN_IF_ERROR(eError, "QBSContextCreate");
+
 	if (!(GetInfoPageDebugFlagsKM() & DEBUG_FEATURE_FULL_SYNC_TRACKING_ENABLED))
 	{
 		return PVRSRV_OK;
 	}
 
-	return SyncRecordListInit(psDevNode);
+	eError = SyncRecordListInit(psDevNode);
+	PVR_LOG_GOTO_IF_ERROR(eError, "SyncRecordListInit", err_free_qbs_context);
+
+	return PVRSRV_OK;
+
+err_free_qbs_context:
+	(void) QBSContextDestroy(psDevNode->hQBSContext);
+	return eError;
 }
 
 void SyncServerDeinit(PVRSRV_DEVICE_NODE *psDevNode)
 {
+	PVRSRV_ERROR eError;
+
+	if (psDevNode->hQBSContext != NULL)
+	{
+		eError = QBSContextDestroy(psDevNode->hQBSContext);
+		PVR_LOG_IF_ERROR(eError, "QBSContextDestroy");
+	}
+
 	if (GetInfoPageDebugFlagsKM() & DEBUG_FEATURE_FULL_SYNC_TRACKING_ENABLED)
 	{
 		SyncRecordListDeinit(psDevNode);
