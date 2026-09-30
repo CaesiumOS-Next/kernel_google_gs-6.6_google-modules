@@ -8,4 +8,4 @@
 int g2d_drm_atomic_commit(struct drm_device *dev, struct drm_atomic_state *state, bool nonblock);
 void g2d_drm_atomic_helper_commit_tail_rpm(struct drm_atomic_state *old_state);
 
-#endif // _G2D_CRTC_H_
+#endif // _G2D_DRM_ATOMIC_H_

@@ -26,6 +26,9 @@ enum pixelmd_source {
 	/* Generates PIXELMD_EVENT_KSWAPD_RECLAIM_* events. */
 	PIXELMD_SOURCE_KSWAPD = 1,
 
+	/* Generates PIXELMD_EVENT_LMKD_KILL events. */
+	PIXELMD_SOURCE_LMKD = 2,
+
 	PIXELMD_NUM_SOURCES
 };
 
@@ -102,6 +105,20 @@ struct pixelmd_event_header {
  * Kswapd stopped reclaiming memory (returned from balance_pgdat()).
  */
 #define PIXELMD_EVENT_KSWAPD_RECLAIM_DONE _PIXELMD_EVENT_NO_PAYLOAD(21)
+
+/*
+ * Process killed by LMKD.
+ */
+struct pixelmd_lmkd_kill_event {
+	/* PID of the killed process. */
+	__s32 pid;
+	/* UID of the killed process. */
+	__u32 uid;
+	/* OOM score adj of the killed process. */
+	__s16 oom_score_adj;
+} __packed;
+
+#define PIXELMD_EVENT_LMKD_KILL _PIXELMD_EVENT(30, struct pixelmd_lmkd_kill_event)
 
 /*** Commands ***/
 

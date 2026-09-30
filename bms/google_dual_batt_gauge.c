@@ -73,6 +73,8 @@ struct dual_fg_drv {
 
 	struct power_supply *first_fg_psy;
 	struct power_supply *second_fg_psy;
+	struct device_link *first_fg_link;
+	struct device_link *second_fg_link;
 
 	struct mutex stats_lock;
 
@@ -1302,6 +1304,21 @@ static void google_dual_batt_gauge_init_work(struct work_struct *work)
 
 	gdbatt_stats_init(dual_fg_drv);
 
+	if (dual_fg_drv->first_fg_psy && dual_fg_drv->first_fg_psy->dev.parent) {
+		dual_fg_drv->first_fg_link = device_link_add(dual_fg_drv->device,
+							     dual_fg_drv->first_fg_psy->dev.parent,
+							     DL_FLAG_STATELESS);
+		if (!dual_fg_drv->first_fg_link)
+			dev_err(dual_fg_drv->device, "failed to add first fg link\n");
+	}
+	if (dual_fg_drv->second_fg_psy && dual_fg_drv->second_fg_psy->dev.parent) {
+		dual_fg_drv->second_fg_link = device_link_add(dual_fg_drv->device,
+							      dual_fg_drv->second_fg_psy->dev.parent,
+							      DL_FLAG_STATELESS);
+		if (!dual_fg_drv->second_fg_link)
+			dev_err(dual_fg_drv->device, "failed to add second fg link\n");
+	}
+
 	dual_fg_drv->init_complete = true;
 	mod_delayed_work(system_wq, &dual_fg_drv->gdbatt_work, 0);
 	dev_info(dual_fg_drv->device, "google_dual_batt_gauge_init_work done\n");
@@ -1501,6 +1518,11 @@ static int google_dual_batt_gauge_remove(struct platform_device *pdev)
 
 	if (!dual_fg_drv)
 		return 0;
+
+	if (dual_fg_drv->first_fg_link)
+		device_link_del(dual_fg_drv->first_fg_link);
+	if (dual_fg_drv->second_fg_link)
+		device_link_del(dual_fg_drv->second_fg_link);
 
 	power_supply_unreg_notifier(&dual_fg_drv->fg_nb);
 	gbms_free_chg_profile(&dual_fg_drv->chg_profile);

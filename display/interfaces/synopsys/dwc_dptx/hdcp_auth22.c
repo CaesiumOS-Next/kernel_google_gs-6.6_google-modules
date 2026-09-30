@@ -262,6 +262,7 @@ int run_hdcp_auth22(struct dptx *dptx)
 		} else {
 			if (hdcp_set_auth_state(dptx, HDCP_AUTH_IDLE))
 				return -EBUSY;
+			msleep(hdcp_delay_ms);
 		}
 	}
 

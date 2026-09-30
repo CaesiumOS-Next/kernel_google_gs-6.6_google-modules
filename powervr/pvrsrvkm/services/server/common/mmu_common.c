@@ -4829,6 +4829,16 @@ ErrPutPTConfig:
 }
 #endif
 
+IMG_BOOL
+MMU_ContextIsValid(MMU_CONTEXT *psMMUContext)
+{
+	if (!psMMUContext)
+	{
+		return IMG_FALSE;
+	}
+	return psMMUContext->sBaseLevelInfo.sMemDesc.bValid;
+}
+
 /*
 	MMU_AcquireBaseAddr
  */
@@ -5067,6 +5077,11 @@ void MMU_CheckFaultAddress(MMU_CONTEXT *psMMUContext,
 
 	for (; eMMULevel > MMU_LEVEL_0; eMMULevel--)
 	{
+		if (psLevel->sMemDesc.pvCpuVAddr == NULL)
+		{
+			break;
+		}
+
 		if (eMMULevel == MMU_LEVEL_3)
 		{
 			/* Determine the PC index */

@@ -1366,9 +1366,7 @@ static int dwc3_exynos_remove(struct platform_device *pdev)
 	struct dwc3_exynos	*exynos = platform_get_drvdata(pdev);
 	struct dwc3	*dwc = exynos->dwc;
 
-	mutex_lock(&exynos->dotg_lock);
 	dwc3_exynos_otg_exit(dwc, exynos);
-	mutex_unlock(&exynos->dotg_lock);
 
 	pm_runtime_get_sync(&pdev->dev);
 

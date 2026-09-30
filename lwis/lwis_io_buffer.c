@@ -53,7 +53,7 @@ int lwis_io_buffer_map(struct lwis_device *lwis_dev, struct lwis_io_entry *entry
 		goto err_free_buf;
 	}
 
-	ret = dma_buf_vmap(dma_buffer, &pdma_buffer->io_sys_map);
+	ret = dma_buf_vmap_unlocked(dma_buffer, &pdma_buffer->io_sys_map);
 	if (ret) {
 		dev_err(lwis_dev->dev, "PDMA buffer IO failed because vmap failed");
 		goto err_dma_put;
@@ -73,7 +73,7 @@ int lwis_io_buffer_map(struct lwis_device *lwis_dev, struct lwis_io_entry *entry
 	return 0;
 
 err_dma_vunmap:
-	dma_buf_vunmap(dma_buffer, &pdma_buffer->io_sys_map);
+	dma_buf_vunmap_unlocked(dma_buffer, &pdma_buffer->io_sys_map);
 err_dma_put:
 	dma_buf_put(dma_buffer);
 err_free_buf:
@@ -88,7 +88,7 @@ void lwis_io_buffer_unmap(struct lwis_io_entry *entry)
 	struct pdma_buffer *pdma_buffer = entry->write_to_buffer.buffer;
 
 	dma_buf_end_cpu_access(pdma_buffer->dma_buf, DMA_BIDIRECTIONAL);
-	dma_buf_vunmap(pdma_buffer->dma_buf, &pdma_buffer->io_sys_map);
+	dma_buf_vunmap_unlocked(pdma_buffer->dma_buf, &pdma_buffer->io_sys_map);
 	dma_buf_put(pdma_buffer->dma_buf);
 	kfree(entry->write_to_buffer.bytes);
 	kfree(entry->write_to_buffer.buffer);

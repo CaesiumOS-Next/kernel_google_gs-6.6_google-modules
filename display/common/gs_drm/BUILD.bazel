@@ -7,6 +7,7 @@ ddk_module(
     srcs = [
         "gs_drm_connector.c",
         "gs_drm_trace.c",
+        "gs_fault_event.c",
         "gs_reg_dump.c",
         "gs_sscd.c",
     ],

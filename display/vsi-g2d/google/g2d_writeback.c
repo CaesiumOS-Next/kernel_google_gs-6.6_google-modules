@@ -44,6 +44,7 @@ static int g2d_wb_connector_get_modes(struct drm_connector *connector)
 
 	struct drm_display_mode *mode = NULL;
 	unsigned int i;
+	int count = 0;
 	static const struct display_mode {
 		int w, h, refresh;
 	} cvt_mode[] = {
@@ -60,15 +61,21 @@ static int g2d_wb_connector_get_modes(struct drm_connector *connector)
 	for (i = 0; i < ARRAY_SIZE(cvt_mode); i++) {
 		mode = drm_cvt_mode(dev, cvt_mode[i].w, cvt_mode[i].h, cvt_mode[i].refresh, false,
 				    false, false);
+		if (!mode) {
+			dev_warn(dev->dev, "Failed to create CVT mode %dx%d@%d\n", cvt_mode[i].w,
+				 cvt_mode[i].h, cvt_mode[i].refresh);
+			continue;
+		}
 
 		mode->hdisplay = cvt_mode[i].w;
 		mode->vdisplay = cvt_mode[i].h;
 		scnprintf(mode->name, DRM_DISPLAY_MODE_LEN, "%dx%dx%d", mode->hdisplay,
 			  mode->vdisplay, cvt_mode[i].refresh);
 		drm_mode_probed_add(connector, mode);
+		count++;
 	}
 
-	return 0;
+	return count;
 }
 
 static enum drm_mode_status g2d_wb_connector_mode_valid(struct drm_connector *connector,
@@ -96,6 +103,9 @@ static int g2d_wb_connector_atomic_check(struct drm_connector *connector,
 	struct drm_framebuffer *fb;
 
 	connector_state = drm_atomic_get_new_connector_state(state, connector);
+	if (!connector_state)
+		return 0;
+
 	wb_connector = drm_connector_to_writeback(connector);
 	g2d_wb_connector = to_g2d_writeback_connector(wb_connector);
 
@@ -150,6 +160,12 @@ static void g2d_wb_connector_atomic_commit(struct drm_connector *connector,
 	}
 
 	connector_state = drm_atomic_get_new_connector_state(state, connector);
+	if (!connector_state)
+		return;
+
+	if (!connector_state->writeback_job)
+		return;
+
 	wb_connector = drm_connector_to_writeback(connector);
 	g2d_wb_connector = to_g2d_writeback_connector(wb_connector);
 	fb = connector_state->writeback_job->fb;
@@ -216,6 +232,8 @@ int g2d_enable_writeback_connector(struct g2d_device *g2d_device, uint32_t possi
 			return -ENOMEM;
 		g2d_device->sc->writeback[i] = g2d_wb_connector;
 		wb_connector = &(g2d_wb_connector->base);
+		g2d_wb_connector->dev = drm->dev;
+		g2d_wb_connector->id = i;
 
 		ret = drm_writeback_connector_init(drm, wb_connector, &g2d_wb_connector_funcs,
 						   &g2d_wb_encoder_helper_funcs, g2d_wb_formats,

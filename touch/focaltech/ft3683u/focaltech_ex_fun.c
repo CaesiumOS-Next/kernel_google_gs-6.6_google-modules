@@ -647,7 +647,7 @@ static ssize_t fts_hw_reset_show(
     ssize_t count = 0;
 
     mutex_lock(&input_dev->mutex);
-    fts_reset_proc(0);
+    fts_reset_proc(FTS_RESET_INTERVAL);
     count = snprintf(buf, PAGE_SIZE, "hw reset executed\n");
     mutex_unlock(&input_dev->mutex);
 

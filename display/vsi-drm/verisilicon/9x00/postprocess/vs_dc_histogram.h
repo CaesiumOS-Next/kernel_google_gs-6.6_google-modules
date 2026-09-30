@@ -23,6 +23,13 @@ bool vs_dc_hist_rgb_update(struct dc_hw *hw, u8 display_id, const struct vs_crtc
 bool vs_dc_hist_chans_commit(struct dc_hw *hw, u8 display_id);
 bool vs_dc_hist_rgb_commit(struct dc_hw *hw, u8 display_id);
 
+/* called on dc_be_hw_deinit */
+void vs_dc_hist_chans_reset(struct dc_hw *hw, u8 display_id);
+void vs_dc_hist_rgb_reset(struct dc_hw *hw, u8 display_id);
+
+bool vs_dc_hist_chan_is_wdma(void);
+bool vs_dc_hist_rgb_is_wdma(void);
+
 /* called on flip done (handles channels + rgb) */
 bool vs_dc_hist_flip_done(struct dc_hw *hw, u8 display_id);
 #endif

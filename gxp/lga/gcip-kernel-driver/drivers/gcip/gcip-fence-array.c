@@ -213,7 +213,7 @@ int gcip_fence_array_submit_waiter_and_signaler(struct gcip_fence_array *in_fenc
 	if (!gcip_num_fences)
 		return 0;
 
-	iif_fences = kcalloc(gcip_num_fences, sizeof(*iif_out_fences), GFP_KERNEL);
+	iif_fences = kcalloc(gcip_num_fences, sizeof(*iif_fences), GFP_KERNEL);
 	if (!iif_fences)
 		return -ENOMEM;
 

@@ -96,6 +96,8 @@ typedef void (*PFN_CMDCOMP_NOTIFY)(void *hCmdCompHandle);
 #endif
 enum PVRSRV_ERROR_TAG PVRSRVRegisterCmdCompleteNotify(void **phNotify,
 	PFN_CMDCOMP_NOTIFY pfnCmdCompleteNotify, void *hPrivData);
+enum PVRSRV_ERROR_TAG PVRSRVRegisterLowPrioCmdCompleteNotify(void **phNotify,
+	PFN_CMDCOMP_NOTIFY pfnCmdCompleteNotify, void *hPrivData);
 enum PVRSRV_ERROR_TAG PVRSRVUnregisterCmdCompleteNotify(void *hNotify);
 void PVRSRVCheckStatus(void *hCmdCompCallerHandle);
 

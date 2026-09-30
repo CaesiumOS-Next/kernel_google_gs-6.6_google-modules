@@ -4,6 +4,10 @@
  *
  */
 
+#include <linux/gpio/consumer.h>
+#include <linux/interrupt.h>
+#include <linux/pm.h>
+
 #include "include/uwb.h"
 #include "include/uwb_gpio.h"
 

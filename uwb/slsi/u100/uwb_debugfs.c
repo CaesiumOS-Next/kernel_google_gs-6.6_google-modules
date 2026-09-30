@@ -5,6 +5,10 @@
  */
 
 #include <linux/debugfs.h>
+#include <linux/mutex.h>
+#include <linux/seq_file.h>
+#include <linux/string.h>
+#include <linux/uaccess.h>
 
 #include "include/uwb_debugfs.h"
 
@@ -71,10 +75,22 @@ static const struct file_operations gpio_fops = {
 	.write = gpio_write,
 };
 
+static int irq_count_show(struct seq_file *s, void *unused)
+{
+	struct device *dev = s->private;
+	struct u100_ctx *u100_ctx = dev_get_drvdata(dev);
+
+	seq_printf(s, "%u\n", get_irq_count(u100_ctx));
+	return 0;
+}
+
 static void debugfs_create_files(struct u100_ctx *u100_ctx)
 {
 	/* File permission: S_IWUSR. The returned error should be ignored. */
 	debugfs_create_file("gpio", 0200, u100_ctx->debugfs, u100_ctx, &gpio_fops);
+
+	debugfs_create_devm_seqfile(&u100_ctx->spi->dev, "irq_count",
+				    u100_ctx->debugfs, irq_count_show);
 }
 
 void uwb_debugfs_init(struct u100_ctx *u100_ctx)

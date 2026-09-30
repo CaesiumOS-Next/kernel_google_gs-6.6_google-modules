@@ -68,14 +68,6 @@ static LIST_HEAD(client_tracepoints);
 enum tracepoint_handle cpm_tracepoint_decode(u32 tp_id, u32 payload,
 					     u64 timestamp)
 {
-	static u64 prev_decode_timestamp;
-	u64 decode_timestamp;
-
-	/* Use boot time based timestamps for decoding. */
-	decode_timestamp = max(goog_gtc_ticks_to_boottime(timestamp),
-			       prev_decode_timestamp);
-	prev_decode_timestamp = decode_timestamp;
-
 	struct client_tracepoint_node *node;
 	int ret = CLIENT_TP_HANDLING_NOT_COMPLETE;
 
@@ -87,7 +79,7 @@ enum tracepoint_handle cpm_tracepoint_decode(u32 tp_id, u32 payload,
 		}
 		if (node->tp_id == tp_id) {
 			ret = node->tp->handler(node->tp->tp_string, payload,
-						decode_timestamp);
+						timestamp);
 			break;
 		} else if (node->tp_id > tp_id) {
 			/* Early exit as nodes are kept sorted by their tp_id. */

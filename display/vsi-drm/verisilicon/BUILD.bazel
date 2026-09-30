@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 load("@kleaf//build/kernel/kleaf:kernel.bzl", "ddk_headers", "ddk_module")
+load("//private/google-modules/display/vsi-drm/verisilicon:vs_drm_cflags.bzl", "VS_DRM_COPTS")
 
 ddk_headers(
     name = "ddk_headers",
@@ -35,6 +36,7 @@ ddk_module(
         "vs_qos.c",
         "vs_recovery.c",
         "vs_simple_enc.c",
+        "vs_sscd.c",
         "vs_sysfs.c",
         "vs_task_fence.c",
         "vs_trace.c",
@@ -93,10 +95,7 @@ ddk_module(
             ],
         },
     },
-    copts = [
-        "-Wall",
-        "-Werror",
-    ],
+    copts = VS_DRM_COPTS,
     kernel_build = "//private/devices/google/common:kernel",
     local_defines = [
         "DYNAMIC_DEBUG_MODULE=1",

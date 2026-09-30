@@ -131,7 +131,7 @@ static struct g2d_bo *g2d_alloc_buffer_object(struct drm_device *drm, size_t siz
 
 	g2d_obj = kzalloc(sizeof(*g2d_obj), GFP_KERNEL);
 	if (!g2d_obj)
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 
 	g2d_obj->gem.funcs = &g2d_gem_object_funcs;
 
@@ -142,7 +142,7 @@ static struct g2d_bo *g2d_alloc_buffer_object(struct drm_device *drm, size_t siz
 	if (ret) {
 		kfree(g2d_obj);
 		dev_err(drm->dev, "%s: Gem object init failure!", __func__);
-		return NULL;
+		return ERR_PTR(ret);
 	}
 	dev_dbg(drm->dev, "Gem object init success!");
 
@@ -151,7 +151,7 @@ static struct g2d_bo *g2d_alloc_buffer_object(struct drm_device *drm, size_t siz
 		drm_gem_object_release(&g2d_obj->gem);
 		kfree(g2d_obj);
 		dev_err(drm->dev, "%s: Gem create mmap offset failure!", __func__);
-		return NULL;
+		return ERR_PTR(ret);
 	}
 	dev_dbg(drm->dev, "Gem create mmap offset success!");
 
@@ -174,8 +174,8 @@ int g2d_dumb_create(struct drm_file *file, struct drm_device *drm,
 	args->size = round_up(size, PAGE_SIZE);
 
 	g2d_obj = g2d_alloc_buffer_object(drm, args->size);
-	if (g2d_obj == NULL)
-		return -ENOMEM;
+	if (IS_ERR(g2d_obj))
+		return PTR_ERR(g2d_obj);
 
 	ret = g2d_gem_alloc(g2d_obj);
 	if (ret)

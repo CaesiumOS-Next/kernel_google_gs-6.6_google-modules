@@ -33,21 +33,25 @@ static void test_enable_disable_source(struct kunit *test)
 	pixelmd_client_enable_source(client, source, true);
 	KUNIT_ASSERT_TRUE(test, test_bit(source, client->enabled_sources));
 	KUNIT_ASSERT_EQ(test, 1, clients_with_enabled_source(source));
+	KUNIT_ASSERT_TRUE(test, pixelmd_clients_source_is_enabled(source));
 
 	// Enable again (should be idempotent)
 	pixelmd_client_enable_source(client, source, true);
 	KUNIT_ASSERT_TRUE(test, test_bit(source, client->enabled_sources));
 	KUNIT_ASSERT_EQ(test, 1, clients_with_enabled_source(source));
+	KUNIT_ASSERT_TRUE(test, pixelmd_clients_source_is_enabled(source));
 
 	// Disable source
 	pixelmd_client_enable_source(client, source, false);
 	KUNIT_ASSERT_FALSE(test, test_bit(source, client->enabled_sources));
 	KUNIT_ASSERT_EQ(test, 0, clients_with_enabled_source(source));
+	KUNIT_ASSERT_FALSE(test, pixelmd_clients_source_is_enabled(source));
 
 	// Disable again (should be idempotent)
 	pixelmd_client_enable_source(client, source, false);
 	KUNIT_ASSERT_FALSE(test, test_bit(source, client->enabled_sources));
 	KUNIT_ASSERT_EQ(test, 0, clients_with_enabled_source(source));
+	KUNIT_ASSERT_FALSE(test, pixelmd_clients_source_is_enabled(source));
 
 	pixelmd_client_destroy(client);
 }
@@ -66,18 +70,22 @@ static void test_enable_disable_multiple_clients(struct kunit *test)
 	// Enable on client1
 	pixelmd_client_enable_source(client1, source, true);
 	KUNIT_ASSERT_EQ(test, 1, clients_with_enabled_source(source));
+	KUNIT_ASSERT_TRUE(test, pixelmd_clients_source_is_enabled(source));
 
 	// Enable on client2
 	pixelmd_client_enable_source(client2, source, true);
 	KUNIT_ASSERT_EQ(test, 2, clients_with_enabled_source(source));
+	KUNIT_ASSERT_TRUE(test, pixelmd_clients_source_is_enabled(source));
 
 	// Disable on client1
 	pixelmd_client_enable_source(client1, source, false);
 	KUNIT_ASSERT_EQ(test, 1, clients_with_enabled_source(source));
+	KUNIT_ASSERT_TRUE(test, pixelmd_clients_source_is_enabled(source));
 
 	// Disable on client2
 	pixelmd_client_enable_source(client2, source, false);
 	KUNIT_ASSERT_EQ(test, 0, clients_with_enabled_source(source));
+	KUNIT_ASSERT_FALSE(test, pixelmd_clients_source_is_enabled(source));
 
 	pixelmd_client_destroy(client1);
 	pixelmd_client_destroy(client2);

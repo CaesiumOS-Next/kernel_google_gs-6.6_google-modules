@@ -180,8 +180,7 @@ static int dptx_audio_start(struct dptx *handle)
 
 static int dptx_audio_stop(struct dptx *handle)
 {
-	dptx_audio_sdp_en(handle, 0);
-	dptx_audio_timestamp_sdp_en(handle, 0);
+	dptx_audio_deconfig(handle);
 	return 0;
 }
 

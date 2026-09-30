@@ -327,9 +327,8 @@ static void _CheckFreelist(RGX_FREELIST *psFreeList,
 	/* Copy freelist content into Buffer */
 	eError = PMR_ReadBytes(psFreeList->psFreeListPMR,
 					psFreeList->uiFreeListPMROffset +
-					(((psFreeList->ui32MaxFLPages -
-					   psFreeList->ui32CurrentFLPages - psFreeList->ui32ReadyFLPages) * sizeof(IMG_UINT32)) &
-					 ~((IMG_UINT64)RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1)),
+					((psFreeList->ui32MaxFLPages -
+					   psFreeList->ui32CurrentFLPages - psFreeList->ui32ReadyFLPages) * sizeof(IMG_UINT32)),
 					 pui8Buffer,
 					 ui32NumOfPagesToCheck * sizeof(IMG_UINT32),
 					&uiNumBytes);
@@ -543,7 +542,7 @@ PVRSRV_ERROR RGXGrowFreeList(RGX_FREELIST *psFreeList,
 
 	uiLength = psPMRNode->ui32NumPages * sizeof(IMG_UINT32);
 	uistartPage = (psFreeList->ui32MaxFLPages - psFreeList->ui32CurrentFLPages - psPMRNode->ui32NumPages);
-	uiOffset = psFreeList->uiFreeListPMROffset + ((uistartPage * sizeof(IMG_UINT32)) & ~((IMG_UINT64)RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1));
+	uiOffset = psFreeList->uiFreeListPMROffset + (uistartPage * sizeof(IMG_UINT32));
 
 #if defined(PVRSRV_ENABLE_GPU_MEMORY_INFO)
 
@@ -969,7 +968,7 @@ static void _RGXFreeListReconstruction(PDLLIST_NODE psNode)
 
 	uiLength = psPMRNode->ui32NumPages * sizeof(IMG_UINT32);
 	ui32StartPage = (psFreeList->ui32MaxFLPages - psFreeList->ui32CurrentFLPages - psPMRNode->ui32NumPages);
-	uiOffset = psFreeList->uiFreeListPMROffset + ((ui32StartPage * sizeof(IMG_UINT32)) & ~((IMG_UINT64)RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1));
+	uiOffset = psFreeList->uiFreeListPMROffset + (ui32StartPage * sizeof(IMG_UINT32));
 
 	PMRUnwritePMPageList(psPMRNode->psPageList);
 	psPMRNode->psPageList = NULL;
@@ -1091,8 +1090,11 @@ static PVRSRV_ERROR RGXReconstructFreeList(RGX_FREELIST *psFreeList)
 		PVR_ASSERT(uiNbBytes == sizeof(sFLState));
 
 		sFLBaseAddr.uiAddr = (psFreeList->sFreeListBaseDevVAddr.uiAddr +
-		                      ((psFreeList->ui32MaxFLPages - psFreeList->ui32CurrentFLPages) * sizeof(IMG_UINT32))) &
-		                      ~((IMG_UINT64)RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1);
+		                      ((psFreeList->ui32MaxFLPages - psFreeList->ui32CurrentFLPages) * sizeof(IMG_UINT32)));
+
+		PVR_LOG_RETURN_IF_INVALID_PARAM(((sFLBaseAddr.uiAddr & (RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1)) == 0),
+	   									 "Invalid freelist base alignment");
+
 		/* Note: Freelist base address is packed shifted down. */
 		RGX_PM_FREELISTSTATE_BUFFER_SET_BASE_ADDR(sFLState, sFLBaseAddr.uiAddr >> RGX_PM_FREELISTSTATE_BASE_ADDR_ALIGNSHIFT);
 		RGX_PM_FREELISTSTATE_BUFFER_SET_STACK_PTR(sFLState, psFreeList->ui32CurrentFLPages - 1);
@@ -1862,11 +1864,28 @@ PVRSRV_ERROR RGXCreateFreeList(CONNECTION_DATA       *psConnection,
 
 	eError = AcquireValidateRefCriticalBuffer(psDeviceNode,
 	                                          psFreeListAndStateReservation,
-	                                          uiFreeListOffset + (IMG_DEVMEM_SIZE_T)ui32MaxFLPages * sizeof(IMG_UINT32),
+	                                          uiFreeListOffset + (IMG_DEVMEM_SIZE_T)ui32MaxFLPages * sizeof(IMG_UINT32) + GET_ROGUE_CACHE_LINE_SIZE(PVRSRV_GET_DEVICE_FEATURE_VALUE(psDeviceNode, SLC_CACHE_LINE_SIZE_BITS)),
 	                                          &psFreeListAndStatePMR,
 	                                          &sFreeListStateDevVAddr);
 	PVR_LOG_GOTO_IF_ERROR(eError,
 	    "Validation failed for Freelist reservation", ErrorAcquireValidateFreeList);
+
+	{
+		/*
+		 * The freelist array consists of backed pages and unbacked areas used for grow. This initial split point must
+		 * be aligned to SLC cacheline size to prevent coherency issues during freelist grow.
+		 */
+		IMG_UINT32 ui32PagesPerCacheline = GET_ROGUE_CACHE_LINE_SIZE(PVRSRV_GET_DEVICE_FEATURE_VALUE(psDeviceNode, SLC_CACHE_LINE_SIZE_BITS)) / sizeof(IMG_UINT32);
+		IMG_UINT32 ui32PaddingPages = 0;
+		IMG_UINT32 ui32InitialUnbackedPages = ui32MaxFLPages - ui32InitFLPages;
+
+		/* One SLC cacheline has been reserved for padding, so there is no need to handle the case where the address
+		 * aligned to start with. The address will simply be incremented by one cacheline
+		 */
+		ui32PaddingPages = ui32PagesPerCacheline - (ui32InitialUnbackedPages % ui32PagesPerCacheline);
+
+		uiFreeListOffset += ui32PaddingPages * sizeof(IMG_UINT32);
+	}
 
 	sFreeListBaseDevVAddr.uiAddr = sFreeListStateDevVAddr.uiAddr + uiFreeListOffset;
 
@@ -1977,9 +1996,10 @@ PVRSRV_ERROR RGXCreateFreeList(CONNECTION_DATA       *psConnection,
 		IMG_DEV_VIRTADDR sFLBaseAddr;
 
 		sFLBaseAddr.uiAddr = (psFreeList->sFreeListBaseDevVAddr.uiAddr +
-		                      ((psFreeList->ui32MaxFLPages - ui32InitFLPages + ui32ReadyPages) * sizeof(IMG_UINT32))) &
-		                      ~((IMG_UINT64)RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1);
+		                      ((psFreeList->ui32MaxFLPages - ui32InitFLPages + ui32ReadyPages) * sizeof(IMG_UINT32)));
 
+		PVR_LOG_RETURN_IF_INVALID_PARAM(((sFLBaseAddr.uiAddr & (RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1)) == 0),
+	    								"Invalid freelist base alignment");
 
 		RGX_PM_FREELISTSTATE_BUFFER_SET_BASE_ADDR(sFLState, (sFLBaseAddr.uiAddr >> RGX_PM_FREELISTSTATE_BASE_ADDR_ALIGNSHIFT));
 
@@ -2064,8 +2084,7 @@ PVRSRV_ERROR RGXCreateFreeList(CONNECTION_DATA       *psConnection,
 	        ui32InitFLPages,
 	        sFreeListBaseDevVAddr.uiAddr,
 	        (sFreeListBaseDevVAddr.uiAddr +
-	            ((ui32MaxFLPages - sFWFreeList.ui32CurrentPages) * sizeof(IMG_UINT32))) &
-	        ~((IMG_UINT64)RGX_BIF_PM_FREELIST_BASE_ADDR_ALIGNSIZE-1),
+	            ((ui32MaxFLPages - sFWFreeList.ui32CurrentPages) * sizeof(IMG_UINT32))),
 	        sFWFreeList.ui32CurrentPages - 1));
 #if defined(PDUMP)
 	PDUMPCOMMENT(psDeviceNode, "Dump FW FreeList");

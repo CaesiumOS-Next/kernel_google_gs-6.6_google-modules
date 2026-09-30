@@ -9,7 +9,6 @@
 #define __UWB_GPIO_H__
 
 #include "uwb.h"
-#include <linux/interrupt.h>
 
 #define GPIO_DELAY_MS 50
 

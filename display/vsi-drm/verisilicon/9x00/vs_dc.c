@@ -18,15 +18,14 @@
 #include <linux/media-bus-format.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <linux/overflow.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
+#include <linux/trace.h>
+#include <linux/trace_events.h>
 #include <linux/units.h>
 #include <linux/vmalloc.h>
-
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-#include <linux/regmap.h>
-#endif
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
@@ -37,6 +36,7 @@
 #include <drm/vs_drm.h>
 
 #include <gs_drm/gs_drm_connector.h>
+#include <gs_drm/gs_fault_event.h>
 #include <trace/dpu_trace.h>
 
 #include "vs_crtc.h"
@@ -59,8 +59,17 @@
 
 #include <drm/vs_drm_fourcc.h>
 #include <drm/drm_vblank.h>
+#include <drm/sscd/gs_sscd_dpu.h>
 
 #define VS_DC_AUTOSUPEND_DELAY_MS 30
+// Underrun event will be emitted for almost every frame at 120 FPS. (8.33ms)
+#define UNDERRUN_LOG_RATELIMIT_MS 8
+
+struct vs_dc_sscd_state_priv {
+	struct drm_state_history_data sh_data;
+	struct display_sscd_section_config cfgs[];
+};
+#define cfgs_to_priv(ptr) container_of((void *)(ptr), struct vs_dc_sscd_state_priv, cfgs)
 
 int vs_dc_power_get(struct device *dev, bool sync)
 {
@@ -202,6 +211,9 @@ static int vs_dc_res_disable(struct device *dev)
 
 	dc_hw_save_status(&dc->hw);
 
+	if (!dc_hw_is_be_idle(&dc->hw))
+		dev_warn(dev, "DPU BE not idle\n");
+
 	vs_dc_do_hw_reset(dev);
 	dc_hw_reset_all_be_interrupts(&dc->hw);
 	dc_hw_enable_clock_domain_iso(&dc->hw, true);
@@ -316,94 +328,148 @@ static ssize_t get_sscd_regdump(struct vs_dc *dc, char **regdump_buf,
 	ssize_t count;
 
 	count = _get_sscd_regdump(dc, NULL, INT_MAX, reg_bank);
+	if (count <= 0) {
+		*regdump_buf = NULL;
+		return count;
+	}
+
 	*regdump_buf = vmalloc(count);
-	if (!regdump_buf)
+	if (!*regdump_buf)
 		return -ENOMEM;
 	_get_sscd_regdump(dc, *regdump_buf, count, reg_bank);
 
 	return count;
 }
 
-static ssize_t prepare_sscd_regdump(struct vs_dc *dc, char **regdump_buf,
-				    enum dc_hw_reg_bank_type reg_bank)
+static int vs_dc_sscd_reg_payload_destroy(struct device *dev, struct sscd_payload *payload)
 {
-	struct display_sscd_section_config hexdump_cfg;
-	ssize_t regdump_buf_size;
-	char *sec_name = reg_bank == DC_HW_REG_BANK_ACTIVE ? "dpu act register dump" :
-			 reg_bank == DC_HW_REG_BANK_SHADOW ? "dpu shd register dump" :
-							     "unknown";
+	int i;
 
-	regdump_buf_size = get_sscd_regdump(dc, regdump_buf, reg_bank);
-	if (regdump_buf_size > 0) {
-		display_sscd_configure_phys_hexdump_section(&hexdump_cfg, sec_name,
-							    (void *)(*regdump_buf),
-							    dc->hw.reg_base_phys, regdump_buf_size);
-		display_sscd_push_section(dc->disp_sscd, &hexdump_cfg);
+	if (!payload || !payload->cfgs)
+		return 0;
+
+	for (i = 0; i < payload->num_cfgs; i++)
+		vfree(payload->cfgs[i].virt_addr);
+
+	kfree(payload->cfgs);
+	payload->cfgs = NULL;
+	payload->num_cfgs = 0;
+
+	return 0;
+}
+
+static int vs_dc_sscd_reg_payload_prepare(struct device *dev, struct sscd_payload *payload)
+{
+	struct vs_dc *dc = dev_get_drvdata(dev);
+	struct {
+		enum dc_hw_reg_bank_type bank;
+		const char *name;
+	} regs[] = {
+		{ DC_HW_REG_BANK_ACTIVE, "dpu act register dump" },
+		{ DC_HW_REG_BANK_SHADOW, "dpu shd register dump" },
+	};
+	int i, ret;
+
+	ret = pm_runtime_get_if_active(dev, true);
+	if (ret <= 0) {
+		if (ret < 0)
+			dev_err(dev, "Failed to power ON, ret %d\n", ret);
+		else
+			dev_info(dev, "DPU off, skipping register coredump\n");
+		return ret;
 	}
 
-	return regdump_buf_size;
+	payload->cfgs = kcalloc(ARRAY_SIZE(regs), sizeof(*payload->cfgs), GFP_KERNEL);
+	if (!payload->cfgs) {
+		pm_runtime_put(dev);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		char *buf;
+		ssize_t size;
+
+		size = get_sscd_regdump(dc, &buf, regs[i].bank);
+		if (size > 0) {
+			display_sscd_configure_phys_hexdump_section(
+				&payload->cfgs[payload->num_cfgs++], regs[i].name, buf,
+				dc->hw.reg_base_phys, size);
+		} else {
+			vfree(buf);
+			if (size < 0) {
+				ret = size;
+				goto err_destroy;
+			}
+		}
+	}
+
+	ret = pm_runtime_put(dev);
+	if (ret < 0)
+		dev_err(dev, "Failed to power OFF, ret %d\n", ret);
+
+	if (payload->num_cfgs == 0) {
+		kfree(payload->cfgs);
+		payload->cfgs = NULL;
+	}
+
+	return 0;
+
+err_destroy:
+	vs_dc_sscd_reg_payload_destroy(dev, payload);
+	pm_runtime_put(dev);
+	return ret;
+}
+
+static int vs_dc_sscd_state_payload_destroy(struct device *dev, struct sscd_payload *payload)
+{
+	struct vs_dc_sscd_state_priv *priv;
+
+	if (!payload || !payload->cfgs)
+		return 0;
+
+	priv = cfgs_to_priv(payload->cfgs);
+	vs_drm_recorded_states_destroy(&priv->sh_data);
+	kfree(priv);
+
+	payload->cfgs = NULL;
+	payload->num_cfgs = 0;
+
+	return 0;
+}
+
+static int vs_dc_sscd_state_payload_prepare(struct device *dev, struct sscd_payload *payload)
+{
+	struct vs_dc *dc = dev_get_drvdata(dev);
+	struct vs_dc_sscd_state_priv *priv;
+	int num_recorded_drm_states, i;
+
+	priv = kzalloc(struct_size(priv, cfgs, VS_RECORD_STATE_MAX), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	num_recorded_drm_states = vs_drm_recorded_states_prepare(&priv->sh_data, dc->drm_dev);
+	if (num_recorded_drm_states <= 0) {
+		kfree(priv);
+		return num_recorded_drm_states;
+	}
+
+	for (i = 0; i < num_recorded_drm_states; ++i) {
+		char cfg_name[13];
+
+		scnprintf(cfg_name, sizeof(cfg_name), "drm_state-%02d", i);
+		display_sscd_configure_log_buffer_section(&priv->cfgs[i], cfg_name,
+							  priv->sh_data.buffers[i],
+							  priv->sh_data.buffer_sizes[i]);
+	}
+	payload->cfgs = priv->cfgs;
+	payload->num_cfgs = num_recorded_drm_states;
+
+	return 0;
 }
 
 int vs_dc_coredump(struct vs_dc *dc, const char *reason)
 {
-	struct device *dev = dc->hw.dev;
-	char *regdump_act_buf, *regdump_shd_buf;
-	ssize_t regdump_act_buf_size = 0, regdump_shd_buf_size = 0;
-	struct drm_state_history_data sh_data;
-	int ret, i, num_recorded_drm_states;
-
-	ret = pm_runtime_get_if_in_use(dev);
-	if (ret < 0) {
-		dev_err(dev, "Failed to power ON, ret %d\n", ret);
-		return ret;
-	}
-
-	if (ret == 0) {
-		dev_info(dev, "DPU off, skipping register coredump\n");
-	} else {
-		/* Get regdump */
-		regdump_act_buf_size =
-			prepare_sscd_regdump(dc, &regdump_act_buf, DC_HW_REG_BANK_ACTIVE);
-		regdump_shd_buf_size =
-			prepare_sscd_regdump(dc, &regdump_shd_buf, DC_HW_REG_BANK_SHADOW);
-
-		/* No need for power any more */
-		ret = pm_runtime_put(dev);
-	}
-
-	num_recorded_drm_states = vs_drm_recorded_states_prepare(&sh_data, dc->drm_dev);
-
-	for (i = 0; i < num_recorded_drm_states; ++i) {
-		struct display_sscd_section_config drm_state_cfg;
-		char cfg_name[13];
-
-		scnprintf(cfg_name, sizeof(cfg_name), "drm_state-%02d", i);
-		display_sscd_configure_log_buffer_section(
-			&drm_state_cfg, cfg_name, sh_data.buffers[i], sh_data.buffer_sizes[i]);
-		display_sscd_push_section(dc->disp_sscd, &drm_state_cfg);
-	}
-
-	display_sscd_report(dc->disp_sscd, reason);
-
-	for (i = 0; i < num_recorded_drm_states; ++i)
-		display_sscd_pop_section(dc->disp_sscd);
-	vs_drm_recorded_states_destroy(&sh_data);
-
-	if (regdump_shd_buf_size > 0) {
-		display_sscd_pop_section(dc->disp_sscd);
-		/* free sscd regdump buffer */
-		vfree(regdump_shd_buf);
-	}
-	if (regdump_act_buf_size > 0) {
-		display_sscd_pop_section(dc->disp_sscd);
-		/* free sscd regdump buffer */
-		vfree(regdump_act_buf);
-	}
-
-	if (ret < 0)
-		dev_err(dev, "Failed to power OFF, ret %d\n", ret);
-
-	return ret;
+	return trigger_coredump(dc->drm_dev, dc->hw.dev, reason);
 }
 
 static void dc_deinit(struct device *dev)
@@ -422,20 +488,6 @@ static int dc_init(struct device *dev)
 {
 	struct vs_dc *dc = dev_get_drvdata(dev);
 	int ret;
-
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-	dc->hw.regmap_config.name = "VerisiliconDRM";
-	dc->hw.regmap_config.reg_bits = 32;
-	dc->hw.regmap_config.val_bits = 32;
-	dc->hw.regmap_config.reg_stride = 4;
-	dc->hw.regmap_config.cache_type = REGCACHE_RBTREE;
-
-	dc->hw.regmap = devm_regmap_init_mmio(dev, dc->hw.reg_base, &dc->hw.regmap_config);
-	if (IS_ERR(dc->hw.regmap)) {
-		dev_err(dev, "Error initialise mmio register map: %ld\n", PTR_ERR(dc->hw.regmap));
-		return PTR_ERR(dc->hw.regmap);
-	}
-#endif
 
 	dc->first_frame = true;
 
@@ -510,6 +562,7 @@ static void _vs_dc_handle_underrun(struct vs_dc *dc, struct vs_crtc *vs_crtc,
 	struct device *dev = dc->hw.dev;
 	struct dc_hw_display *display = &dc->hw.display[vs_crtc->id];
 	u32 output_id = display->output_id;
+	unsigned long now = jiffies;
 
 	if (!vs_crtc->frame_transfer_pending) {
 		dev_dbg(dev, "output_id[%d] underrun false positive, no transfer, mode:%#x\n",
@@ -526,20 +579,34 @@ static void _vs_dc_handle_underrun(struct vs_dc *dc, struct vs_crtc *vs_crtc,
 		return;
 	}
 
-	atomic_inc(&vs_crtc->underrun_count);
-	trace_disp_dpu_underrun(output_id, atomic_read(&vs_crtc->frames_pending),
-				atomic_read(&vs_crtc->te_count));
+	trace_disp_dpu_line_underrun(output_id, atomic_read(&vs_crtc->frames_pending),
+				     atomic_read(&vs_crtc->te_count));
+	atomic_inc(&vs_crtc->line_underrun_count);
 	if (is_display_cmd_sw_trigger(display))
 		dev_dbg(dev,
-			"output_id[%d] underrun detected, mode:%#x (te count %d, underrun count %d)\n",
+			"output_id[%d] underrun detected, mode:%#x (te count %d, line underrun count %d)\n",
 			output_id, display->mode.output_mode, atomic_read(&vs_crtc->te_count),
-			atomic_read(&vs_crtc->underrun_count));
+			atomic_read(&vs_crtc->line_underrun_count));
 	else
 		dev_warn(
 			dev,
-			"output_id[%d] underrun detected, mode:%#x (te count %d, underrun count %d)\n",
+			"output_id[%d] underrun detected, mode:%#x (te count %d, line underrun count %d)\n",
 			output_id, display->mode.output_mode, atomic_read(&vs_crtc->te_count),
-			atomic_read(&vs_crtc->underrun_count));
+			atomic_read(&vs_crtc->line_underrun_count));
+
+	if (!time_before(now, vs_crtc->last_notify_dpu_underrun_time +
+			 msecs_to_jiffies(UNDERRUN_LOG_RATELIMIT_MS))) {
+
+		/**
+		 * TODO(b/492411195): move the non_blocking_gs_fault_event_emit call to
+		 * _vs_dc_handle_frame_done.
+		 */
+		non_blocking_gs_fault_event_emit(dev, GS_FAULT_EVENT_TYPE_DPU_UNDERRUN, 1);
+		vs_crtc->last_notify_dpu_underrun_time = now;
+		dev_dbg(dev, "Emitting DPU underrun fault event.");
+	} else {
+		dev_dbg(dev, "Skipping DPU underrun fault event emission due to rate limiting.");
+	}
 }
 
 static void _vs_dc_handle_frame_start(struct vs_dc *dc, struct vs_crtc *vs_crtc, u8 display_id)
@@ -560,6 +627,7 @@ static void _vs_dc_handle_frame_start(struct vs_dc *dc, struct vs_crtc *vs_crtc,
 	vs_dc_underrun_workaround(dc, &vs_crtc->base, display, display_id, true);
 	DPU_ATRACE_INT_PID_FMT(1, pid, "frame_tx[%d]", output_id);
 	trace_disp_frame_start(display_id, output_id, vs_crtc);
+	atomic_set(&vs_crtc->line_underrun_count, 0);
 	vs_crtc->frame_transfer_pending = true;
 	vs_crtc_handle_frm_start(&vs_crtc->base);
 }
@@ -578,6 +646,11 @@ static void _vs_dc_handle_frame_done(struct vs_dc *dc, struct vs_crtc *vs_crtc, 
 		vs_dc_underrun_workaround(dc, &vs_crtc->base, display, display_id, false);
 	DPU_ATRACE_INT_PID_FMT(atomic_read(&vs_crtc->frames_pending), pid, "frames_pending[%u]",
 			       crtc_index);
+	if (atomic_read(&vs_crtc->line_underrun_count)) {
+		trace_disp_dpu_underrun(output_id, atomic_read(&vs_crtc->frames_pending),
+					atomic_read(&vs_crtc->te_count));
+		atomic_inc(&vs_crtc->frame_underrun_count);
+	}
 	trace_disp_frame_done(display_id, output_id, vs_crtc);
 	vs_crtc->frame_transfer_pending = false;
 	atomic_inc(&vs_crtc->frame_done_count);
@@ -862,9 +935,8 @@ void vs_dc_check_interrupts(struct device *dev)
 	spin_unlock_irqrestore(&dc->int_lock, flags);
 }
 
-int vs_sw_reset_ioctl(struct drm_device *drm_dev, void *data, struct drm_file *file_priv)
+int vs_dc_sw_reset(struct drm_device *drm_dev)
 {
-	int ret;
 	struct vs_drm_private *priv = drm_dev->dev_private;
 	struct vs_dc *dc = NULL;
 	struct device *dev;
@@ -878,8 +950,7 @@ int vs_sw_reset_ioctl(struct drm_device *drm_dev, void *data, struct drm_file *f
 	if (!dc)
 		return -EINVAL;
 
-	ret = vs_dc_power_get(dev, true);
-	if (ret < 0)
+	if (vs_dc_power_get(dev, true) < 0)
 		dev_err(dev, "%s: failed to power ON\n", __func__);
 
 	/* reset the hardware */
@@ -891,13 +962,16 @@ int vs_sw_reset_ioctl(struct drm_device *drm_dev, void *data, struct drm_file *f
 	/* reset the DRM state. */
 	drm_mode_config_reset(drm_dev);
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-	regmap_reinit_cache(dc->hw.regmap, &dc->hw.regmap_config);
-#endif
-
-	ret = vs_dc_power_put(dev, true);
-	if (ret < 0)
+	if (vs_dc_power_put(dev, true) < 0)
 		dev_err(dev, "%s: failed to power OFF\n", __func__);
+
+	return 0;
+}
+
+int vs_sw_reset_ioctl(struct drm_device *drm_dev, void *data, struct drm_file *file_priv)
+{
+	if (vs_dc_sw_reset(drm_dev))
+		return -EINVAL;
 
 	return 0;
 }
@@ -1244,6 +1318,16 @@ static int dc_bind(struct device *dev, struct device *master, void *data)
 		ret = dc_init_sscd(dc, dev);
 		if (ret < 0)
 			goto err_clean_dc;
+
+		/* connect sscd register dump callbacks */
+		priv->dpu_reg_coredump_funcs.sscd_payload_prepare = vs_dc_sscd_reg_payload_prepare;
+		priv->dpu_reg_coredump_funcs.sscd_payload_destroy = vs_dc_sscd_reg_payload_destroy;
+
+		/* connect sscd drm state history callbacks */
+		priv->dpu_state_coredump_funcs.sscd_payload_prepare =
+			vs_dc_sscd_state_payload_prepare;
+		priv->dpu_state_coredump_funcs.sscd_payload_destroy =
+			vs_dc_sscd_state_payload_destroy;
 	}
 
 	return 0;
@@ -1413,6 +1497,7 @@ static int dc_probe(struct platform_device *pdev)
 
 	dc->hw.reg_base = devm_platform_get_and_ioremap_resource(pdev, 0, &resource);
 	if (IS_ERR(dc->hw.reg_base)) {
+		dev_err(dev, "failed to ioremap dpu registers\n");
 		ret = PTR_ERR(dc->hw.reg_base);
 		goto detach_pd;
 	}
@@ -1420,6 +1505,9 @@ static int dc_probe(struct platform_device *pdev)
 	dc->hw.reg_dump_offset = 0;
 	dc->hw.reg_dump_size = dc->hw.reg_size;
 	dc->hw.dev = dev;
+	dc->hw.gpcsr_reg_base = devm_platform_ioremap_resource_byname(pdev, "dpu-gpcsr");
+	if (IS_ERR(dc->hw.gpcsr_reg_base))
+		dev_warn(dev, "failed to map dpu gpcsr resource, continue without it\n");
 
 	// TODO(b/240503241): Avoid a bunch of irqs with the same handler when
 	// we have better solution from the interrupt parent. e.g. register by
@@ -1520,6 +1608,10 @@ static int dc_probe(struct platform_device *pdev)
 	}
 	if (is_coredump_enabled())
 		dc->hw.reg_base_phys = resource->start;
+
+	ret = dc_init_trace(dev);
+	if (ret)
+		dev_err(dev, "failed to enable traces\n");
 
 	dev_set_drvdata(dev, dc);
 

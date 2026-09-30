@@ -333,6 +333,7 @@ dhd_pktlog_ring_init(dhd_pub_t *dhdp, int size)
 	ring->pktcount = 0;
 	ring->dhdp = dhdp;
 	ring->pktlog_ring_lock = osl_spin_lock_init(dhdp->osh);
+	OSL_LOCK_CLASS_SET(ring->pktlog_ring_lock);
 #ifdef DHD_PKT_LOGGING_DBGRING
 	OSL_ATOMIC_SET(dhdp->osh, &dhdp->pktlog->enable, TRUE);
 #endif /* DHD_PKT_LOGGING_DBGRING */

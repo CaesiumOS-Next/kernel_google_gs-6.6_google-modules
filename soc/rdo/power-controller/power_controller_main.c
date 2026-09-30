@@ -416,6 +416,13 @@ static int power_on(struct generic_pm_domain *domain)
 	int ret;
 	struct power_domain *pd = to_power_domain(domain);
 
+	if (pd->boot_stay_on) {
+		dev_warn(pd->power_controller->dev,
+			"%s: skipping power on request (boot-stay-on)\n",
+			pd->name);
+		return 0;
+	}
+
 	pd_latency_profile_start(domain,
 		LATENCY_TYPE_BITMASK(E2E_ON) |
 		LATENCY_TYPE_BITMASK(EXEC_ON) |
@@ -443,6 +450,13 @@ static int power_off(struct generic_pm_domain *domain)
 {
 	int ret;
 	struct power_domain *pd = to_power_domain(domain);
+
+	if (pd->boot_stay_on) {
+		dev_warn(pd->power_controller->dev,
+			"%s: skipping power off request (boot-stay-on)\n",
+			pd->name);
+		return 0;
+	}
 
 	pd_latency_profile_start(domain,
 		LATENCY_TYPE_BITMASK(E2E_OFF) |
@@ -747,6 +761,8 @@ static int power_controller_probe(struct platform_device *pdev)
 		if (of_property_read_bool(child_np, "active-wakeup"))
 			power_controller->pds[i].genpd.flags |= GENPD_FLAG_ACTIVE_WAKEUP;
 
+		pd->boot_stay_on = of_property_read_bool(child_np, "google,boot-stay-on");
+
 		ret = pm_genpd_init(&pd->genpd, NULL, pd->state == PD_STATE_OFF);
 		if (ret) {
 			dev_err(dev, "failed to init power domain\n");
@@ -860,6 +876,23 @@ static const struct dev_pm_ops simple_pm_ops = {
 	.complete = power_controller_suspend_complete,
 };
 
+static void power_controller_sync_state(struct device *dev)
+{
+	struct power_controller *pc = dev_get_drvdata(dev);
+	int i;
+
+	dev_dbg(dev, "Sync state reached, clearing boot_stay_on flags\n");
+
+	for (i = 0; i < pc->pd_count; i++) {
+		struct power_domain *pd = &pc->pds[i];
+
+		if (pd->boot_stay_on) {
+			dev_dbg(dev, "Clearing boot_stay_on for %s\n", pd->name);
+			pd->boot_stay_on = false;
+		}
+	}
+}
+
 static struct platform_driver power_controller_driver = {
 	.probe = power_controller_probe,
 	.remove = power_controller_remove,
@@ -868,6 +901,7 @@ static struct platform_driver power_controller_driver = {
 		.owner = THIS_MODULE,
 		.of_match_table = of_match_ptr(power_controller_of_match_table),
 		.pm = &simple_pm_ops,
+		.sync_state = power_controller_sync_state,
 	},
 };
 

@@ -13,6 +13,7 @@
 #include <gcip/gcip-memory.h>
 #include <gcip/gcip-telemetry.h>
 
+#include "edgetpu-config.h"
 #include "edgetpu-internal.h"
 #include "edgetpu-iremap-pool.h"
 #include "edgetpu-mmu.h"
@@ -23,7 +24,7 @@ static void set_telemetry_mem(struct edgetpu_dev *etdev)
 {
 	struct gcip_telemetry *tel_log = etdev->telemetry_log;
 	struct gcip_telemetry *tel_trace = etdev->telemetry_trace;
-	int i, offset = 0;
+	int i, offset = EDGETPU_TELEMETRY_BUFFERS_OFFSET;
 
 	for (i = 0; i < etdev->num_telemetry_buffers; i++) {
 		tel_log[i].memory.virt_addr = edgetpu_firmware_shared_data_vaddr(etdev) + offset;

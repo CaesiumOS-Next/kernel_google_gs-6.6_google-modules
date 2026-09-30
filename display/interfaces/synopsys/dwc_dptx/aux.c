@@ -10,51 +10,82 @@
 #include "dptx.h"
 #include "regmaps/ctrl_fields.h"
 
-static int dptx_handle_aux_reply(struct dptx *dptx, u32 auxcmd)
+static const char *dptx_aux_sts_to_str(u32 status)
+{
+	switch (status) {
+	case DPTX_AUX_STS_STATUS_ACK:
+		return "AUX_ACK";
+		break;
+	case DPTX_AUX_STS_STATUS_NACK:
+		return "AUX_NACK";
+		break;
+	case DPTX_AUX_STS_STATUS_DEFER:
+		return "AUX_DEFER";
+		break;
+	case DPTX_AUX_STS_STATUS_I2C_NACK:
+		return "AUX_I2C_NACK";
+		break;
+	case DPTX_AUX_STS_STATUS_I2C_DEFER:
+		return "AUX_I2C_DEFER";
+		break;
+	default:
+		break;
+	}
+
+	return "AUX_STS_INVALID";
+}
+
+static int dptx_handle_aux_reply(struct dptx *dptx, u32 auxcmd, u32 *out_status, u32 *out_br)
 {
 	u32 auxsts;
 	u32 status;
 	u32 auxm;
 	u32 br;
-	int count;
+	int count = 0;
 	struct ctrl_regfields *ctrl_fields;
 
 	ctrl_fields = dptx->ctrl_fields;
 
-	count = 0;
+	/*
+	 * Wait for max 1000 usec for AUX reply
+	 * DP spec says reply should come after 300 usec
+	 */
+	fsleep(200);
+
 	while (1) {
 		if (!dptx_read_regfield(dptx, ctrl_fields->field_aux_reply_received)) {
-			dptx_dbg_aux(dptx, "%s: AUX reply received\n", __func__);
+			dptx_dbg_aux(dptx, "%s: AUX reply received: count=%d\n", __func__, count);
 			break;
 		}
 
-		count++;
-		if (count > 5000) {
-			dptx_err(dptx, "%s: AUX reply timeout\n", __func__);
+		if (++count > 80) {
+			dptx_warn(dptx, "%s: AUX reply timeout: no reply\n", __func__);
 			return -ETIMEDOUT;
 		}
 
-		udelay(1);
+		fsleep(10);
 	}
 
 	auxsts = dptx_read_reg(dptx, dptx->regs[DPTX], AUX_STATUS);
 
 	status = dptx_read_regfield(dptx, ctrl_fields->field_aux_status) >>
 		DPTX_AUX_STS_STATUS_SHIFT;
+	*out_status = status;
 
 	auxm = dptx_read_regfield(dptx, ctrl_fields->field_aux_m);
 
 	br = dptx_read_regfield(dptx, ctrl_fields->field_aux_bytes_read);
+	*out_br = br;
 
 	if (status == DPTX_AUX_STS_STATUS_ACK && br > 0) {
 		dptx_dbg_aux(dptx,
-			"%s: cmd=0x%08x sts=0x%08x: sts=%d, auxm=%d, br=%d\n",
-			__func__, auxcmd, auxsts, status, auxm, br);
+			"%s: cmd=0x%08x sts=0x%08x: %s auxm=%d br=%d\n",
+			__func__, auxcmd, auxsts, dptx_aux_sts_to_str(status), auxm, br);
 	} else {
 		dptx_warn(dptx,
-			"%s: cmd=0x%08x sts=0x%08x: sts=%d, auxm=%d, br=%d, replyrcvd=%d, "
-			"replyerr=%d, errcode=%d, timeout=%d, disconn=%d\n",
-			__func__, auxcmd, auxsts, status, auxm, br,
+			"%s: cmd=0x%08x sts=0x%08x: %s auxm=%d br=%d "
+			"rrcv=%d rerr=%d errc=%d tout=%d disc=%d\n",
+			__func__, auxcmd, auxsts, dptx_aux_sts_to_str(status), auxm, br,
 			!!dptx_read_regfield(dptx, ctrl_fields->field_aux_reply_received),
 			!!dptx_read_regfield(dptx, ctrl_fields->field_aux_reply_err),
 			dptx_read_regfield(dptx, ctrl_fields->field_aux_reply_err_code),
@@ -62,28 +93,9 @@ static int dptx_handle_aux_reply(struct dptx *dptx, u32 auxcmd)
 			!!dptx_read_regfield(dptx, ctrl_fields->field_sink_disconnect_while_active));
 	}
 
-	if (!!dptx_read_regfield(dptx, ctrl_fields->field_aux_timeout))
+	if (!!dptx_read_regfield(dptx, ctrl_fields->field_aux_timeout)) {
+		dptx_warn(dptx, "%s: AUX reply timeout: aux_timeout=1\n", __func__);
 		return -ETIMEDOUT;
-
-	switch (status) {
-	case DPTX_AUX_STS_STATUS_ACK:
-		dptx_dbg_aux(dptx, "%s: DPTX_AUX_STS_STATUS_ACK\n", __func__);
-		break;
-	case DPTX_AUX_STS_STATUS_NACK:
-		dptx_dbg_aux(dptx, "%s: DPTX_AUX_STS_STATUS_NACK\n", __func__);
-		break;
-	case DPTX_AUX_STS_STATUS_DEFER:
-		dptx_dbg_aux(dptx, "%s: DPTX_AUX_STS_STATUS_DEFER\n", __func__);
-		break;
-	case DPTX_AUX_STS_STATUS_I2C_NACK:
-		dptx_dbg_aux(dptx, "%s: DPTX_AUX_STS_STATUS_I2C_NACK\n", __func__);
-		break;
-	case DPTX_AUX_STS_STATUS_I2C_DEFER:
-		dptx_dbg_aux(dptx, "%s: DPTX_AUX_STS_STATUS_I2C_DEFER\n", __func__);
-		break;
-	default:
-		dptx_err(dptx, "%s: Invalid AUX status 0x%x\n", __func__, status);
-		break;
 	}
 
 	dptx->aux.data[0] = dptx_read_reg(dptx, dptx->regs[DPTX], AUX_DATA0);
@@ -141,11 +153,19 @@ static int dptx_aux_rw(struct dptx *dptx, bool rw, bool i2c, bool mot,
 	int tries = 0;
 	u32 auxcmd;
 	u32 type;
-	unsigned int status;
-	unsigned int br;
+	u32 status = 0;
+	u32 br = 0;
 	struct ctrl_regfields *ctrl_fields;
 
 	ctrl_fields = dptx->ctrl_fields;
+
+	/* Wait up to 3200 usec if previous AUX transaction experienced timeout */
+	if (dptx->aux.noreply_timeout != 0) {
+		ktime_t now = ktime_get();
+		if (ktime_before(now, dptx->aux.noreply_timeout))
+			fsleep(ktime_us_delta(dptx->aux.noreply_timeout, now));
+		dptx->aux.noreply_timeout = 0;
+	}
 
 again:
 	tries++;
@@ -184,12 +204,12 @@ again:
 		     i2c ? "I":"N", rw ? "R":"W", mot ? "MOT":"", addr_only ? "AONLY":"", auxcmd);
 	dptx_write_reg(dptx, dptx->regs[DPTX], AUX_CMD, auxcmd);
 
-	retval = dptx_handle_aux_reply(dptx, auxcmd);
+	retval = dptx_handle_aux_reply(dptx, auxcmd, &status, &br);
 
 	if (retval == -ETIMEDOUT) {
 		dptx_warn(dptx, "AUX transaction timed out\n");
-		udelay(3200);
-		goto again;
+		dptx->aux.noreply_timeout = ktime_add_us(ktime_get(), 3200);
+		return retval;
 	}
 
 	if (retval == -ESHUTDOWN) {
@@ -201,11 +221,6 @@ again:
 		dptx_dbg(dptx, "AUX aborted\n");
 		return -ETIMEDOUT;
 	}
-
-	status = dptx_read_regfield(dptx, ctrl_fields->field_aux_status) >>
-		DPTX_AUX_STS_STATUS_SHIFT;
-
-	br = dptx_read_regfield(dptx, ctrl_fields->field_aux_bytes_read);
 
 	switch (status) {
 	case DPTX_AUX_STS_STATUS_ACK:

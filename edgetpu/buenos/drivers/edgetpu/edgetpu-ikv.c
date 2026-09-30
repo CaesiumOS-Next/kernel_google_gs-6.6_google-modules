@@ -2,7 +2,7 @@
 /*
  * Virtual Inference Interface, implements the protocol between AP kernel and TPU firmware.
  *
- * Copyright (C) 2023-2025 Google LLC
+ * Copyright (C) 2023-2026 Google LLC
  */
 
 #include <linux/kthread.h>
@@ -27,6 +27,8 @@
 #include "edgetpu-vii-litebuf.h"
 #include "edgetpu-vii-packet.h"
 #include "edgetpu.h"
+
+#define TEST_SKIP_FENCE_SIGNALING (false)
 
 static unsigned int user_ikv_timeout;
 module_param(user_ikv_timeout, uint, 0660);
@@ -55,11 +57,11 @@ static int edgetpu_ikv_alloc_queue(struct edgetpu_ikv *etikv, enum gcip_mailbox_
 	/* Allocate the queues based on the larger litebuf sizes which can handle both formats. */
 	switch (type) {
 	case GCIP_MAILBOX_CMD_QUEUE:
-		size = EDGETPU_IKV_QUEUE_SIZE * VII_CMD_SIZE_BYTES;
+		size = etikv->queue_size * VII_CMD_SIZE_BYTES;
 		mem = &etikv->cmd_queue_mem;
 		break;
 	case GCIP_MAILBOX_RESP_QUEUE:
-		size = EDGETPU_IKV_QUEUE_SIZE * VII_RESP_SIZE_BYTES;
+		size = etikv->queue_size * VII_RESP_SIZE_BYTES;
 		mem = &etikv->resp_queue_mem;
 		break;
 	}
@@ -73,7 +75,7 @@ static int edgetpu_ikv_alloc_queue(struct edgetpu_ikv *etikv, enum gcip_mailbox_
 		return ret;
 
 	ret = edgetpu_mailbox_set_queue(etikv->mbx_hardware, type, mem->dma_addr,
-					EDGETPU_IKV_QUEUE_SIZE);
+					etikv->queue_size);
 	if (ret) {
 		etdev_err(etikv->etdev, "failed to set mailbox queue: %d", ret);
 		edgetpu_iremap_free(etdev, mem);
@@ -113,6 +115,7 @@ int edgetpu_ikv_init(struct edgetpu_dev *etdev, struct edgetpu_ikv *etikv)
 	};
 	int ret;
 
+	etikv->queue_size = etdev->max_concurrent_clients * EDGETPU_NUM_VII_CREDITS_PER_CLIENT;
 	etikv->command_timeout_ms = timeout;
 	etikv->etdev = etdev;
 	mutex_init(&etikv->enabled_pasids_lock);
@@ -174,12 +177,12 @@ int edgetpu_ikv_reinit(struct edgetpu_ikv *etikv)
 	edgetpu_mailbox_clear_doorbells(mbx_hardware);
 
 	ret = edgetpu_mailbox_set_queue(mbx_hardware, GCIP_MAILBOX_CMD_QUEUE,
-					cmd_queue_mem->dma_addr, EDGETPU_IKV_QUEUE_SIZE);
+					cmd_queue_mem->dma_addr, etikv->queue_size);
 	if (ret)
 		return ret;
 
 	ret = edgetpu_mailbox_set_queue(mbx_hardware, GCIP_MAILBOX_RESP_QUEUE,
-					resp_queue_mem->dma_addr, EDGETPU_IKV_QUEUE_SIZE);
+					resp_queue_mem->dma_addr, etikv->queue_size);
 	if (ret)
 		return ret;
 
@@ -332,8 +335,26 @@ static void signal_response_waiters(struct edgetpu_ikv_response *ikv_resp, int e
 	 * Signal fences before notifying the group of the response.
 	 * It is likely the user-space client that owns the group will need any drivers waiting on
 	 * the command to finish their work before user-space can make use of the results.
+	 *
+	 * tl;dr - it is always safe to signal out-fences here for whatever IP-signaled, AP-signaled
+	 *         IIFs and DMA fences.
+	 *
+	 * Unless the propagate unblock was set above, explicit kernel-level signaling is
+	 * technically not needed for IP-signaled IIF fences because they are signaled on the
+	 * firmware side. The unblock is then notified via the IIF mailbox response queue, and
+	 * handled by the `edgetpu_iif_handle_reversed_command()` function.
+	 *
+	 * Historically, the IIF kernel driver required explicit signaling even for IP-signaled
+	 * fences to notify the driver of the unblock and propagate fence errors to the kernel-level
+	 * fence object via signal().
+	 *
+	 * The IIF kernel driver retains this signaling behavior for backward compatibility with
+	 * older firmwares. Additionally, if there are standard DMA out-fences in @out_fence_array
+	 * (which are bypassed by the firmware-based IIF signaling), they must be explicitly
+	 * signaled here.
 	 */
-	gcip_fence_array_signal_async(ikv_resp->out_fence_array, error);
+	if (!TEST_SKIP_FENCE_SIGNALING)
+		gcip_fence_array_signal_async(ikv_resp->out_fence_array, error);
 
 	/*
 	 * This function call is meaningful only when the fences are inter-IP fences.
@@ -462,17 +483,20 @@ static u32 edgetpu_ikv_response_get_timeout(struct gcip_mailbox_awaiter *gcip_aw
 #endif
 }
 
-static bool edgetpu_ikv_response_match_response(void *incoming_resp, void *waiter_resp)
+static bool edgetpu_ikv_response_match_response(struct gcip_mailbox_awaiter *gcip_awaiter,
+						void *incoming_resp)
 {
+	struct edgetpu_ikv_response *ikv_resp =
+		container_of(gcip_awaiter, struct edgetpu_ikv_response, gcip_awaiter);
 	u32 incoming_client_id, waiter_client_id;
 	u64 incoming_seq_number, waiter_seq_number;
 
 	/* Awaiters only have the local client_id set. Mask away realm and VM ID bits. */
 	incoming_client_id = edgetpu_vii_response_get_client_id(incoming_resp) & 0xFFFF;
-	waiter_client_id = edgetpu_vii_response_get_client_id(waiter_resp) & 0xFFFF;
+	waiter_client_id = edgetpu_vii_response_get_client_id(ikv_resp->resp) & 0xFFFF;
 
 	incoming_seq_number = edgetpu_vii_response_get_seq_number(incoming_resp);
-	waiter_seq_number = edgetpu_vii_response_get_seq_number(waiter_resp);
+	waiter_seq_number = gcip_mailbox_awaiter_get_seq(gcip_awaiter);
 
 	return incoming_seq_number == waiter_seq_number && incoming_client_id == waiter_client_id;
 }

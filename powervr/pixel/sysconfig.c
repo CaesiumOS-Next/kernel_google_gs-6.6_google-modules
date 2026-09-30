@@ -31,6 +31,7 @@
 #include "sscd.h"
 #include "uid_time_in_state.h"
 #include "gpu_uevent.h"
+#include <trace/hooks/systrace.h>
 
 #if defined(SUPPORT_TRUSTED_DEVICE)
 #include "gpu_secure.h"
@@ -327,6 +328,8 @@ static void gpu_error_notify(IMG_HANDLE sysdata, PVRSRV_ROBUSTNESS_NOTIFY_DATA *
 {
 	struct pixel_gpu_device * const pixel_dev = (struct pixel_gpu_device *)sysdata;
 	struct device * const dev = pixel_dev->dev;
+	char buf[128] = { 0 };
+	int pid = error->pid ? error->pid : current->tgid;
 
 	switch (error->eResetReason) {
 	case RGX_CONTEXT_RESET_REASON_GUILTY_OVERRUNING:
@@ -369,12 +372,18 @@ static void gpu_error_notify(IMG_HANDLE sysdata, PVRSRV_ROBUSTNESS_NOTIFY_DATA *
 		dev_warn(dev, "  ext_job_ref=%u dm=%s",
 			 error->uErrData.sChecksumErrData.ui32ExtJobRef,
 			 rgxfwif_dm_str(error->uErrData.sChecksumErrData.eDM));
+		scnprintf(buf, sizeof(buf), "GPU Reset: %s (%s)",
+			rgx_context_reset_reason_str(error->eResetReason),
+			rgxfwif_dm_str(error->uErrData.sChecksumErrData.eDM));
 		break;
 
 	case RGX_CONTEXT_RESET_REASON_FW_PAGEFAULT:
 		dev_warn(dev, "  fw_fault_addr=" IMG_DEV_VIRTADDR_FMTSPEC,
 			 error->uErrData.sFwPFErrData.sFWFaultAddr.uiAddr);
 		gpu_uevent_kmd_error_send(pixel_dev, GPU_UEVENT_INFO_FW_PAGEFAULT);
+		scnprintf(buf, sizeof(buf), "GPU Reset: %s Addr 0x%llx",
+			rgx_context_reset_reason_str(error->eResetReason),
+			(unsigned long long)error->uErrData.sFwPFErrData.sFWFaultAddr.uiAddr);
 		break;
 
 	case RGX_CONTEXT_RESET_REASON_HOST_WDG_FW_ERR:
@@ -382,6 +391,10 @@ static void gpu_error_notify(IMG_HANDLE sysdata, PVRSRV_ROBUSTNESS_NOTIFY_DATA *
 			 error->uErrData.sHostWdgData.ui32Status,
 			 error->uErrData.sHostWdgData.ui32Reason);
 		gpu_uevent_kmd_error_send(pixel_dev, GPU_UEVENT_INFO_HOST_WDG_FW_ERROR);
+		scnprintf(buf, sizeof(buf), "GPU Reset: %s Status %u, Reason %u",
+			rgx_context_reset_reason_str(error->eResetReason),
+			error->uErrData.sHostWdgData.ui32Status,
+			error->uErrData.sHostWdgData.ui32Reason);
 		break;
 
 	case RGX_CONTEXT_RESET_REASON_GUILTY_LOCKUP:
@@ -409,14 +422,26 @@ static void gpu_error_notify(IMG_HANDLE sysdata, PVRSRV_ROBUSTNESS_NOTIFY_DATA *
 				 rgxfwif_dm_str(lockup_data->eDM));
 
 		gpu_uevent_send(pixel_dev, &evt);
+	}
+	__fallthrough;
+	case RGX_CONTEXT_RESET_REASON_GUILTY_OVERRUNING:
+	case RGX_CONTEXT_RESET_REASON_INNOCENT_OVERRUNING:
+	{
+		scnprintf(buf, sizeof(buf), "GPU Reset: %s (%s)",
+			rgx_context_reset_reason_str(error->eResetReason),
+			rgxfwif_dm_str(error->uErrData.sGuiltyLockupData.eDM));
 		break;
 	}
 
 	default:
 		// no extra error info
+		scnprintf(buf, sizeof(buf), "GPU Reset: %s",
+			rgx_context_reset_reason_str(error->eResetReason));
 		break;
 	}
 
+	__ATRACE_BEGIN_PID(pid, buf);
+	__ATRACE_END_PID(pid, "");
 }
 
 static void release_fence_data(IMG_HANDLE sys_data, IMG_UINT16 fence_data)

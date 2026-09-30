@@ -1379,6 +1379,11 @@ int syna_tcm_get_app_info(struct tcm_dev *tcm_dev,
 			MAX_SIZE_CONFIG_ID,
 			MAX_SIZE_CONFIG_ID);
 
+	if (tcm_dev->max_objects > MAX_NUM_OBJECTS) {
+		LOGE("Abnormal max_objects %d", tcm_dev->max_objects);
+		tcm_dev->max_objects = MAX_NUM_OBJECTS;
+	}
+
 	LOGD("App info version: %d, status: %d\n",
 		syna_pal_le2_to_uint(info->version), app_status);
 	LOGD("App info: max_objs: %d, max_x:%d, max_y: %d, trx: %dx%d\n",

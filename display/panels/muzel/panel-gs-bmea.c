@@ -62,6 +62,8 @@ struct bmea_panel {
 	 *                             increased count
 	 */
 	u8 prev_gram_collision_count;
+	/** @trace_msg: the message which records panel settings in the trace */
+	char trace_msg[64];
 };
 
 #define to_spanel(ctx) container_of(ctx, struct bmea_panel, base)
@@ -1954,6 +1956,7 @@ static void bmea_set_panel_feat(struct gs_panel *ctx, const struct gs_panel_mode
 	struct device *dev = ctx->dev;
 	struct gs_panel_status *sw_status = &ctx->sw_status;
 	struct gs_panel_status *hw_status = &ctx->hw_status;
+	struct bmea_panel *spanel = to_spanel(ctx);
 	unsigned long *feat = sw_status->feat;
 	enum irc_mode irc_mode = sw_status->irc_mode;
 	u32 idle_vrefresh = sw_status->idle_vrefresh;
@@ -1961,7 +1964,6 @@ static void bmea_set_panel_feat(struct gs_panel *ctx, const struct gs_panel_mode
 	u32 te_freq = gs_drm_mode_te_freq(&pmode->mode);
 	bool is_vrr = gs_is_vrr_mode(pmode);
 	bool irc_mode_changed, idle_vrefresh_changed, vrefresh_changed, te_freq_changed;
-	char trace_msg[64];
 	DECLARE_BITMAP(changed_feat, FEAT_MAX);
 
 	/* override settings if vrr */
@@ -1996,14 +1998,14 @@ static void bmea_set_panel_feat(struct gs_panel *ctx, const struct gs_panel_mode
 		}
 	}
 
-	snprintf(trace_msg, sizeof(trace_msg),
+	snprintf(spanel->trace_msg, sizeof(spanel->trace_msg),
 		 "feat: hbm=%u irc=%u h_pwm=%u fi=%u@a,%u@m ee=%u rr=%3u-%3u@%3u",
 		 test_bit(FEAT_HBM, feat), irc_mode, test_bit(FEAT_PWM_HIGH, feat),
 		 test_bit(FEAT_FRAME_AUTO, feat), test_bit(FEAT_FRAME_MANUAL_FI, feat),
 		 test_bit(FEAT_EARLY_EXIT, feat), idle_vrefresh ? idle_vrefresh : vrefresh,
 		 drm_mode_vrefresh(&pmode->mode), te_freq);
-	dev_dbg(dev, "%s\n", trace_msg);
-	PANEL_ATRACE_BEGIN(trace_msg);
+	dev_dbg(dev, "%s\n", spanel->trace_msg);
+	PANEL_ATRACE_BEGIN(spanel->trace_msg);
 
 	/* Unlock */
 	GS_DCS_BUF_ADD_CMDLIST(dev, unlock_cmd_f0);
@@ -2055,7 +2057,7 @@ static void bmea_set_panel_feat(struct gs_panel *ctx, const struct gs_panel_mode
 	/* Lock */
 	GS_DCS_BUF_ADD_CMDLIST_AND_FLUSH(dev, lock_cmd_f0);
 
-	PANEL_ATRACE_END(trace_msg);
+	PANEL_ATRACE_END(spanel->trace_msg);
 
 	hw_status->vrefresh = vrefresh;
 	hw_status->idle_vrefresh = idle_vrefresh;
@@ -3183,34 +3185,39 @@ static int bmea_detect_fault(struct gs_panel *ctx)
 		dev_warn(dev, "Error reading TEAR_CNT (%pe)\n", ERR_PTR(ret));
 	} else {
 		struct bmea_panel *spanel = to_spanel(ctx);
+		int cnt_diff = collision_cnt - spanel->prev_gram_collision_count;
 
-		if (collision_cnt > spanel->prev_gram_collision_count) {
-			ctx->gram_collision_count +=
-				collision_cnt - spanel->prev_gram_collision_count;
-			dev_err(dev, "GRAM collision found (underrun), count %u (TEAR_CNT %u)\n",
-				ctx->gram_collision_count, collision_cnt);
-		} else if (collision_cnt < spanel->prev_gram_collision_count) {
-			dev_warn(dev, "unexpected GRAM collision count %u (prev %u)\n",
-				 collision_cnt, spanel->prev_gram_collision_count);
-		}
+		if (collision_cnt && cnt_diff) {
+			if (cnt_diff > 0) {
+				ctx->gram_collision_count += cnt_diff;
+				set_bit(GS_PANEL_ERR_GRAM_COLLISION, ctx->panel_errors);
 
-		if (collision_cnt) {
-			set_bit(GS_PANEL_ERR_GRAM_COLLISION, ctx->panel_errors);
-			dev_dbg(dev, "set bit for GRAM COLLISION\n");
+				dev_dbg(dev, "set bit for GRAM COLLISION\n");
+				dev_err(dev,
+					"GRAM collision found (underrun) read:%u inc:%d total:%u\n",
+					collision_cnt, cnt_diff, ctx->gram_collision_count);
+				dev_err(dev, "%s\n", spanel->trace_msg);
+				PANEL_ATRACE_INSTANT("GRAM collision read:%u inc:%d total:%u",
+						     collision_cnt, cnt_diff,
+						     ctx->gram_collision_count);
 
-			if (collision_cnt > TRIGGER_DUMP_FOR_COLLISION_TH)
-				ctx->trigger_dumps_for_gram_collision = true;
+				if (collision_cnt > TRIGGER_DUMP_FOR_COLLISION_TH)
+					ctx->trigger_dumps_for_gram_collision = true;
 
-			if (collision_cnt == DDIC_MAX_COLLISION_CNT) {
-				/* reset TEAR_CNT */
-				GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x01, 0xC4);
-				GS_DCS_BUF_ADD_CMD(dev, 0xC4, 0x01);
+				if (collision_cnt == DDIC_MAX_COLLISION_CNT) {
+					/* reset TEAR_CNT */
+					GS_DCS_BUF_ADD_CMD(dev, 0xB0, 0x00, 0x01, 0xC4);
+					GS_DCS_BUF_ADD_CMD(dev, 0xC4, 0x01);
 
-				collision_cnt = 0;
-				dev_dbg(dev, "TEAR_CNT reset for GRAM COLLISION\n");
+					collision_cnt = 0;
+					dev_dbg(dev, "TEAR_CNT reset for GRAM COLLISION\n");
+				}
+				spanel->prev_gram_collision_count = collision_cnt;
+			} else {
+				dev_warn(dev, "unexpected GRAM collision count %u (prev %u)\n",
+					 collision_cnt, spanel->prev_gram_collision_count);
 			}
 		}
-		spanel->prev_gram_collision_count = collision_cnt;
 	}
 
 	ret = mipi_dsi_dcs_read(dsi, ERR_FG_ADDR, buf, ERR_FG_LEN);
@@ -3697,7 +3704,11 @@ static struct gs_panel_desc NAME = {								\
 	 * kernel, the delay of notification is estimated to be ~50ms.				\
 	 */											\
 	.notify_te2_freq_changed_work_delay_ms = 50,						\
-	.fault_detect_interval_ms = 5000,							\
+	/**											\
+	 * The err_fg pin is supported and may keep high in some worse cases. Adjust the value	\
+	 * if needed.										\
+	 */											\
+	.fault_detect_interval_ms = 2000,							\
 	.panel_errors_mask = BIT(GS_PANEL_ERR_DSI_READ_FAILURE) |				\
 			BIT(GS_PANEL_ERR_GRAM_COLLISION),					\
 }

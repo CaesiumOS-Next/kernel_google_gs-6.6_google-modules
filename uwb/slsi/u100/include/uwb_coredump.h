@@ -6,6 +6,7 @@
 #include <linux/platform_data/sscoredump.h>
 #include <linux/platform_device.h>
 #include <linux/ktime.h>
+#include <linux/types.h>
 
 struct sk_buff;
 struct u100_ctx;

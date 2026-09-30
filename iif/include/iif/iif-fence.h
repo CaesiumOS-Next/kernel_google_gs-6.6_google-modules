@@ -55,8 +55,8 @@ struct iif_fence_all_signaler_submitted_cb;
 /*
  * The callback which will be called when all signalers have signaled @fence.
  *
- * It will be called while @fence->fence_lock is held and it is safe to access @fence->signaled,
- * @fence->timeline, @fence->signal_error and @fence->propagate.
+ * The callback must refer to @cb->status to check how the fence was unblocked (E.g., whether it was
+ * signaled with an error or not).
  *
  * The callback must be lightweight to avoid blocking a thread who signals @fence for a long time.
  *
@@ -123,46 +123,6 @@ enum iif_fence_state {
 	IIF_FENCE_STATE_RETIRED,
 };
 
-/*
- * Contains the callback function which will be called when the fence has been unblocked.
- *
- * The callback can be registered to the fence by the `iif_fence_add_poll_callback` function.
- */
-struct iif_fence_poll_cb {
-	/* Node to be added to the list. */
-	struct list_head node;
-	/* Actual callback function to be called. */
-	iif_fence_poll_cb_t func;
-};
-
-/* Contains the callback function which will be called when all signalers have been submitted. */
-struct iif_fence_all_signaler_submitted_cb {
-	/* Node to be added to the list. */
-	struct list_head node;
-	/* Actual callback function to be called. */
-	iif_fence_all_signaler_submitted_cb_t func;
-	/* The number of remaining signalers to be submitted. */
-	int remaining_signalers;
-};
-
-/* Parameters which will be used when creating a fence. */
-struct iif_fence_params {
-	/* The signaler type. */
-	enum iif_fence_signaler_type signaler_type;
-	/* The fence type. */
-	enum iif_fence_type fence_type;
-	/* The signaler IP. Used only if @signaler_type is IIF_FENCE_SIGNALER_TYPE_IP. */
-	enum iif_ip_type signaler_ip;
-	/* The number of signalers (commands) which will signal the fence. */
-	uint16_t remaining_signalers;
-	/* The bitwise value where each bit represents an IP. (See enum iif_ip_type) */
-	uint16_t waiters;
-	/* Used only if the fence is a reusable IP fence or timer fence. */
-	uint64_t timeout;
-	/* The fence flags. (See `IIF_FLAGS_*` macros) */
-	uint32_t flags;
-};
-
 /* Describes the fence status. */
 struct iif_fence_status {
 	/*
@@ -192,6 +152,82 @@ struct iif_fence_status {
 		 */
 		u64 timeline;
 	};
+};
+
+/*
+ * Contains the callback function which will be called when the fence has been unblocked.
+ *
+ * The registerer must refer to @status field to check how the fence was unblocked (E.g., whether it
+ * was signaled with an error or not).
+ *
+ * - Common: If @status.error is set, the fence is errored out.
+ *
+ * - Single-shot: If @status.signaled is true, the fence is unblocked. Even though @status.error is
+ *                set, if @status.signaled is false, the fence must not be considered as unblocked.
+ *
+ * - Reusable: @status.timeline will be updated to the next timeline value reaching any sync point
+ *             from the original value. The callback registerer must keep this value up-to-date to
+ *             keep properly tracking the fence signals sequentially. In other words, except
+ *             initializing @status.timeline to 0 at the first callback registration, the registerer
+ *             must not modify it manually and directly pass the timeline value updated when the
+ *             callback invoked to the next callback registration. If the fence has been errored out
+ *             and @status.error is set, @status.timeline is the timeline when the error was set.
+ *
+ *             For example. if there is a fence which will reach sync points at timeline 2, 4 and be
+ *             erroed out at 6, the callback registerer will be expected to init @status.timeline to
+ *             0 at the first registration, then the callback will be invoked updating
+ *             @status.timeline to 2 at the first unblock. The registerer will register the same
+ *             callback again keeping the value at @status.timeline so that the IIF kernel driver
+ *             can properly track the next fence unblock from the previous unblock. After that, the
+ *             second callback will be invoked updating @status.timeline to 4. Likewise,
+ *             @fence.timeline will be finally updated to 6 setting @status.error.
+ *
+ *             Note that the timeline viewpoint of signaler and waiter (callback registerer) can be
+ *             different. Again taking the above example, if the signaler has already errored the
+ *             fence at timeline 6 before the waiter registers the first callback, the updated
+ *             timeline value at the first callback invocation will be still 2, not 6 since the
+ *             waiter's timeline viewpoint was at 0, also @status.error will not be set. It is
+ *             because we cannot synchronize all the signaler and waiters to be at the same timeline
+ *             value. Keeping the timeline value up-to-date at the waiter side is the key to
+ *             properly track the fence unblock and error.
+ *
+ * The callback can be registered to the fence by the `iif_fence_add_poll_callback` function.
+ */
+struct iif_fence_poll_cb {
+	/* Node to be added to the list. */
+	struct list_head node;
+	/* Actual callback function to be called. */
+	iif_fence_poll_cb_t func;
+	/* The fence status. */
+	struct iif_fence_status status;
+};
+
+/* Contains the callback function which will be called when all signalers have been submitted. */
+struct iif_fence_all_signaler_submitted_cb {
+	/* Node to be added to the list. */
+	struct list_head node;
+	/* Actual callback function to be called. */
+	iif_fence_all_signaler_submitted_cb_t func;
+	/* The number of remaining signalers to be submitted. */
+	int remaining_signalers;
+};
+
+/* Parameters which will be used when creating a fence. */
+struct iif_fence_params {
+	/* The signaler type. */
+	enum iif_fence_signaler_type signaler_type;
+	/* The fence type. */
+	enum iif_fence_type fence_type;
+	/* The signaler IP. Used only if @signaler_type is IIF_FENCE_SIGNALER_TYPE_IP. */
+	enum iif_ip_type signaler_ip;
+	/* The number of signalers (commands) which will signal the fence. */
+	uint16_t remaining_signalers;
+	/* The bitwise value where each bit represents an IP. (See enum iif_ip_type) */
+	uint16_t waiters;
+	/* Used only if the fence is a reusable IP fence or timer fence. */
+	uint64_t timeout;
+	/* The fence flags. (See `IIF_FLAGS_*` macros) */
+	uint32_t flags;
 };
 
 /* The fence object. */
@@ -236,10 +272,6 @@ struct iif_fence {
 	const struct iif_fence_ops *ops;
 	/* State of this fence object. */
 	enum iif_fence_state state;
-	/* List of callbacks which will be called when the fence is unblocked. */
-	struct list_head poll_cb_list;
-	/* Marks true if poll callbacks are pended because of IIF_FLAGS_DISABLE_POLL. */
-	bool poll_cb_pended;
 	/* List of callbacks which will be called when all signalers have been submitted. */
 	struct list_head all_signaler_submitted_cb_list;
 	/* Will be set to a negative errno if the fence is signaled with an error. */
@@ -267,7 +299,7 @@ struct iif_fence {
 	/* The private data of the underlying sync-unit fence. */
 	void *fence_data;
 	/* The callback which will be registered to the sync-unit driver. */
-	struct iif_manager_fence_ops_poll_cb sync_unit_poll_cb;
+	struct iif_fence_poll_cb sync_unit_poll_cb;
 };
 
 /* Operators of `struct iif_fence`. */
@@ -424,7 +456,7 @@ void iif_fence_put_async(struct iif_fence *fence);
  *
  * - If an error implies that the firmware is not working or faulty so that the firmware will never
  *   signal the fence, the kernel driver can signal the fence at the kernel level directly.
- *   (See `iif_fence_set_propagate_unblock()` and `iif_fence_signal_with_status{_async}()`)
+ *   (See `iif_fence_delegate_to_ap()` and `iif_fence_signal_with_status{_async}()`)
  *
  * - If the firmware still works even when an error happens,
  *   - The kernel driver should ask the firmware to signal the fence with an error.
@@ -489,9 +521,7 @@ int iif_fence_add_sync_point(struct iif_fence *fence, u64 timeline, u64 count);
  *
  * This function cannot be called in the IRQ context.
  *
- * Note that this function may reorder fences internally. This is to prevent a potential dead lock
- * which can be caused by holding the locks of multiple fences at the same time. Also, fences in
- * @in_fences and @out_fences should be unique. Otherwise, it will return -EDEADLK.
+ * Fences in @in_fences and @out_fences must be unique. Otherwise, it will return -EDEADLK.
  *
  * For @in_fences or @out_fences, if the caller doesn't need to submit a waiter or signaler
  * accordingly, NULL pointer can be passed to them. If @in_fences is NULL which means the caller
@@ -580,14 +610,13 @@ void iif_fence_waiter_completed_async(struct iif_fence *fence, enum iif_ip_type 
  * - The fence signaler is AP.
  * - The fence signaler is IP, but its firmware has crashed. Its kernel driver should signal the
  *   fence on behalf of the firmware when it detects that the firmware becomes faulty. In this case,
- *   the kernel driver must call the `iif_fence_set_propagate_unblock()` function before signaling
- *   the fence to let the IIF driver know that the fence is going to be signaled at the kernel
- *   level.
+ *   the kernel driver must call the `iif_fence_delegate_to_ap()` function before signaling the
+ *   fence to let the IIF driver know that the fence is going to be signaled at the kernel level.
  *
  * In case of non-direct fences, this function doesn't have meaning unless the signaler IP crashed
- * and `iif_fence_set_propagate_unblock()` was called before. However, it does if the fence is a
- * direct fence to notify the IIF driver of the fence signal even when the signaler IP is alive,
- * thus the IIF driver can notify the ones polling on the kernel-level fence. To support it, it is
+ * and `iif_fence_delegate_to_ap()` was called before. However, it does if the fence is a direct
+ * fence to notify the IIF driver of the fence signal even when the signaler IP is alive, thus the
+ * IIF driver can notify the ones polling on the kernel-level fence. To support it, it is
  * recommended to call this function by the signaler IP driver not only when the driver signals the
  * fence on behalf of the firmware, but also when the fence is signaled by the firmware.
  *
@@ -707,8 +736,11 @@ int iif_fence_get_signal_status(struct iif_fence *fence);
  */
 void iif_fence_get_status(struct iif_fence *fence, struct iif_fence_status *status);
 
+/* DEPECATED: Use `iif_fence_delegate_to_ap()` instead. */
+void iif_fence_set_propagate_unblock(struct iif_fence *fence);
+
 /*
- * Sets @fence->propagate to true.
+ * Delegates the fence signaler to AP (Sets @fence->propagate to true).
  *
  * When @fence has been unblocked and the `fence_unblocked` callback is called, the waiter IP
  * drivers will refer to @fence->propagate and they will inform their IP of the fence unblock if
@@ -724,9 +756,11 @@ void iif_fence_get_status(struct iif_fence *fence, struct iif_fence_status *stat
  * Note that this function must be called before signaling the fence if needed. Also, the IIF driver
  * will take over the responsibility of updating the number of remaining signals in the fence table
  * of @fence from the IP firmware since calling this function means that the signaler IP doesn't
- * have ability of managing the signal of @fence anymore.
+ * have ability of managing the signal of @fence anymore.\
+ *
+ * Return: 0 on success, otherwise, a negative errno.
  */
-void iif_fence_set_propagate_unblock(struct iif_fence *fence);
+int iif_fence_delegate_to_ap(struct iif_fence *fence);
 
 /*
  * Returns whether all signalers have signaled @fence.
@@ -749,8 +783,11 @@ bool iif_fence_is_signaled(struct iif_fence *fence);
  * If the fence is a single-shot fence, the function will be blocked until @fence->signaled becomes
  * true.
  *
- * If the fence is a reusable-fence, the function will be blocked until @fence->timeline increases
- * or @fence->signal_error is set.
+ * If the fence is a reusable-fence, the function will be blocked until the fence has reached any
+ * sync-point by the signaler. In other words, the function will always return immediately if the
+ * fence has already reached any sync-point. To properly wait on the reusable fence, the caller must
+ * use `_with_status()` version of wait functions to pass its timeline viewpoint. See the functions
+ * for more details.
  *
  * This function is the same as `iif_fence_wait()`, but can specify timeout.
  *
@@ -769,6 +806,53 @@ signed long iif_fence_wait_timeout(struct iif_fence *fence, bool intr, signed lo
 static inline signed long iif_fence_wait(struct iif_fence *fence, bool intr)
 {
 	return iif_fence_wait_timeout(fence, intr, MAX_SCHEDULE_TIMEOUT);
+}
+
+/**
+ * iif_fence_wait_timeout_with_status() - Waits until @fence is unblocked and gets its status.
+ * @fence: The fence to wait on.
+ * @intr: If true, do an interruptible wait.
+ * @timeout_jiffies: The timeout in jiffies, or MAX_SCHEDULE_TIMEOUT to wait until @fence gets
+ *                   signaled.
+ * @status: The fence status will be stored here.
+ *
+ * Its functionality is the same as `iif_fence_wait_timeout()`, but it also gets the fence status
+ * when the wait is over.
+ *
+ * If the fence is a single-shot fence, @status->signaled will be set to true and @status->error
+ * will be set to the fence signal error accordingly if the fence has been unblocked before the
+ * timeout.
+ *
+ * If the fence is a reusable fence, the function will wait on the fence to reach the earliest
+ * sync point which is later than the caller's timeline viewpoint passed in @status->timeline. In
+ * other words, if that sync point is already reached, this function will return immediately.
+ * @status->timeline will be updated to the timeline value of that sync point when the function
+ * returns. To wait on the next sync point, the caller must pass the same @status again. If
+ * @status->timeline reaches the same timeline viewpoint with the signaler and the fence is errored
+ * out, @status->error will be set to the fence signal error and the function will return
+ * immediately regardless of reaching sync points.
+ *
+ * This function is the same as `iif_fence_wait_with_status()`, but can specify timeout.
+ *
+ * Returns -ERESTARTSYS if interrupted, 0 if the wait timed out. Otherwise, returns remaining
+ * timeout in jiffies on success.
+ */
+signed long iif_fence_wait_timeout_with_status(struct iif_fence *fence, bool intr,
+					       signed long timeout_jiffies,
+					       struct iif_fence_status *status);
+
+/**
+ * iif_fence_wait_with_status() - Waits until @fence is unblocked and gets its status.
+ * @fence: The fence to wait on.
+ * @intr: If true, do an interruptible wait.
+ * @status: The fence status will be stored here.
+ *
+ * Returns -ERESTARTSYS if interrupted. Otherwise, returns MAX_SCHEDULE_TIMEOUT on success.
+ */
+static inline signed long iif_fence_wait_with_status(struct iif_fence *fence, bool intr,
+						     struct iif_fence_status *status)
+{
+	return iif_fence_wait_timeout_with_status(fence, intr, MAX_SCHEDULE_TIMEOUT, status);
 }
 
 /*
@@ -861,5 +945,21 @@ int iif_fence_unsubmitted_signalers(struct iif_fence *fence);
 int iif_fence_submitted_signalers(struct iif_fence *fence);
 int iif_fence_signaled_signalers(struct iif_fence *fence);
 int iif_fence_outstanding_waiters(struct iif_fence *fence);
+
+/**
+ * iif_fence_unblocked() - Notifies the IIF driver that @fence has been unblocked.
+ * @fence: The fence which has been unblocked.
+ *
+ * The function will be called by the IP drivers whenever they notice that the fence has been
+ * unblocked by their firmware and notify AP waiters of the fence unblock. The IIF kernel driver
+ * will ask the underlying sync-unit driver to investigate if the fence is actually unblocked and
+ * invoke registered poll callbacks if it is.
+ *
+ * Note that there is another function, `iif_manager_fence_unblocked()` which receives the fence ID
+ * instead of the fence object.
+ *
+ * This function can be called in any context.
+ */
+void iif_fence_unblocked(struct iif_fence *fence);
 
 #endif /* __IIF_IIF_FENCE_H__ */

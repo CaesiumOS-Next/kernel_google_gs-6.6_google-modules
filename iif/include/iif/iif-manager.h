@@ -29,31 +29,8 @@
 
 struct iif_fence;
 struct iif_fence_params;
+struct iif_fence_poll_cb;
 struct iif_fence_status;
-
-/*
- * The callback function which will be called by the sync-unit driver when the underlying sync-unit
- * fence of @iif is signaled. The sync-unit driver must pass the fence status to @status.
- *
- * - Single-shot fence: If the fence is unblocked, @status->signaled must be set to true. Even
- *                      though @status->error is non-zero, if @status->signaled is false, the IIF
- *                      driver will consider the fence is sill blocked. Whether to signal the fence
- *                      or not if the fence is errored out even before all signalers signal the
- *                      fence is dependent on the implementation of the sync-unit.
- *
- * - Reusable fence: In this case, @status->signaled will be ignored and @status->timeline will be
- *                   considered to propagate the fence signal to waiters polling on the kernel-level
- *                   fence object. Waiters will register sync points and the IIF driver will notify
- *                   waiters once @status->timeline reaches one of sync points. The sync-unit driver
- *                   can invoke this callback per every single signal regardless of sync points, but
- *                   it is also recommended to consider sync points to minimize AP involevement.
- *                   Unlike single-shot fence, if @status->error is set, the error will be
- *                   propagated to all waiters immediately, even before @status->timeline reaches
- *                   the value they are waiting for. If @status->timeline reaches the timeout value,
- *                   the sync-unit must error the fence out as timeout.
- */
-typedef void (*iif_manager_fence_ops_poll_cb_t)(struct iif_fence *iif,
-						const struct iif_fence_status *status);
 
 /* Operators. */
 struct iif_manager_ops {
@@ -127,27 +104,6 @@ struct iif_manager_ops {
 	void (*release_block_wakelock)(void *data);
 };
 
-/*
- * The container of a poll callback which will be called by the sync-unit driver when the underlying
- * sync-unit fence of @iif is signaled.
- *
- * The IIF driver will register a poll callback to the sync-unit driver via `add_poll_cb()`
- * operator after the fence creation. Also, the driver will try to remove the registered callback
- * via `remove_poll_cb()` operator before releasing the fence.
- */
-struct iif_manager_fence_ops_poll_cb {
-	/* The kernel-level fence object of the underlying sync-unit fece. */
-	struct iif_fence *iif;
-	/*
-	 * The list node which can be utilized by the sync-unit driver to manage registered
-	 * callbacks in a list. If the fence won't be signaled anymore, the sync-unit driver can
-	 * unregister the callback before the IIF driver calls `remove_poll_cb()` operator.
-	 */
-	struct list_head node;
-	/* The function which will be called when the fence is signaled. */
-	iif_manager_fence_ops_poll_cb_t func;
-};
-
 /* The fence operators which will be implemented by the underlying sync-unit. */
 struct iif_manager_fence_ops {
 	/*
@@ -174,14 +130,25 @@ struct iif_manager_fence_ops {
 	/*
 	 * Retires the underlying sync-unit fence.
 	 *
-	 * This operator can be done asynchronously. The meaning that this operator is called that
-	 * there is no one accessing the fence.
+	 * This operator can be done asynchronously. The meaning that this operator is called is
+	 * that there is no one utilizing the fence, but the IIF kernel driver can still invoke
+	 * operators of it. Therefore, the underlying sync-unit fence object must not be freed until
+	 * the `fence_release()` operator is called.
 	 *
-	 * This operator is mandatory.
+	 * This operator is optional.
 	 *
 	 * Context: @iif->fence_lock (spin-lock).
 	 */
 	void (*fence_retire)(struct iif_fence *iif, void *driver_data);
+
+	/*
+	 * Releases the underlying sync-unit fence object.
+	 *
+	 * This operator is mandatory.
+	 *
+	 * Context: Normal.
+	 */
+	void (*fence_release)(struct iif_fence *iif, void *driver_data);
 
 	/*
 	 * Adds a sync point.
@@ -238,19 +205,27 @@ struct iif_manager_fence_ops {
 	/*
 	 * Registers a poll callback to the underlying sync-unit fence.
 	 *
-	 * This operator registers a callback, @cb, which should be invoked when the underlying
+	 * This operator registers a callback, @cb, which must be invoked when the underlying
 	 * sync-unit fence is signaled. The sync-unit driver can invoke the callback in any context.
 	 * The callback is supposed to be called when the sync-unit notifies the sync-unit driver of
 	 * the fence signal.
 	 *
-	 * Returns 0 on success. Otherwise, returns a negative errno.
+	 * The sync-unit driver must guarantee that the same callback won't be called concurrently
+	 * for different fence unblocks for reusable fences.
+	 *
+	 * Note that if the fence is already unblocked, the callback must return -EPERM updating
+	 * @cb->status to the unblock status instead of registering the callback. This is for the
+	 * optimization since there is no need to register the callback if the fence is already
+	 * unblocked and it can save the unnecessary callback invocation later.
+	 *
+	 * Returns 0 on success, -EPERM if the fence is already unblocked. Otherwise, returns a
+	 * negative errno.
 	 *
 	 * This operator is mandatory.
 	 *
 	 * Context: Normal.
 	 */
-	int (*add_poll_cb)(struct iif_fence *iif, struct iif_manager_fence_ops_poll_cb *cb,
-			   void *driver_data);
+	int (*add_poll_cb)(struct iif_fence *iif, struct iif_fence_poll_cb *cb, void *driver_data);
 
 	/*
 	 * Unregisters a poll callback from the underlying sync-unit fence.
@@ -265,8 +240,59 @@ struct iif_manager_fence_ops {
 	 *
 	 * Context: @iif->fence_lock (spin-lock).
 	 */
-	bool (*remove_poll_cb)(struct iif_fence *iif, struct iif_manager_fence_ops_poll_cb *cb,
+	bool (*remove_poll_cb)(struct iif_fence *iif, struct iif_fence_poll_cb *cb,
 			       void *driver_data);
+
+	/*
+	 * Disables the poll callback invocation.
+	 *
+	 * This operator will be used for debugging purposes when the IIF user wants to verify that
+	 * IPs are communicating between each other without the involvement of the poll callback.
+	 *
+	 * If @disable is true, the poll callback invocation must be disabled. Otherwise, it must be
+	 * enabled.
+	 *
+	 * This operator is optional.
+	 *
+	 * Context: @iif->fence_lock (spin-lock).
+	 */
+	void (*disable_poll_cb)(struct iif_fence *iif, bool disable, void *driver_data);
+
+	/*
+	 * Delegates the responsibility of signaling the fence to AP.
+	 *
+	 * This operator will be called when the signaler IP kernel driver or runtime has determined
+	 * that its IP firmware is not able or not going to signal the fence for some reasons (e.g.,
+	 * the signaler IP has crashed or the runtime is going to clean fences up before they are
+	 * used).
+	 *
+	 * Once this operator is called, the sync-unit must prepare the fence for AP signaling on
+	 * behalf of the signaler IP if needed to prevent any potential race conditions.
+	 *
+	 * Returns 0 on success. Otherwise, returns a negative errno.
+	 *
+	 * This operator is optional.
+	 *
+	 * Context: Normal.
+	 */
+	int (*delegate_to_ap)(struct iif_fence *iif, void *driver_data);
+
+	/*
+	 * Notifies that the fence has been unblocked.
+	 *
+	 * This operator can be utilized if the sync-unit driver needs to be notified of the unblock
+	 * of IP-signaled fences through IP drivers. (E.g., for the direct fence, it doesn't have
+	 * any firmware which notifies the IIF direct fence driver of the fence unblock, so it
+	 * requires IP drivers' support to notice the fence unblock.)
+	 *
+	 * The operator should check whether the fence is actually unblocked or not. If it is, it
+	 * should notify all registered poll callbacks of the fence.
+	 *
+	 * This operator is optional.
+	 *
+	 * Context: @iif->fence_lock (spin-lock).
+	 */
+	void (*fence_unblocked)(struct iif_fence *iif, void *driver_data);
 };
 
 /*
@@ -445,5 +471,22 @@ void iif_manager_remove_fence_from_hlist(struct iif_manager *mgr, struct iif_fen
  * Returns the fence pointer on success. Otherwise, returns NULL.
  */
 struct iif_fence *iif_manager_get_fence_from_id(struct iif_manager *mgr, int id);
+
+/**
+ * iif_manager_fence_unblocked() - Notifies the IIF driver of the fence unblock.
+ * @mgr: The IIF manager which manages the fence.
+ * @id: The ID of the fence which has been unblocked.
+ *
+ * The function will be called by the IP drivers whenever they notice that the fence has been
+ * unblocked by their firmware and notify AP waiters of the fence unblock. The IIF kernel driver
+ * will ask the underlying sync-unit driver to investigate if the fence is actually unblocked and
+ * invoke registered poll callbacks if it is.
+ *
+ * Note that there is another function, `iif_fence_unblocked()`, which receives the fence object
+ * directly instead of the fence ID.
+ *
+ * This function can be called in any context.
+ */
+void iif_manager_fence_unblocked(struct iif_manager *mgr, int id);
 
 #endif /* __IIF_IIF_MANAGER_H__ */

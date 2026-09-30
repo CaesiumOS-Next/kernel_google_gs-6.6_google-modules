@@ -8,6 +8,7 @@
 #include <linux/debugfs.h>
 #include <linux/math.h>
 #include <linux/mutex.h>
+#include <net/genetlink.h>
 
 #include "fwtp.h"
 #include "fwtp_entry.h"
@@ -16,6 +17,27 @@
 #include "fwtp_protocol.h"
 #include "soc/google/google_gtc.h"
 #include "soc/google/google_timestamp_sync.h"
+
+/*******************************************************************************
+ * Data structures and defs.
+ ******************************************************************************/
+
+/* FWTP device service record. */
+static struct fwtp_dev_svc fwtp_dev_svc = {
+	.dev_list = LIST_HEAD_INIT(fwtp_dev_svc.dev_list),
+};
+
+/* Define the FWTP Generic Netlink family. */
+/* TODO: b/489522286 - Support Netlink operations. */
+static struct genl_family fwtp_genl_family = {
+	.name = "FWTP",
+	.version = 1,
+	.maxattr = 0,
+	.netnsok = true,
+	.module = THIS_MODULE,
+	.ops = NULL,
+	.n_ops = 0,
+};
 
 /*******************************************************************************
  * Internal FWTP kernel device services.
@@ -36,6 +58,63 @@ static void fwtp_dev_append_output(struct fwtp_printer_ctx *printer_ctx,
 		dev_info(fwtp_dev->dev, "%s", str);
 	if (fwtp_dev->ftrace_enabled)
 		trace_fwtp(str);
+}
+
+/**
+ * fwtp_seq_file_append_output - Appends output to a seq_file.
+ *
+ * @printer_ctx: Printer context containing the seq_file.
+ * @str: String to append.
+ */
+static void fwtp_seq_file_append_output(struct fwtp_printer_ctx *printer_ctx,
+					const char *str)
+{
+	struct seq_file *seq_file = printer_ctx->append_output_ctx;
+
+	seq_puts(seq_file, str);
+}
+
+/**
+ * fwtp_dev_fetch_ring_info - Fetches ring info via IPC.
+ *
+ * @fwtp_dev: FWTP kernel device for which to get ring info.
+ * @ring_num: Ring number to get.
+ * @info: Pointer to the ring info message structure to populate.
+ *
+ * Return: 0 on success, non-zero error code on error.
+ */
+static int fwtp_dev_fetch_ring_info(struct fwtp_dev *fwtp_dev, int ring_num,
+				    struct fwtp_msg_get_ring_info *info)
+{
+	u16 rx_msg_data_size;
+	fwtp_error_code_t err;
+
+	/* Send a get ring info message. */
+	info->base.type = kFwtpMsgTypeGetRingInfo;
+	info->ring_num = ring_num;
+	err = fwtp_dev->fwtp_ipc_client.fwtp_if.send_message(
+		&(fwtp_dev->fwtp_ipc_client.fwtp_if), info, sizeof(*info),
+		sizeof(*info), &rx_msg_data_size);
+	if (err != kFwtpOk) {
+		dev_err(fwtp_dev->dev,
+			"Failed to send a get ring info message with error %d.\n",
+			err);
+		return -EIO;
+	}
+	if (rx_msg_data_size < sizeof(struct fwtp_msg_get_ring_info)) {
+		dev_err(fwtp_dev->dev,
+			"Received get ring info response size %d too short.\n",
+			rx_msg_data_size);
+		return -EFAULT;
+	}
+	if (info->base.error != kFwtpOk) {
+		dev_err(fwtp_dev->dev,
+			"Get ring info request failed with error %d.\n",
+			info->base.error);
+		return -EFAULT;
+	}
+
+	return 0;
 }
 
 /*******************************************************************************
@@ -196,10 +275,9 @@ static ssize_t fwtp_debugfs_filter_config_write(struct file *file,
 	/* Send a set filter config message. */
 	msg_set_filter_config->base.type = kFwtpMsgTypeSetFilterConfig;
 	msg_set_filter_config->config_count = config_count;
-	err = fwtp_dev->fwtp_ipc_client.fwtp_if
-		      .send_message(&(fwtp_dev->fwtp_ipc_client.fwtp_if),
-				    msg_set_filter_config, msg_size, msg_size,
-				    &rx_msg_data_size);
+	err = fwtp_dev->fwtp_ipc_client.fwtp_if.send_message(
+		&(fwtp_dev->fwtp_ipc_client.fwtp_if), msg_set_filter_config,
+		msg_size, msg_size, &rx_msg_data_size);
 	if (err != kFwtpOk) {
 		dev_err(fwtp_dev->dev,
 			"Failed to send a set filter config message with error %d.\n",
@@ -207,7 +285,7 @@ static ssize_t fwtp_debugfs_filter_config_write(struct file *file,
 		ret = -EIO;
 		goto out;
 	}
-	if (rx_msg_data_size < sizeof(struct fwtp_msg_set_filter_config)) {
+	if (rx_msg_data_size < sizeof(struct fwtp_msg_base)) {
 		dev_err(fwtp_dev->dev,
 			"Received set filter config response size %d too short.\n",
 			rx_msg_data_size);
@@ -321,12 +399,10 @@ static int fwtp_debugfs_add_tracepoint_write(void *data, u64 val)
 	msg_add_tracepoint.ring_num = 0;
 	msg_add_tracepoint.payload = (u32)val;
 
-	err = fwtp_dev->fwtp_ipc_client.fwtp_if
-		      .send_message(&(fwtp_dev->fwtp_ipc_client.fwtp_if),
-				    &msg_add_tracepoint,
-				    sizeof(msg_add_tracepoint),
-				    sizeof(msg_add_tracepoint),
-				    &rx_msg_data_size);
+	err = fwtp_dev->fwtp_ipc_client.fwtp_if.send_message(
+		&(fwtp_dev->fwtp_ipc_client.fwtp_if), &msg_add_tracepoint,
+		sizeof(msg_add_tracepoint), sizeof(msg_add_tracepoint),
+		&rx_msg_data_size);
 	if (err != kFwtpOk) {
 		dev_err(fwtp_dev->dev,
 			"Failed to send an add tracepoint message with error %d.\n",
@@ -350,10 +426,133 @@ static int fwtp_debugfs_add_tracepoint_write(void *data, u64 val)
 }
 
 /* Define the FWTP add tracepoint debugfs interface. */
-DEFINE_DEBUGFS_ATTRIBUTE(fwtp_debugfs_add_tracepoint_fops,
-			 NULL,
-			 fwtp_debugfs_add_tracepoint_write,
-			 "%llu\n");
+DEFINE_DEBUGFS_ATTRIBUTE(fwtp_debugfs_add_tracepoint_fops, NULL,
+			 fwtp_debugfs_add_tracepoint_write, "%llu\n");
+
+/**
+ * fwtp_debugfs_trace_show_memio - Handle seq_file show for the trace node via
+ *                                 memory I/O.
+ *
+ * @fwtp_dev: FWTP kernel device.
+ * @printer_ctx: Printer context to use.
+ *
+ * Prints the entire contents of the FWTP memory ring buffer.
+ *
+ * Return: 0 on success, non-zero error code on error.
+ */
+static int fwtp_debugfs_trace_show_memio(struct fwtp_dev *fwtp_dev,
+					 struct fwtp_printer_ctx *printer_ctx)
+{
+	uint8_t decode_buffer[FWTP_DECODE_BUFFER_SIZE];
+	int err;
+
+	/* Print all tracepoints in all client rings. */
+	for (int i = 0; i < fwtp_dev->fwtp_ipc_client.client_ring_count; i++) {
+		struct fwtp_ipc_client_ring *client_ring =
+			&(fwtp_dev->fwtp_ipc_client.client_ring_list[i]);
+		struct fwtp_msg_get_ring_info msg_get_ring_info = { 0 };
+		struct tracepoint_ring trace_ring;
+
+		/* Fetch the latest ring info. */
+		err = fwtp_dev_fetch_ring_info(fwtp_dev, client_ring->ring_num,
+					       &msg_get_ring_info);
+		if (err)
+			return err;
+
+		/* Set up a ring from which to print. */
+		trace_ring.version = msg_get_ring_info.version;
+		trace_ring.timestamp_hz = msg_get_ring_info.timestamp_hz;
+		trace_ring.size = msg_get_ring_info.ring_buffer_size;
+		trace_ring.head_offset = 0;
+		trace_ring.tail_offset = msg_get_ring_info.tail_offset;
+		trace_ring.buffer = fwtp_dev->memio_ring->buffer;
+
+		/* Print the tracepoints. */
+		fwtp_print_ring_entries_with_decode_buffer(
+			printer_ctx, &trace_ring, 0, decode_buffer,
+			sizeof(decode_buffer));
+	}
+
+	return 0;
+}
+
+/**
+ * fwtp_debugfs_trace_show_ipc - Handle seq_file show for the trace node via
+ *                               IPC.
+ *
+ * @fwtp_dev: FWTP kernel device.
+ * @printer_ctx: Printer context to use.
+ *
+ * Prints the entire contents of the FWTP tracepoint buffer using IPC to fetch
+ * the tracepoints.
+ *
+ * Return: 0 on success, non-zero error code on error.
+ */
+static int fwtp_debugfs_trace_show_ipc(struct fwtp_dev *fwtp_dev,
+				       struct fwtp_printer_ctx *printer_ctx)
+{
+	fwtp_error_code_t err;
+
+	err = fwtp_ipc_client_print_tracepoints(&(fwtp_dev->fwtp_ipc_client),
+						printer_ctx, true);
+	if (err != kFwtpOk)
+		return -EIO;
+
+	return 0;
+}
+
+/**
+ * fwtp_debugfs_trace_show - Handle seq_file show for the trace node.
+ *
+ * @seq_file: Sequence file to use to show the attribute.
+ * @private: Private data.
+ *
+ * Prints the entire contents of the FWTP memory ring buffer.
+ *
+ * CPM, CAP and VFA have DRAM buffers. To show their content, we mimic how
+ * initial subscribe request for them is handled: message is sent to firmware to
+ * update tail offset and initial notification is sent. This results in full
+ * contents of DRAM buffers to be printed. For trace_show, we query firmware for
+ * ring info to get recent tail offset and then print its contents.
+ *
+ * GDMC does not have DRAM buffer. For it, we use
+ * fwtp_ipc_client_print_tracepoints function, based on retrieving tracepoint
+ * buffer content from firmware via IPC. Flow is similar to how notification
+ * request is handled for GDMC.
+ *
+ * We do not share state with "streaming" side of kernel driver, to minimize
+ * data races. In particular, from global state, we use only constant data
+ * populated during probing: DRAM buffer address, string table info, fwtp_if IPC
+ * interface (in particular send_message pointer). Other then that, everything
+ * is local to given read invocation: printer context, ring copy, decode buffer
+ * and head_offset.
+ *
+ * This approach takes the same synchronization compromises as the streaming
+ * part: some traces may be lost due to SRAM buffer overruns, some prefix of
+ * displayed tracepoints may be overwritten if firmware is fast enough with
+ * tracepoint generation. As firmware is pushing data to the DRAM buffers, we
+ * would need to disable/enable tracepoint generation there or block the
+ * firmware - infeasible given the timescales of tracepoint formatting in kernel
+ * and rate of CPM/CAP tracepoint generation.
+ */
+static int fwtp_debugfs_trace_show(struct seq_file *seq_file, void *private)
+{
+	struct fwtp_dev *fwtp_dev = seq_file->private;
+	struct fwtp_printer_ctx printer_ctx = { 0 };
+
+	/* Initialize printer context. */
+	printer_ctx.append_output = fwtp_seq_file_append_output;
+	printer_ctx.append_output_ctx = seq_file;
+	fwtp_ipc_client_printer_ctx_init(&(fwtp_dev->fwtp_ipc_client),
+					 &printer_ctx);
+
+	if (fwtp_dev->memio_ring)
+		return fwtp_debugfs_trace_show_memio(fwtp_dev, &printer_ctx);
+	else
+		return fwtp_debugfs_trace_show_ipc(fwtp_dev, &printer_ctx);
+}
+
+DEFINE_SHOW_ATTRIBUTE(fwtp_debugfs_trace);
 
 /*******************************************************************************
  * Internal FWTP kernel device services.
@@ -416,7 +615,9 @@ static void fwtp_dev_print_slice_string(char *slice_str, size_t slice_str_size,
  */
 int fwtp_dev_init(struct fwtp_dev *fwtp_dev)
 {
+	int rv;
 	fwtp_error_code_t err;
+	struct dentry *dentry;
 
 	/*
 	 * Set up printer context. Tracepoint lines shouldn't have new-lines
@@ -438,29 +639,44 @@ int fwtp_dev_init(struct fwtp_dev *fwtp_dev)
 	fwtp_dev->fwtp_ipc_client.fwtp_if.platform.dev = fwtp_dev->dev;
 
 	/* Create the various device debugfs files. */
-	if (!debugfs_create_file("filter_list", 0440, fwtp_dev->root_debugfs,
-				 fwtp_dev, &fwtp_debugfs_filter_list_fops)) {
+	dentry = debugfs_create_file("filter_list", 0440,
+				     fwtp_dev->root_debugfs, fwtp_dev,
+				     &fwtp_debugfs_filter_list_fops);
+	if (IS_ERR(dentry)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create filter list debugfs file.\n");
-		return -ENOENT;
+		return PTR_ERR(dentry);
 	}
-	if (!debugfs_create_file("filter_block", 0220, fwtp_dev->root_debugfs,
-				 fwtp_dev, &fwtp_debugfs_filter_block_fops)) {
+	dentry = debugfs_create_file("filter_block", 0220,
+				     fwtp_dev->root_debugfs, fwtp_dev,
+				     &fwtp_debugfs_filter_block_fops);
+	if (IS_ERR(dentry)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create filter block debugfs file.\n");
-		return -ENOENT;
+		return PTR_ERR(dentry);
 	}
-	if (!debugfs_create_file("filter_unblock", 0220, fwtp_dev->root_debugfs,
-				 fwtp_dev, &fwtp_debugfs_filter_unblock_fops)) {
+	dentry = debugfs_create_file("filter_unblock", 0220,
+				     fwtp_dev->root_debugfs, fwtp_dev,
+				     &fwtp_debugfs_filter_unblock_fops);
+	if (IS_ERR(dentry)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create filter unblock debugfs file.\n");
-		return -ENOENT;
+		return PTR_ERR(dentry);
 	}
-	if (!debugfs_create_file("add_tracepoint", 0220, fwtp_dev->root_debugfs,
-				 fwtp_dev, &fwtp_debugfs_add_tracepoint_fops)) {
+	dentry = debugfs_create_file("add_tracepoint", 0220,
+				     fwtp_dev->root_debugfs, fwtp_dev,
+				     &fwtp_debugfs_add_tracepoint_fops);
+	if (IS_ERR(dentry)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create add tracepoint debugfs file.\n");
-		return -ENOENT;
+		return PTR_ERR(dentry);
+	}
+	dentry = debugfs_create_file("trace", 0440, fwtp_dev->root_debugfs,
+				     fwtp_dev, &fwtp_debugfs_trace_fops);
+	if (IS_ERR(dentry)) {
+		dev_err(fwtp_dev->dev,
+			"Failed to create trace debugfs file.\n");
+		return PTR_ERR(dentry);
 	}
 
 	/* Register the FWTP interface. */
@@ -473,6 +689,22 @@ int fwtp_dev_init(struct fwtp_dev *fwtp_dev)
 	if (err != kFwtpOk)
 		return -EFAULT;
 
+	/* Add device to device list. */
+	list_add(&fwtp_dev->list_entry, &fwtp_dev_svc.dev_list);
+	fwtp_dev->in_list = true;
+
+	/* Register the FWTP Generic Netlink family. */
+	if (!fwtp_dev_svc.genl_family_registered) {
+		rv = genl_register_family(&fwtp_genl_family);
+		if (rv) {
+			dev_err(fwtp_dev->dev,
+				"Failed to register FWTP Generic Netlink family with error %d.\n",
+				rv);
+			return rv;
+		}
+		fwtp_dev_svc.genl_family_registered = true;
+	}
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(fwtp_dev_init);
@@ -484,6 +716,21 @@ EXPORT_SYMBOL_GPL(fwtp_dev_init);
  */
 void fwtp_dev_deinit(struct fwtp_dev *fwtp_dev)
 {
+	/* Remove device from device list. */
+	if (fwtp_dev->in_list) {
+		list_del(&fwtp_dev->list_entry);
+		fwtp_dev->in_list = false;
+	}
+
+	/*
+	 * Unregister the FWTP Generic Netlink family if no devices are in list.
+	 */
+	if (list_empty(&fwtp_dev_svc.dev_list) &&
+	    fwtp_dev_svc.genl_family_registered) {
+		genl_unregister_family(&fwtp_genl_family);
+		fwtp_dev_svc.genl_family_registered = false;
+	}
+
 	/* Unregister the FWTP interface. */
 	fwtp_ipc_client_unregister(&(fwtp_dev->fwtp_ipc_client));
 }
@@ -500,9 +747,6 @@ EXPORT_SYMBOL_GPL(fwtp_dev_deinit);
  * record will include a buffer address that may be used to directly read the
  * ring buffer; if that's not available, the ring buffer will be NULL.
  *
- * When the ring is no longer needed, fwtp_dev_free_memio_ring should be called
- * to free resources allocated to set up the mem I/O access.
- *
  * @fwtp_dev: FWTP kernel device for which to get ring.
  * @ring_num: Ring number to get.
  * @ring: Returned ring.
@@ -510,37 +754,12 @@ EXPORT_SYMBOL_GPL(fwtp_dev_deinit);
 int fwtp_dev_get_memio_ring(struct fwtp_dev *fwtp_dev, int ring_num,
 			    struct tracepoint_ring *ring)
 {
-	struct fwtp_msg_get_ring_info msg_get_ring_info;
-	u16 rx_msg_data_size;
-	fwtp_error_code_t err;
+	struct fwtp_msg_get_ring_info msg_get_ring_info = { 0 };
+	int ret;
 
-	/* Send a get ring info message. */
-	msg_get_ring_info.base.type = kFwtpMsgTypeGetRingInfo;
-	msg_get_ring_info.ring_num = ring_num;
-	err = fwtp_dev->fwtp_ipc_client.fwtp_if
-		      .send_message(&(fwtp_dev->fwtp_ipc_client.fwtp_if),
-				    &msg_get_ring_info,
-				    sizeof(msg_get_ring_info),
-				    sizeof(msg_get_ring_info),
-				    &rx_msg_data_size);
-	if (err != kFwtpOk) {
-		dev_err(fwtp_dev->dev,
-			"Failed to send a get ring info message with error %d.\n",
-			err);
-		return -EIO;
-	}
-	if (rx_msg_data_size < sizeof(struct fwtp_msg_get_ring_info)) {
-		dev_err(fwtp_dev->dev,
-			"Received get ring info response size %d too short.\n",
-			rx_msg_data_size);
-		return -EFAULT;
-	}
-	if (msg_get_ring_info.base.error != kFwtpOk) {
-		dev_err(fwtp_dev->dev,
-			"Get ring info request failed with error %d.\n",
-			msg_get_ring_info.base.error);
-		return -EFAULT;
-	}
+	ret = fwtp_dev_fetch_ring_info(fwtp_dev, ring_num, &msg_get_ring_info);
+	if (ret)
+		return ret;
 
 	/* Get the ring info from the response. */
 	ring->version = msg_get_ring_info.version;
@@ -560,24 +779,6 @@ int fwtp_dev_get_memio_ring(struct fwtp_dev *fwtp_dev, int ring_num,
 EXPORT_SYMBOL_GPL(fwtp_dev_get_memio_ring);
 
 /**
- * fwtp_dev_free_memio_ring - Frees resources allocated for mem I/O access.
- *
- * Frees any resources allocated for mem I/O access to the tracepoint ring
- * specified by ring for the FWTP kernel device specified by fwtp_dev.
- *
- * @fwtp_dev: FWTP kernel device using ring.
- * @ring: Ring for which to free mem I/O resources.
- */
-void fwtp_dev_free_memio_ring(struct fwtp_dev *fwtp_dev,
-			      struct tracepoint_ring *ring)
-{
-	/* Unmap the ring buffer memory I/O. */
-	if (ring->buffer)
-		devm_iounmap(fwtp_dev->dev, ring->buffer);
-}
-EXPORT_SYMBOL_GPL(fwtp_dev_free_memio_ring);
-
-/**
  * fwtp_dev_get_boottime_timestamp - Returns a given timestamp converted to boot
  *                                   time ticks.
  *
@@ -590,8 +791,10 @@ EXPORT_SYMBOL_GPL(fwtp_dev_free_memio_ring);
  *
  * @timestamp: Timestamp to convert.
  * @timestamp_hz: Timestamp tick frequency in Hz.
+ *
+ * Return: Positive boot time on success, 0 if timestamp is from before boot.
  */
-static u64 fwtp_dev_get_boottime_timestamp(u64 timestamp, u32 timestamp_hz)
+u64 fwtp_dev_get_boottime_timestamp(u64 timestamp, u32 timestamp_hz)
 {
 	static DEFINE_MUTEX(prev_boottime_timestamp_mutex);
 	static u64 prev_boottime_timestamp;
@@ -609,18 +812,22 @@ static u64 fwtp_dev_get_boottime_timestamp(u64 timestamp, u32 timestamp_hz)
 	else
 		gtc_timestamp = mult_frac(timestamp, gtc_hz, timestamp_hz);
 
-	/*
-	 * Convert the GTC time to boot time, ensuring the boot time is
-	 * monotonically increasing.
-	 */
+	/* Convert the GTC time to boot time. */
+	boottime_timestamp = goog_gtc_ticks_to_boottime(gtc_timestamp);
+
+	/* If goog_gtc_ticks_to_boottime underflowed, return 0. */
+	if (boottime_timestamp > S64_MAX)
+		return 0;
+
+	/* Ensure the boot time is monotonically increasing. */
 	mutex_lock(&prev_boottime_timestamp_mutex);
-	boottime_timestamp = max(goog_gtc_ticks_to_boottime(gtc_timestamp),
-				 prev_boottime_timestamp);
+	boottime_timestamp = max(boottime_timestamp, prev_boottime_timestamp);
 	prev_boottime_timestamp = boottime_timestamp;
 	mutex_unlock(&prev_boottime_timestamp_mutex);
 
 	return boottime_timestamp;
 }
+EXPORT_SYMBOL_GPL(fwtp_dev_get_boottime_timestamp);
 
 /**
  * fwtp_dev_printer_post_process - Performs post-processing on FWTP tracepoints.
@@ -644,12 +851,15 @@ void fwtp_dev_printer_post_process(struct fwtp_printer_ctx *printer_ctx,
 				   const char *str,
 				   struct fwtp_data_item_list *data_items)
 {
-	u64 boottime_timestamp =
-		fwtp_dev_get_boottime_timestamp(timestamp,
-						printer_ctx->timestamp_hz);
+	u64 boottime_timestamp = fwtp_dev_get_boottime_timestamp(
+		timestamp, printer_ctx->timestamp_hz);
 	const char *category = printer_ctx->name ?: "fwtp";
 	char slice_str[FWTP_PRINTER_BUFFER_SIZE];
 	u32 data;
+
+	/* Drop traces from before kernel boot. */
+	if (boottime_timestamp == 0)
+		return;
 
 	/* Post-process tracepoints for Perfetto. */
 	switch (type) {

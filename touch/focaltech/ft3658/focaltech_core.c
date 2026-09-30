@@ -2023,6 +2023,8 @@ static int fts_input_init(struct fts_ts_data *ts_data)
         input_dev->id.bustype = BUS_SPI;
     input_dev->dev.parent = ts_data->dev;
 
+    input_dev->uniq = "google_touchscreen";
+
     input_set_drvdata(input_dev, ts_data);
 
     __set_bit(EV_SYN, input_dev->evbit);

@@ -17,17 +17,26 @@
 struct dma_buf *lwis_platform_dma_buffer_alloc(size_t len, unsigned int flags)
 {
 	const char *heap_name;
+	const char *fallback_name = NULL;
 	struct dma_heap *heap;
 	struct dma_buf *dmabuf;
 
-	if (flags & LWIS_DMA_BUFFER_SECURE)
+	if (flags & LWIS_DMA_BUFFER_SECURE) {
 		heap_name = "farawimg-secure";
-	else if (flags & LWIS_DMA_BUFFER_CACHED)
-		heap_name = "system";
-	else
-		heap_name = "system-uncached";
+	} else if (flags & LWIS_DMA_BUFFER_CACHED) {
+		heap_name = "gcma_camera_internal";
+		fallback_name = "system";
+	} else {
+		heap_name = "gcma_camera_internal-uncached";
+		fallback_name = "system-uncached";
+	}
 
 	heap = dma_heap_find(heap_name);
+	if (!heap && fallback_name) {
+		heap_name = fallback_name;
+		heap = dma_heap_find(heap_name);
+	}
+
 	if (!heap) {
 		pr_err("Could not find %s DMA-BUF heap\n", heap_name);
 		return NULL;
@@ -53,8 +62,8 @@ dma_addr_t lwis_platform_dma_buffer_map(struct lwis_device *lwis_dev,
 }
 
 /*
- * We don't ever do dma_buf_vmap before. Instead, use the upstream dma-buf
- * interface to map ION buffers, so we don't need to do dma_buf_vunmap.
+ * We don't ever do dma_buf_vmap_unlocked before. Instead, use the upstream dma-buf
+ * interface to map ION buffers, so we don't need to do dma_buf_vunmap_unlocked.
  * Keep this function by default return 0
  */
 int lwis_platform_dma_buffer_unmap(struct lwis_device *lwis_dev,

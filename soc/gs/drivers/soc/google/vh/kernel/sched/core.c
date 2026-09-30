@@ -67,6 +67,7 @@ DEFINE_STATIC_KEY_FALSE(uclamp_max_filter_enable);
 DEFINE_STATIC_KEY_FALSE(tapered_dvfs_headroom_enable);
 DEFINE_STATIC_KEY_FALSE(auto_dvfs_headroom_enable);
 DEFINE_STATIC_KEY_FALSE(auto_migration_margins_enable);
+DEFINE_STATIC_KEY_FALSE(response_time_ms_fix_enable);
 
 DEFINE_STATIC_KEY_FALSE(skip_inefficient_opps_enable);
 DEFINE_STATIC_KEY_FALSE(use_em_for_freq_mapping);
@@ -219,8 +220,15 @@ void vh_scheduler_tick_pixel_mod(void *data, struct rq *rq)
 	struct rq_flags rf;
 
 	/* Our ptick handles everything now, skip if enabled */
-	if (static_key_enabled(&enable_ptick))
+	if (static_key_enabled(&enable_ptick)) {
+		/*
+		 * Tickle the perf counters if there are no tasks running to
+		 * help trigger any potential necessary update
+		 */
+		if (!rq->nr_running)
+			gs_perf_mon_tick_update_counters();
 		return;
+	}
 
 	rq_lock(rq, &rf);
 	vh_scheduler_tick_pixel_mod_locked(rq);

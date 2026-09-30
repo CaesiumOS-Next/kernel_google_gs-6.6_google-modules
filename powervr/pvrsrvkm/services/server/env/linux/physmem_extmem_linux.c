@@ -148,29 +148,46 @@ static void _FreeFindVMAPages(PMR_WRAP_DATA *psPrivData)
 }
 #endif
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
-#define PVR_FOLL_LONGTERM (0x0U)
-#else
+#ifndef PVR_FOLL_LONGTERM
+#ifdef FOLL_LONGTERM
 #define PVR_FOLL_LONGTERM FOLL_LONGTERM
+#else
+#define PVR_FOLL_LONGTERM 0
+#endif
 #endif
 
-#if (LINUX_VERSION_CODE <= KERNEL_VERSION(5, 6, 0))
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0))
 
-#define _get_user_pages_fast(puiAddress, num_pages, bWrite, pages)  get_user_pages_fast( \
-    (unsigned long)puiAddress, \
-    (int)num_pages, \
-    (int) (bWrite ? FOLL_WRITE : 0) | PVR_FOLL_LONGTERM, \
-    pages)
+/* Legacy get_user_pages (no pin_user_pages yet) */
+#define _get_user_pages(puiAddress, num_pages, bWrite, pages) \
+	get_user_pages((unsigned long) (puiAddress), \
+	               (unsigned long) (num_pages), \
+	               (unsigned int) ((bWrite) ? FOLL_WRITE : 0) | PVR_FOLL_LONGTERM, \
+	               (pages), \
+	               NULL) /* vmas */
 
 #define _unpin_user_page(p) put_page(p)
 
-#else
+#elif (LINUX_VERSION_CODE < KERNEL_VERSION(6, 5, 0))
 
-#define _get_user_pages_fast(puiAddress, num_pages, bWrite, pages) pin_user_pages_fast( \
-    (unsigned long)puiAddress, \
-    (int) num_pages, \
-    (int) (bWrite ? FOLL_WRITE : 0) | PVR_FOLL_LONGTERM, \
-    pages)
+/* pin_user_pages with vmas */
+#define _get_user_pages(puiAddress, num_pages, bWrite, pages) \
+	pin_user_pages((unsigned long) (puiAddress), \
+	               (unsigned long) (num_pages), \
+	               (unsigned int) ((bWrite) ? FOLL_WRITE : 0) | PVR_FOLL_LONGTERM, \
+	               (pages), \
+	               NULL) /* vmas */
+
+#define _unpin_user_page(p) unpin_user_page(p)
+
+#else /* kernel v6.5+ */
+
+/* pin_user_pages without vmas */
+#define _get_user_pages(puiAddress, num_pages, bWrite, pages) \
+	pin_user_pages((unsigned long) (puiAddress), \
+	               (unsigned long) (num_pages), \
+	               (unsigned int) ((bWrite) ? FOLL_WRITE : 0) | PVR_FOLL_LONGTERM, \
+	               (pages))
 
 #define _unpin_user_page(p) unpin_user_page(p)
 
@@ -217,8 +234,8 @@ static PVRSRV_ERROR _TryGetUserPages(PVRSRV_DEVICE_NODE *psDevNode,
 	IMG_UINT64 ui64DmaMask = dma_get_mask(psDevNode->psDevConfig->pvOSDevice);
 
 	/* Do the actual call */
-	iMappedPages = _get_user_pages_fast((uintptr_t) pvCpuVAddr, iRequestedPages,
-	                                    psPrivData->bWrite, psPrivData->ppsPageArray);
+	iMappedPages = _get_user_pages((uintptr_t) pvCpuVAddr, iRequestedPages,
+	                               psPrivData->bWrite, psPrivData->ppsPageArray);
 	if (iMappedPages < 0)
 	{
 		PVR_DPF((_PVR_DBG_LEVEL,
@@ -378,7 +395,7 @@ PMRDevPhysAddrExtMem(PMR_IMPL_PRIVDATA pvPriv,
 	const PMR_WRAP_DATA *psWrapData = pvPriv;
 	IMG_UINT32 uiPageSize = 1U << PAGE_SHIFT;
 	IMG_UINT32 uiInPageOffset;
-	IMG_UINT32 uiPageIndex;
+	IMG_DEVMEM_OFFSET_T uiPageIndex;
 	IMG_UINT32 uiIdx;
 
 #if defined(SUPPORT_STATIC_IPA)
@@ -401,9 +418,9 @@ PMRDevPhysAddrExtMem(PMR_IMPL_PRIVDATA pvPriv,
 	for (uiIdx=0; uiIdx < ui32NumOfPages; uiIdx++)
 	{
 		uiPageIndex = puiOffset[uiIdx] >> PAGE_SHIFT;
-		uiInPageOffset = puiOffset[uiIdx] - ((IMG_DEVMEM_OFFSET_T)uiPageIndex << PAGE_SHIFT);
+		uiInPageOffset = puiOffset[uiIdx] - (uiPageIndex << PAGE_SHIFT);
 
-		PVR_LOG_RETURN_IF_FALSE(uiPageIndex < psWrapData->uiTotalNumPages,
+		PVR_LOG_RETURN_IF_FALSE(uiPageIndex < (IMG_DEVMEM_OFFSET_T)psWrapData->uiTotalNumPages,
 		                        "puiOffset out of range", PVRSRV_ERROR_OUT_OF_RANGE);
 
 		PVR_ASSERT(uiInPageOffset < uiPageSize);
@@ -756,16 +773,13 @@ static PVRSRV_ERROR _FlushUMVirtualRange(PVRSRV_DEVICE_NODE *psDevNode,
 	PVRSRV_ERROR eError = PVRSRV_OK;
 	IMG_UINT	uiUserAccessState=0;
 
-	mmap_read_lock(current->mm);
-
 	psVMArea = find_vma(current->mm, (uintptr_t)pvCpuVAddr);
 	if (psVMArea == NULL)
 	{
 		PVR_DPF((PVR_DBG_ERROR,
 		         "%s: Couldn't find memory region containing start address %p",
 		         __func__, (void *)pvCpuVAddr));
-		eError = PVRSRV_ERROR_INVALID_CPU_ADDR;
-		goto UMFlushUnlockReturn;
+		return PVRSRV_ERROR_INVALID_CPU_ADDR;
 	}
 
 
@@ -854,8 +868,6 @@ static PVRSRV_ERROR _FlushUMVirtualRange(PVRSRV_DEVICE_NODE *psDevNode,
 UMFlushFailed:
 	end_user_mode_access(uiUserAccessState);
 
-UMFlushUnlockReturn:
-	mmap_read_unlock(current->mm);
 	return eError;
 }
 
@@ -979,12 +991,15 @@ PhysmemWrapExtMemOS(CONNECTION_DATA * psConnection,
 	pvCpuVAddr = (IMG_CPU_VIRTADDR)untagged_addr((uintptr_t)pvCpuVAddr);
 #endif
 
+	/* Ensure the pinned userspace memory mappings are not modified for the duration of this operation */
+	mmap_read_lock(current->mm);
+
 	eError = PhysmemValidateParam(uiSize,
 	                              pvCpuVAddr,
 	                              &uiFlags);
 	if (eError != PVRSRV_OK)
 	{
-		return eError;
+		goto UnlockReturn;
 	}
 
 	/* Allocate private factory data */
@@ -994,7 +1009,7 @@ PhysmemWrapExtMemOS(CONNECTION_DATA * psConnection,
 	                        uiFlags);
 	if (eError != PVRSRV_OK)
 	{
-		return eError;
+		goto UnlockReturn;
 	}
 
 	/* Actually find and acquire the pages and physical addresses */
@@ -1005,7 +1020,7 @@ PhysmemWrapExtMemOS(CONNECTION_DATA * psConnection,
 	if (eError != PVRSRV_OK)
 	{
 		_FreeWrapData(psPrivData);
-		goto e0;
+		goto UnlockReturn;
 	}
 
 	/* Create a suitable PMR */
@@ -1024,19 +1039,15 @@ PhysmemWrapExtMemOS(CONNECTION_DATA * psConnection,
 	                      PDUMP_NONE);          /* IMG_UINT32 ui32PDumpFlags                 */
 	if (eError != PVRSRV_OK)
 	{
-		goto e1;
+		goto ReleaseWrapExtMemPages;
 	}
 
-	if (PVRSRV_CHECK_CPU_CACHE_CLEAN(uiFlags))
+	/* Ensure newly allocated pages are visible to the GPU by flushing caches
+	 * before use, independent of user-controlled cache-clean requests. */
+	eError = _FlushUMVirtualRange(psDevNode, psPrivData, uiSize, pvCpuVAddr);
+	if (eError != PVRSRV_OK)
 	{
-		eError = _FlushUMVirtualRange(psDevNode,
-									psPrivData,
-									uiSize,
-									pvCpuVAddr);
-		if (eError != PVRSRV_OK)
-		{
-			goto e2;
-		}
+		goto DestroyPMR;
 	}
 
 	/* Mark the PMR such that no layout changes can happen.
@@ -1046,15 +1057,17 @@ PhysmemWrapExtMemOS(CONNECTION_DATA * psConnection,
 
 	*ppsPMRPtr = psPMR;
 
-	return PVRSRV_OK;
-e2:
+	goto UnlockReturn;
+
+DestroyPMR:
 	(void) PMRUnrefPMR(psPMR);
 	bIsPMRDestroyed = IMG_TRUE;
-e1:
+ReleaseWrapExtMemPages:
 	if (!bIsPMRDestroyed)
 	{
 		(void)_WrapExtMemReleasePages(psPrivData);
 	}
-e0:
+UnlockReturn:
+	mmap_read_unlock(current->mm);
 	return eError;
 }

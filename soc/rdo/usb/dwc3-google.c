@@ -314,7 +314,7 @@ static void _dwc3_google_set_role(struct work_struct *work)
 	 */
 	ret = usb_role_switch_set_role(gdwc3->phy_role_sw, dr_role);
 	if (ret == -EBUSY) {
-		dev_info(gdwc3->dev, "DP active, deferring role switch for %d ms",
+		dev_info(gdwc3->dev, "DP active, deferring role switch for %d ms\n",
 			DWC3_GOOGLE_RETRY_ROLE_DELAY_MS);
 		mod_delayed_work(system_freezable_wq, &gdwc3->role_switch_work,
 			msecs_to_jiffies(DWC3_GOOGLE_RETRY_ROLE_DELAY_MS));
@@ -481,7 +481,7 @@ static void dwc3_find_non_sticky_reset(struct dwc3_google *gdwc3)
 			return;
 		}
 	}
-	dev_warn(gdwc3->dev, "usbc_non_sticky Reset not found");
+	dev_warn(gdwc3->dev, "usbc_non_sticky Reset not found\n");
 }
 
 static int google_configure_glue(struct dwc3_google *gdwc3)
@@ -509,7 +509,7 @@ static int google_usb_pwr_enable(struct dwc3_google *gdwc3)
 	int ret;
 
 	if (gdwc3->usb_on) {
-		dev_warn(gdwc3->dev, "Trying to enable USB top while it's ON");
+		dev_warn(gdwc3->dev, "Trying to enable USB top while it's ON\n");
 		return 0;
 	}
 
@@ -587,7 +587,7 @@ disable_regulators:
 static int google_usb_pwr_disable(struct dwc3_google *gdwc3)
 {
 	if (!gdwc3->usb_on) {
-		dev_warn(gdwc3->dev, "Trying to disable USB top while it's OFF");
+		dev_warn(gdwc3->dev, "Trying to disable USB top while it's OFF\n");
 		return 0;
 	}
 
@@ -786,7 +786,7 @@ static irqreturn_t dwc3_google_resume_interrupt(int irq, void *_gdwc3)
 	irq_status_reg = dwc3_google_clear_pme_irqs(gdwc3);
 
 	if (!gdwc3->is_suspended) {
-		dev_warn(gdwc3->dev, "Spurious pme irq, 0x%x", irq_status_reg);
+		dev_warn(gdwc3->dev, "Spurious pme irq, 0x%x\n", irq_status_reg);
 		return IRQ_HANDLED;
 	}
 
@@ -795,7 +795,7 @@ static irqreturn_t dwc3_google_resume_interrupt(int irq, void *_gdwc3)
 		if (dwc->xhci)
 			pm_runtime_resume(&dwc->xhci->dev);
 	} else if (role == USB_ROLE_DEVICE) {
-		dev_err(gdwc3->dev, "Invalid Role during wakeup interrupt");
+		dev_err(gdwc3->dev, "Invalid Role during wakeup interrupt\n");
 	}
 	return IRQ_HANDLED;
 }
@@ -826,7 +826,7 @@ void dwc3_google_put_dma_coherent_mem(struct device *dev)
 
 	if (gdwc3) {
 		if (gdwc3->mem) {
-			dev_dbg(dev, "Free the DMA memory.\n");
+			dev_dbg(dev, "Free the DMA memory\n");
 			gdwc3->mem[XHCI_GOOG_DMA_RMEM_SRAM] = NULL;
 			gdwc3->mem[XHCI_GOOG_DMA_RMEM_DRAM] = NULL;
 			devm_kfree(dev, gdwc3->mem);
@@ -1033,14 +1033,14 @@ static int dwc3_google_probe(struct platform_device *pdev)
 	gdwc3->icc_path = google_devm_of_icc_get(dev, "sswrp-usb");
 	if (IS_ERR(gdwc3->icc_path)) {
 		ret = PTR_ERR(gdwc3->icc_path);
-		dev_err(dev, "devm_of_icc_get(%s) failed", "sswrp-usb");
+		dev_err(dev, "devm_of_icc_get(%s) failed\n", "sswrp-usb");
 		goto detach_usb_pds;
 	}
 
 	pm_runtime_enable(dev);
 	ret = pm_runtime_get_sync(dev);
 	if (ret) {
-		dev_err(dev, "runtime get_sync failed");
+		dev_err(dev, "runtime get_sync failed\n");
 		goto disable_rpm;
 	}
 	pm_runtime_forbid(dev);
@@ -1359,7 +1359,7 @@ static int gdwc3_prepare(struct device *dev)
 
 	if (gdwc3->current_role == USB_ROLE_NONE &&
 	    pm_runtime_suspended(gdwc3->dev)) {
-		dev_info(gdwc3->dev, "suspend direct complete");
+		dev_info(gdwc3->dev, "suspend direct complete\n");
 		return 1;
 	}
 

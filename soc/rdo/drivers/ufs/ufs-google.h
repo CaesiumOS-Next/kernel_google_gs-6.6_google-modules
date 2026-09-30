@@ -156,6 +156,7 @@ enum google_host_cap {
 	GCAP_LOCAL_RPM = BIT(4),
 	GCAP_LOCAL_SWH8 = BIT(5),
 	GCAP_BLOCK_C4 = BIT(6),
+	GCAP_TOGGLE_RESETB_ON_RESET = BIT(7),
 
 	/* Resources CAPs - starts from bit 32 */
 	GCAP_RSC_IP_IDLE = BIT(32),

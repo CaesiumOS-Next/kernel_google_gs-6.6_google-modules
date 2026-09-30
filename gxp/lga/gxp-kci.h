@@ -14,9 +14,11 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
+#include <gcip/gcip-coresight-remote.h>
 #include <gcip/gcip-fault-inject.h>
 #include <gcip/gcip-kci.h>
 #include <gcip/gcip-memory.h>
+#include <gcip/gcip-status-code.h>
 #include <gcip/gcip-telemetry.h>
 
 #include "gxp-internal.h"
@@ -316,5 +318,17 @@ int gxp_kci_set_freq_limits(struct gxp_kci *gkci, u32 min_freq, u32 max_freq);
  */
 
 int gxp_kci_thermal_control(struct gxp_kci *gkci, bool enable);
+
+/**
+ * gxp_kci_send_coresight_remote_cmd() - Send a GCIP command to the device to execute CoreSight
+ *                                       components.
+ * @data: The gxp_dev for which the CoreSight operation is configured.
+ * @bulk_cmds: The bulk commands structure formatted by GCIP CoreSight remote interface.
+ * @rsp: The response returned from the firmware via KCI interface.
+ *
+ * Return: 0 if the command is sent successfully, a negative error code otherwise.
+ */
+int gxp_kci_send_coresight_remote_cmd(void *data, struct gcip_coresight_remote_bulk_cmds *bulk_cmds,
+				      enum gcip_status_code *rsp);
 
 #endif /* __GXP_KCI_H__ */

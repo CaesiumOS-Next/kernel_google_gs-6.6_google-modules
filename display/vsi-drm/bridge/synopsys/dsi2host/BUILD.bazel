@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 load("@kleaf//build/kernel/kleaf:kernel.bzl", "ddk_module")
+load("//private/google-modules/display/vsi-drm/bridge/synopsys/dsi2host:dw-mipi-dsi2h-cflags.bzl", "DW_MIPI_DSI2H_COPTS")
 
 ddk_module(
     name = "mipi-dsi2h",
@@ -9,13 +10,11 @@ ddk_module(
     ]) + [
         "dw-mipi-dsi2h.c",
         "dw-mipi-dsi2h-debugfs.c",
+        "dw-mipi-dsi2h-sscd.c",
         "dw-mipi-dsi2h-sysfs.c",
     ],
     out = "mipi-dsi2h.ko",
-    copts = [
-        "-Wall",
-        "-Werror",
-    ],
+    copts = DW_MIPI_DSI2H_COPTS,
     kernel_build = "//private/devices/google/common:kernel",
     local_defines = [
         "DYNAMIC_DEBUG_MODULE=1",
@@ -28,6 +27,7 @@ ddk_module(
         "//common:all_headers_aarch64",
         "//private/google-modules/display/common/gs_drm:gs-drm-connector",
         "//private/google-modules/display/vsi-drm:ddk_headers",
+        "//private/google-modules/display/vsi-drm/phy/synopsys:mipi-cdphy",
         "//private/google-modules/soc/rdo:rdo_soc_headers",
     ],
 )

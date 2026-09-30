@@ -3982,7 +3982,13 @@ static void gcpm_init_work(struct work_struct *work)
 		struct power_supply *def_psy = gcpm->chg_psy_avail[0];
 
 		gcpm->chg_nb.notifier_call = gcpm_psy_changed;
+		mutex_unlock(&gcpm->chg_psy_lock);
+		/*
+		 * Holding gcpm->chg_psy_lock while calling
+		 * power_supply_reg_notifier() could trigger a deadlock.
+		 */
 		ret = power_supply_reg_notifier(&gcpm->chg_nb);
+		mutex_lock(&gcpm->chg_psy_lock);
 		if (ret < 0)
 			pr_err("%s: no ps notifier, ret=%d\n", __func__, ret);
 

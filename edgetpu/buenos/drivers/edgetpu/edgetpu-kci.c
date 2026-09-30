@@ -202,9 +202,9 @@ static inline void edgetpu_kci_trigger_doorbell(struct gcip_kci *kci,
 	struct edgetpu_mailbox *mailbox = gcip_kci_get_data(kci);
 
 	if (reason == GCIP_KCI_PUSH_CMD)
-		EDGETPU_MAILBOX_CMD_QUEUE_WRITE_SYNC(mailbox, doorbell_set, 1);
+		edgetpu_mailbox_trigger_cmd_queue_doorbell_sync(mailbox);
 	else if (reason == GCIP_KCI_CONSUME_RESP)
-		EDGETPU_MAILBOX_CMD_QUEUE_WRITE(mailbox, doorbell_set, 1);
+		edgetpu_mailbox_trigger_cmd_queue_doorbell(mailbox);
 }
 
 static inline bool edgetpu_kci_is_block_off(struct gcip_kci *kci)
@@ -891,3 +891,48 @@ void edgetpu_kci_fw_send_debug_init(struct edgetpu_dev *etdev, dma_addr_t daddr,
 	edgetpu_kci_send_cmd(etdev->etkci->kci, &cmd);
 }
 #endif /* EDGETPU_HAS_FW_DEBUG */
+
+int edgetpu_kci_send_coresight_remote_cmd(void *data,
+					  struct gcip_coresight_remote_bulk_cmds *bulk_cmds,
+					  enum gcip_status_code *rsp)
+{
+	int ret;
+	struct edgetpu_dev *etdev = data;
+	struct edgetpu_kci *etkci = etdev->etkci;
+	struct gcip_kci_command_element kci_cmd = {
+		.code = GCIP_KCI_CODE_CORESIGHT_REMOTE_CMD,
+		.dma = {
+			.address = 0,
+			.size = 0,
+			.flags = 0,
+		},
+	};
+	u32 *cmds;
+
+	/* Send commands inline if they fit in the descriptor */
+	if (bulk_cmds->num_commands <=
+	    offsetof(struct gcip_kci_dma_descriptor, flags) / sizeof(u32)) {
+		cmds = (u32 *)&kci_cmd.dma.address;
+		memcpy(cmds, bulk_cmds->commands, bulk_cmds->num_commands * sizeof(u32));
+		kci_cmd.dma.flags =
+			GCIP_CORESIGHT_REMOTE_COMMANDS_IN_KCI_DMA_DESCRIPTOR
+				<< GCIP_CORESIGHT_REMOTE_COMMANDS_IN_KCI_DMA_DESCRIPTOR_SHIFT |
+			(bulk_cmds->num_commands &
+			 GCIP_CORESIGHT_REMOTE_NUM_COMMANDS_IN_KCI_DMA_DESCRIPTOR_MASK);
+		ret = edgetpu_kci_send_cmd(etkci->kci, &kci_cmd);
+	} else {
+		/* Send commands via DMA buffer */
+		ret = edgetpu_kci_send_cmd_with_data(
+			etkci, &kci_cmd, bulk_cmds, sizeof(struct gcip_coresight_remote_bulk_cmds));
+	}
+
+	/*
+	 * Populate rsp with firmware return status code (zero or positive values).In this case
+	 * return 0 to indicate the KCI send was successful.
+	 */
+	if (ret >= 0) {
+		*rsp = ret;
+		ret = 0;
+	}
+	return ret;
+}

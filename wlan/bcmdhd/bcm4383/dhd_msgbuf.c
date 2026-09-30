@@ -2466,6 +2466,7 @@ dhd_pktid_map_init(dhd_pub_t *dhd, uint32 num_items)
 
 	/* Initialize the lock that protects this structure */
 	map->pktid_lock = DHD_PKTID_LOCK_INIT(osh);
+	OSL_LOCK_CLASS_SET(map->pktid_lock);
 	if (map->pktid_lock == NULL) {
 		DHD_ERROR(("%s:%d: Lock init failed \r\n", __FUNCTION__, __LINE__));
 		goto error;
@@ -2489,6 +2490,7 @@ dhd_pktid_map_init(dhd_pub_t *dhd, uint32 num_items)
 				__FUNCTION__, __LINE__, map_items + 1));
 		}
 		map->pktid_audit_lock = DHD_PKTID_AUDIT_LOCK_INIT(osh);
+		OSL_LOCK_CLASS_SET(map->pktid_audit_lock);
 #endif /* DHD_PKTID_AUDIT_ENABLED */
 
 	for (nkey = 1; nkey <= map_items; nkey++) { /* locker #0 is reserved */
@@ -9591,6 +9593,12 @@ dhd_prot_event_process(dhd_pub_t *dhd, void *msg)
 		PKTPULL(dhd->osh, pkt, dhd->prot->rx_dataoffset);
 #endif /* !BCM_ROUTER_DHD */
 
+	if (buflen > PKTLEN(dhd->osh, pkt)) {
+		DHD_ERROR(("%s: dongle event_data_len %u posted buf %u clamping\n",
+			__FUNCTION__, buflen, PKTLEN(dhd->osh, pkt)));
+		buflen = (uint16)PKTLEN(dhd->osh, pkt);
+	}
+
 	PKTSETLEN(dhd->osh, pkt, buflen);
 #ifdef DHD_LBUF_AUDIT
 	PKTAUDIT(dhd->osh, pkt);
@@ -9643,6 +9651,12 @@ BCMFASTPATH(dhd_prot_process_infobuf_complete)(dhd_pub_t *dhd, void *buf)
 	if (dhd->prot->rx_dataoffset)
 		PKTPULL(dhd->osh, pkt, dhd->prot->rx_dataoffset);
 #endif /* !BCM_ROUTER_DHD */
+
+	if (buflen > PKTLEN(dhd->osh, pkt)) {
+		DHD_ERROR(("%s: dongle info_data_len %u posted buf %u clamping\n",
+			__FUNCTION__, buflen, PKTLEN(dhd->osh, pkt)));
+		buflen = (uint16)PKTLEN(dhd->osh, pkt);
+	}
 
 	PKTSETLEN(dhd->osh, pkt, buflen);
 #ifdef DHD_LBUF_AUDIT
@@ -12878,6 +12892,7 @@ dhd_prot_ring_attach(dhd_pub_t *dhd, msgbuf_ring_t *ring, const char *name,
 	dhd_base_addr_htolpa(&ring->base_addr, ring->dma_buf.pa);
 
 	ring->ring_lock = osl_spin_lock_init(dhd->osh);
+	OSL_LOCK_CLASS_SET(ring->ring_lock);
 
 #ifdef TX_FLOW_RING_INDICES_TRACE
 	dhd_prot_txflowring_rw_trace_attach(dhd, ring);
@@ -18254,6 +18269,7 @@ BCMFASTPATH(dhd_prot_process_msgbuf_rxcpl_packet)(dhd_pub_t *dhd, void *_msg)
 	int ifidx = 0;
 	void *pkt;
 	uint32 pktid;
+	uint16 fw_len = ltoh16(msg->data_len);
 
 	pktid = ltoh32(msg->cmn_hdr.request_id);
 	if (msg->cmn_hdr.flags & BCMPCIE_CMNHDR_FLAGS_WAKE_PACKET) {
@@ -18275,8 +18291,12 @@ BCMFASTPATH(dhd_prot_process_msgbuf_rxcpl_packet)(dhd_pub_t *dhd, void *_msg)
 		PKTPULL(dhd->osh, pkt, prot->rx_dataoffset);
 	}
 
-	/* Actual length of the packet */
-	PKTSETLEN(dhd->osh, pkt, ltoh16(msg->data_len));
+	if (fw_len > PKTLEN(dhd->osh, pkt)) {
+		DHD_ERROR(("%s: dongle data_len %u > posted %u\n",
+			__FUNCTION__, fw_len, PKTLEN(dhd->osh, pkt)));
+		fw_len = (uint16)PKTLEN(dhd->osh, pkt);
+	}
+	PKTSETLEN(dhd->osh, pkt, fw_len);
 	DHD_PKTTAG_SET_IFID((dhd_pkttag_fr_t *)PKTTAG(pkt), ifidx);
 	dhd_prot_rx_frame(dhd, pkt, ifidx, 1);
 

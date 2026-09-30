@@ -4,9 +4,19 @@
  *
  */
 
+#include <linux/completion.h>
+#include <linux/delay.h>
+#include <linux/jiffies.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/netdevice.h>
+#include <linux/slab.h>
+#include <linux/skbuff.h>
+#include <linux/string.h>
+
 #include "include/uwb.h"
-#include "include/uwb_spi.h"
 #include "include/uwb_gpio.h"
+#include "include/uwb_spi.h"
 
 #define MT_OFFSET 0
 #define CONTROL_PACKET_LENGTH_OFFSET 3
@@ -289,7 +299,7 @@ static int link_send_tx(struct u100_ctx *u100_ctx)
 		goto exit;
 
 	u100_ctx->is_bhalf_entered = false;
-	irq_count_before = get_irq_count(u100_ctx->gpio_u100_irq.u100_irq);
+	irq_count_before = get_irq_count(u100_ctx);
 	set_gpio_value(&u100_ctx->gpio_u100_sync, 1);
 	reinit_completion(&u100_ctx->tx_done_cmpl);
 	mutex_unlock(&u100_ctx->tx_mutex);
@@ -301,7 +311,7 @@ static int link_send_tx(struct u100_ctx *u100_ctx)
 	wakeup_sync_low(u100_ctx);
 	if (ret == 0) {
 		ret = -ETIMEDOUT;
-		irq_count_after = get_irq_count(u100_ctx->gpio_u100_irq.u100_irq);
+		irq_count_after = get_irq_count(u100_ctx);
 		UWB_WARN("TX timeout, irq_cnt %u-%u\n", irq_count_before, irq_count_after);
 		if (!u100_ctx->is_bhalf_entered)
 			UWB_WARN("Not enter threaded IRQ Bottom Half\n");

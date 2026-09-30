@@ -150,18 +150,6 @@ PVRSRV_ERROR PDVFSSetUpThreshold(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_UINT32 ui32U
 
 PVRSRV_ERROR PDVFSSetDownDifferential(PVRSRV_RGXDEV_INFO *psDevInfo, IMG_UINT32 ui32DownDifferentialInPct);
 
-/*************************************************************************/ /*!
- @Function	RGXPDVFSCheckCoreClkRateChange
-
- @Description
- Checks if core clock rate has changed since the last snap-shot.
-
- @Input	   psDevInfo : RGX Device
-
- @Return   None
-*/ /**************************************************************************/
-void RGXPDVFSCheckCoreClkRateChange(PVRSRV_RGXDEV_INFO *psDevInfo);
-
 void RGXPDVFSCheckUtilisationChange(PVRSRV_RGXDEV_INFO *psDevInfo);
 
 #endif /* RGXPDVFS_H */

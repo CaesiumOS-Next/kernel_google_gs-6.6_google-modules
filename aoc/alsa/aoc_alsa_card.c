@@ -1942,8 +1942,6 @@ static int aoc_snd_card_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	pdata->g_chip.wakelock = wakeup_source_register(dev, dev_name(dev));
-
 	card->driver_name = AOC_SND_CARD;
 	card->owner = THIS_MODULE;
 	card->dev = dev;
@@ -1955,18 +1953,27 @@ static int aoc_snd_card_probe(struct platform_device *pdev)
 		goto err;
 	}
 
+	pdata->g_chip.wakelock = wakeup_source_register(dev, dev_name(dev));
+	if (!pdata->g_chip.wakelock) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
 	snd_soc_card_set_drvdata(card, &pdata->g_chip);
+
 	ret = snd_soc_register_card(card);
 	if (ret < 0) {
 		if (ret == -EPROBE_DEFER) {
 			pr_info("%s: defer the probe %d", __func__, ret);
 		} else
 			pr_info("%s: snd register fail %d", __func__, ret);
-		goto err;
+		goto err_register_card;
 	}
 
 	return 0;
 
+err_register_card:
+	wakeup_source_unregister(pdata->g_chip.wakelock);
 err:
 	return ret;
 }
@@ -1976,8 +1983,13 @@ static int aoc_snd_card_remove(struct platform_device *pdev)
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
 	if (card) {
+		struct aoc_chip *g_chip = snd_soc_card_get_drvdata(card);
+
 		snd_soc_unregister_card(card);
 		snd_soc_card_set_drvdata(card, NULL);
+
+		if (g_chip)
+			wakeup_source_unregister(g_chip->wakelock);
 	}
 
 	return 0;

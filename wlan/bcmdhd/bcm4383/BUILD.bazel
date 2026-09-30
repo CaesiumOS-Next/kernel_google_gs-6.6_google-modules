@@ -17,6 +17,7 @@ kernel_module(
         "Kbuild",
         "//private/google-modules/soc/gs:gs_soc_headers",
         "//private/google-modules/soc/rdo:rdo_soc_headers",
+        "//private/google-modules/wlan/wonder:wonder_headers",
     ],
     outs = [
         "bcmdhd4383.ko",

@@ -87,6 +87,11 @@ typedef IMG_UINT64 PMR_SIZE_T;
 typedef IMG_UINT32 PMR_LOG2ALIGN_T;
 typedef IMG_UINT64 PMR_PASSWORD_T;
 
+#define IS_PMR_READABLE(ui64PMRFlags)  (PVRSRV_CHECK_CPU_READABLE(ui64PMRFlags) || \
+                                        PVRSRV_CHECK_GPU_READABLE(ui64PMRFlags))
+#define IS_PMR_WRITEABLE(ui64PMRFlags) (PVRSRV_CHECK_CPU_WRITEABLE(ui64PMRFlags) || \
+                                        PVRSRV_CHECK_GPU_WRITEABLE(ui64PMRFlags))
+
 struct _PMR_MAPPING_TABLE_
 {
 	PMR_SIZE_T uiChunkSize;            /*!< Size of a "chunk" */
@@ -633,6 +638,15 @@ PMRRemapGPUPMR(PMR *psPMR, IMG_UINT32 ui32LogicalPgOffset);
 IMG_BOOL
 PMR_IsGpuMultiMapped(PMR *psPMR);
 
+/*
+ * PMR_GetGpuMapCount()
+ *
+ * Must be protected by PMR lock.
+ *
+ */
+IMG_INT32
+PMR_GetGpuMapCount(PMR *psPMR);
+
 PPVRSRV_DEVICE_NODE
 PMR_DeviceNode(const PMR *psPMR);
 
@@ -812,8 +826,29 @@ PMRMarkForDeferFree(PMR *psPMR);
 IMG_BOOL
 PMRQueueZombiesForCleanup(PPVRSRV_DEVICE_NODE psDevNode);
 
+/*
+ * PMR_SetExclusiveUse()
+ *
+ * Sets the exclusive use flag for the PMR. Flag is used to signal that the PMR
+ * is used by another bridge resource (such as freelist) and shouldn't be used
+ * by another instance of such object.
+ * 
+ * Must be protected by PMR lock.
+ *
+ */
 IMG_BOOL
 PMR_SetExclusiveUse(PMR *psPMR, IMG_BOOL bFlag);
+
+/*
+ * PMR_IsExclusiveUse()
+ *
+ * Checks the exclusive use flag for the PMR.
+ * Must be protected by PMR lock.
+ * PMR_ChangeSparseMemUnlocked()
+ *
+ */
+IMG_BOOL
+PMR_IsExclusiveUse(PMR *psPMR);
 
 /*
  * PMR_ChangeSparseMemUnlocked()

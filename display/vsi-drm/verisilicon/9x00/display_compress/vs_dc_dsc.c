@@ -484,14 +484,6 @@ static int get_ob_max_addr_4k(u8 ss_num)
 		return 459;
 }
 
-static int get_ob_max_addr_8k(u8 ss_num)
-{
-	if (ss_num == 1)
-		return 1471;
-	else
-		return 735;
-}
-
 static int get_deraster_buffer(const struct dsc_hw_config *dsc_hw, u8 slices_per_line, u8 ss_num,
 			       u16 slice_width)
 {
@@ -711,10 +703,7 @@ int dc_hw_config_dsc(struct dc_hw *hw, u8 hw_id, const struct dc_hw_dsc_usage *s
 		dataflow_params.drb_max_addr = get_deraster_buffer(
 			&hw_config, sw_cfg->slices_per_line, sw_cfg->ss_num, dsc_cfg->slice_width);
 		/* 4k */
-		if (1)
-			dataflow_params.ob_max_addr = get_ob_max_addr_4k(sw_cfg->ss_num);
-		else
-			dataflow_params.ob_max_addr = get_ob_max_addr_8k(sw_cfg->ss_num);
+		dataflow_params.ob_max_addr = get_ob_max_addr_4k(sw_cfg->ss_num);
 		dsc_enc_write_apb_registers(hw, hw_id, dsc_cfg, sw_cfg, &dataflow_params);
 	}
 	return 0;

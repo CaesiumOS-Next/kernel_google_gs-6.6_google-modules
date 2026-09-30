@@ -44,6 +44,8 @@
 #endif /* CONFIG_WIFI_CONTROL_FUNC */
 #include <dhd_dbg.h>
 #include <dhd.h>
+#include <dhd_linux_priv.h>
+#include <dhd_linux_wq.h>
 
 #if IS_ENABLED(CONFIG_SOC_GOOGLE)
 #if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
@@ -63,6 +65,19 @@
 #endif /* DHD_HOST_CPUFREQ_BOOST */
 
 #include <bcmstdlib_s.h>
+
+#ifdef DHD_ART
+#include <linux/nl80211.h>
+#include <net/mac80211.h>
+#include <dhd_linux_priv.h>
+#include "wl_cfg80211.h"
+#include "wl_cfgscan.h"
+#include "bcmwifi_rates.h"
+#endif /* DHD_ART */
+#ifdef WONDERTAP
+#include <wonder/wondertap.h>
+#include <linux/component.h>
+#endif /* WONDERTAP */
 
 #if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
 #define GOOGLE_PCIE_VENDOR_ID 0x144d
@@ -149,6 +164,9 @@ static uint hw_stage_val;
 static bool is_irq_on_big_core = FALSE;
 /* force to switch to small core at beginning */
 static bool is_plat_pcie_resume = TRUE;
+
+extern dhd_pub_t *g_dhd_pub;
+
 #if IS_ENABLED(CONFIG_PCI_EXYNOS_GS)
 extern int exynos_pcie_register_event(struct exynos_pcie_register_event *reg);
 extern int exynos_pcie_deregister_event(struct exynos_pcie_register_event *reg);
@@ -1634,6 +1652,10 @@ struct wifi_platform_data dhd_wlan_control = {
 #endif // endif
 };
 
+#ifdef WONDERTAP
+static struct platform_driver dhd_wonder_driver;
+#endif /* WONDERTAP */
+
 int
 dhd_wlan_init(void)
 {
@@ -1686,6 +1708,10 @@ dhd_wlan_init(void)
 #endif /* DHD_SUPPORT_L1SS */
 #endif /* !IS_ENABLED(CONFIG_PCI_EXYNOS_GS) */
 
+#ifdef WONDERTAP
+	platform_driver_register(&dhd_wonder_driver);
+#endif /* WONDERTAP */
+
 fail:
 	if (ret)
 		dhd_goog_pwrctrl_uninit();
@@ -1697,6 +1723,10 @@ err:
 int
 dhd_wlan_deinit(void)
 {
+#ifdef WONDERTAP
+	platform_driver_unregister(&dhd_wonder_driver);
+#endif /* WONDERTAP */
+
 	if (gpio_is_valid(wlan_host_wake_up)) {
 		gpio_free(wlan_host_wake_up);
 	}
@@ -1868,11 +1898,35 @@ dhd_plat_unregister_coredump(void)
 }
 #endif /* DHD_COREDUMP */
 
+#if IS_ENABLED(CONFIG_SOC_LGA) || IS_ENABLED(CONFIG_SOC_MBU)
+static void
+dhd_plat_pcie_rc_dump(void *handle, void *event_info, u8 event)
+{
+	google_pcie_dump_debug(pcie_ch_num);
+}
+
+void
+dhd_schedule_plat_pcie_rc_dump(dhd_pub_t *dhdp, void *type)
+{
+	DHD_PRINT(("%s: schedule pcie rc dump\n", __func__));
+	dhd_deferred_schedule_work(dhdp->info->dhd_deferred_wq,
+		type, DHD_WQ_WORK_PLAT_PCIE_RC_DUMP,
+		dhd_plat_pcie_rc_dump, DHD_WQ_WORK_PRIORITY_HIGH);
+}
+#endif
+
 void dhd_plat_pcie_dump_debug(void)
 {
-#if IS_ENABLED(CONFIG_SOC_LGA)
-	google_pcie_dump_debug(pcie_ch_num);
-#endif /* CONFIG_SOC_LGA */
+#if IS_ENABLED(CONFIG_SOC_LGA) || IS_ENABLED(CONFIG_SOC_MBU)
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+
+	if (CAN_SLEEP()) {
+		google_pcie_dump_debug(pcie_ch_num);
+	} else {
+		pr_err("%s(): schedule pcie rc dump, as in atomic context\n", __func__);
+		dhd_schedule_plat_pcie_rc_dump(dhdp, NULL);
+	}
+#endif
 }
 
 #ifndef BCMDHD_MODULAR
@@ -2107,3 +2161,405 @@ dhd_pcie_l1_exit(int ch_num)
 	return dhd_pcie_l1ss_ctrl(0, ch_num);
 }
 #endif /* !IS_ENABLED(CONFIG_PCI_EXYNOS_GS) */
+
+#ifdef WONDERTAP
+
+static int dhd_wondertap_set_reg(void *vendor_handle, const char *country_code);
+static int dhd_wondertap_set_fixed_tx_rate(void *vendor_handle,
+	const struct wondertap_fixed_tx_rate_params *params);
+static int dhd_wondertap_set_tx_rate_mask(void *vendor_handle,
+	const struct wondertap_tx_rate_mask_params *params);
+
+static enum
+nl80211_band dhd_freq_to_band(int freq)
+{
+	/* See 5.1.2.2 of IEEE 802.11-2016 */
+	if (freq >= 2401 && freq <= 2495)
+		return NL80211_BAND_2GHZ;
+
+	if (freq >= 4900 && freq < 5925)
+		return NL80211_BAND_5GHZ;
+
+	/* See 27.2.2 of IEEE 802.11ax-2021 */
+	if (freq >= 5925 && freq <= 7125)
+		return NL80211_BAND_6GHZ;
+
+	if (freq >= 58320 && freq <= 70200)
+		return NL80211_BAND_60GHZ;
+
+	return NUM_NL80211_BANDS;
+}
+
+static s32
+dhd_get_chspec_bw_from_wondertap_bw(u16 bw)
+{
+	switch (bw) {
+	case WONDERTAP_RATE_BW_20:
+		return WL_CHANSPEC_BW_20;
+	case WONDERTAP_RATE_BW_40:
+		return WL_CHANSPEC_BW_40;
+	case WONDERTAP_RATE_BW_80:
+		return WL_CHANSPEC_BW_80;
+	case WONDERTAP_RATE_BW_160:
+		return WL_CHANSPEC_BW_160;
+	case WONDERTAP_RATE_BW_320:
+		return WL_CHANSPEC_BW_320;
+	default:
+		DHD_ERROR(("unsupported BW\n"));
+	}
+
+	return BCME_ERROR;
+}
+
+static int
+dhd_wondertap_ops_set_freq(void *handle, const struct wondertap_set_freq_params *params)
+{
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+	u32 band;
+	int channel = ieee80211_frequency_to_channel(params->freq);
+	u32 chspec_bw = dhd_get_chspec_bw_from_wondertap_bw(params->bandwidth);
+	chanspec_t chanspec = {0};
+
+	if (dhdp->usr_art_enabled == TRUE) {
+		DHD_ERROR(("%s cannot set frequency when ART is enabled\n", __func__));
+		return -EINVAL;
+	}
+	switch (dhd_freq_to_band(params->freq)) {
+
+	case NL80211_BAND_2GHZ:
+		band = WL_CHANSPEC_BAND_2G;
+		break;
+	case NL80211_BAND_5GHZ:
+		band = WL_CHANSPEC_BAND_5G;
+		break;
+	default:
+		DHD_ERROR(("unsupported band. Expected 2g/5g.\n"));
+		return -EINVAL;
+	}
+
+	DHD_ERROR(("chan:%d band:%d chspec_bw:0x%x\n",
+			channel, band, chspec_bw));
+
+	chanspec = wf_create_chspec_from_primary(channel,
+			chspec_bw, band, 0);
+	if (!wf_chspec_valid(chanspec)) {
+		DHD_ERROR(("chanspec not valid chanspec:%x0x\n", chanspec));
+		return -EINVAL;
+	}
+
+	DHD_INFO(("user enforced chspec:0x%x\n", chanspec));
+	dhd_set_monitor_chspec(dhdp, chanspec);
+
+	return 0;
+}
+
+static int
+dhd_wondertap_ops_init(void **handle, const struct wondertap_init_params *params)
+{
+	dhd_pub_t *dhdp = g_dhd_pub;
+	struct net_device *monitor_dev;
+
+	*handle = (void *)(dhdp);
+	dhd_wondertap_set_reg(*handle, params->country_code);
+	monitor_dev = dhd_get_monitor_ndev(dhdp);
+	if (!monitor_dev) {
+		DHD_ERROR(("monitor_dev is null\n"));
+	} else {
+		dhd_wondertap_ops_set_freq(*handle, &params->channel);
+		eacopy(params->bssid, dhdp->art_bssid);
+		eacopy(params->mac_addr, dhdp->art_mac_addr);
+		if (params->rate_adaptation_enable) {
+			g_dhd_pub->rate_adaptation_enable = TRUE;
+			g_dhd_pub->tx_rate_mask = params->tx_rate_mask.max_preamble;
+			DHD_PRINT(("%s RA enabled, set rate(%d) in monitor_open\n",
+				__func__, g_dhd_pub->tx_rate_mask));
+		}
+		int ret = dev_open(monitor_dev, NULL);
+
+		if (ret) {
+			DHD_ERROR(("wondertap: Failed to open interface: %d\n", ret));
+			return ret;
+		}
+		if (!(params->rate_adaptation_enable)) {
+			dhd_wondertap_set_fixed_tx_rate(*handle, &params->tx_rate);
+		}
+	}
+
+	return 0;
+}
+
+static void
+dhd_wondertap_ops_deinit(void *vendor_handle, const struct wondertap_deinit_params *params)
+{
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+	struct net_device *monitor_dev;
+
+	monitor_dev = dhd_get_monitor_ndev(dhdp);
+	if (!monitor_dev) {
+		DHD_ERROR(("monitor_dev is null\n"));
+	} else {
+		dev_close(monitor_dev);
+		bzero(dhdp->art_mac_addr, sizeof(u8) * ETHER_ADDR_LEN);
+	}
+	dhd_wondertap_set_reg(vendor_handle, params->country_code);
+}
+
+static int
+dhd_wondertap_set_filter(void *vendor_handle, enum wondertap_filter_type filter_type,
+	const void *params)
+{
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+	struct net_device *monitor_dev;
+
+	monitor_dev = dhd_get_monitor_ndev(dhdp);
+	if (!monitor_dev) {
+		DHD_ERROR(("monitor_dev is null\n"));
+		return -ENODEV;
+	}
+
+	switch (filter_type) {
+	default:
+		DHD_ERROR(("Unknown filter type: %u.\n", filter_type));
+		break;
+	}
+
+	return -ENOTSUPP;
+}
+
+#define MAX_VHT_MCS	9u
+static int
+dhd_wondertap_set_fixed_tx_rate(void *vendor_handle,
+	const struct wondertap_fixed_tx_rate_params *params)
+{
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+	int mcs = params->mcs;
+	int nss = params->nss;
+	enum wondertap_rate_preamble preamble = params->preamble;
+	bool ht_set = FALSE;
+	int error = 0;
+	uint32 rspec = 0;
+	chanspec_t chanspec;
+	struct net_device *monitor_dev;
+	int ifidx;
+#ifdef WL_CFG80211
+	struct bcm_cfg80211 *cfg;
+#endif /* WL_CFG80211 */
+
+	monitor_dev = dhd_get_monitor_ndev(dhdp);
+	if (!monitor_dev) {
+		DHD_ERROR(("monitor_dev is null\n"));
+		return -ENODEV;
+	}
+
+	ifidx = dhd_net2idx(dhdp->info, monitor_dev);
+	if ((ifidx == DHD_BAD_IF) || (ifidx >= DHD_MAX_IFS)) {
+		DHD_ERROR(("wrong ifidx:%d for monitor dev:%p\n", ifidx, monitor_dev));
+		return -ENODEV;
+	}
+
+	DHD_PRINT(("%s: Request to set TX rate: preamble=%d, mcs=%d, nss=%d\n",
+		__func__, preamble, mcs, nss));
+
+	if (preamble == WONDERTAP_RATE_PREAMBLE_HT) {
+		rspec = WL_RSPEC_ENCODE_HT;	/* 11n HT */
+		ht_set = TRUE;
+	} else if (preamble == WONDERTAP_RATE_PREAMBLE_VHT) {
+		rspec = WL_RSPEC_ENCODE_VHT;	/* 11ac VHT */
+		if (mcs > MAX_VHT_MCS) {
+			WL_ERR(("VHT supports only max:%d mcs\n", MAX_VHT_MCS));
+			return -EINVAL;
+		}
+	} else if (preamble == WONDERTAP_RATE_PREAMBLE_HE) {
+		rspec = WL_RSPEC_ENCODE_HE;	/* 11ax HE */
+	}
+#ifdef NOT_YET
+	else if (preamble == WONDERTAP_RATE_PREAMBLE_EHT) {
+		rspec = WL_RSPEC_ENCODE_EHT;	/* 11be EHT */
+	}
+#endif /* NOT_YET */
+	if (ht_set) {
+		rspec |= mcs;
+	} else {
+		rspec |= (nss << WL_RSPEC_NSS_SHIFT);
+		rspec |= mcs;
+	}
+
+	chanspec = dhd_get_monitor_chspec(dhdp);
+	if (chanspec == 0) {
+		DHD_ERROR(("%s ART_SET_CHAN is not set\n", __func__));
+		return -EINVAL;
+	}
+
+#ifdef WL_CFG80211
+	cfg = wl_get_cfg(monitor_dev);
+	if (cfg) {
+		/* abort any scan in progress */
+		wl_cfgscan_scan_abort(cfg);
+	}
+#endif /* WL_CFG80211 */
+
+	if (CHSPEC_BAND(chanspec) == WL_CHANSPEC_BAND_5G) {
+		rspec |= WL_RSPEC_LDPC;
+		error = dhd_iovar(dhdp, ifidx, "5g_rate",
+			(char *)&rspec, sizeof(rspec), NULL, 0, TRUE);
+		if (error != BCME_OK) {
+			DHD_ERROR(("%s: failed to set 5g_rate error:%d rspec:0x%x\n",
+				__func__, error, rspec));
+			return error;
+		}
+	} else if (CHSPEC_BAND(chanspec) == WL_CHANSPEC_BAND_2G) {
+		error = dhd_iovar(dhdp, ifidx, "2g_rate",
+			(char *)&rspec, sizeof(rspec), NULL, 0, TRUE);
+		if (error != BCME_OK) {
+			DHD_ERROR(("%s: failed to set 2g_rate error:%d rspec:0x%x\n",
+				__func__, error, rspec));
+			return error;
+		}
+	} else {
+		DHD_ERROR(("%s neither 5G nor 2G chanspec: 0x%x\n", __func__, chanspec));
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int
+dhd_wondertap_set_tx_rate_mask(void *vendor_handle,
+	const struct wondertap_tx_rate_mask_params *params)
+{
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+	struct net_device *monitor_dev;
+	int ifidx;
+
+	monitor_dev = dhd_get_monitor_ndev(dhdp);
+	if (!monitor_dev) {
+		DHD_ERROR(("monitor_dev is null\n"));
+		return -ENODEV;
+	}
+
+	ifidx = dhd_net2idx(dhdp->info, monitor_dev);
+	if ((ifidx == DHD_BAD_IF) || (ifidx >= DHD_MAX_IFS)) {
+		DHD_ERROR(("wrong ifidx:%d for monitor dev:%p\n", ifidx, monitor_dev));
+		return -ENODEV;
+	}
+
+	dhd_set_art_tx_rate_mask(dhdp, ifidx, params->max_preamble);
+	return 0;
+}
+
+static int
+dhd_wondertap_set_reg(void *vendor_handle, const char *country_code)
+{
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+	struct bcm_cfg80211 *cfg;
+	struct net_device *monitor_dev;
+	struct net_device *primary_ndev;
+	char local_country_code[3];
+	int err;
+
+	monitor_dev = dhd_get_monitor_ndev(dhdp);
+	if (!monitor_dev) {
+		DHD_ERROR(("monitor_dev is null\n"));
+		return -ENODEV;
+	}
+	if (dhdp->usr_art_enabled == TRUE) {
+		DHD_ERROR(("%s cannot set regulatory when ART is enabled\n", __func__));
+		return -EINVAL;
+	}
+
+	cfg = wl_get_cfg(monitor_dev);
+	primary_ndev = bcmcfg_to_prmry_ndev(cfg);
+
+	memcpy_s(local_country_code, sizeof(local_country_code),
+		country_code, sizeof(local_country_code));
+	local_country_code[2] = '\0';
+	err = wl_cfg80211_set_country_code(primary_ndev, local_country_code, true, true, 0);
+	if (err < 0) {
+		DHD_ERROR(("%s: Set country failed ret:%d\n", __func__, err));
+		return err;
+	}
+
+	return 0;
+}
+
+static int
+dhd_wondertap_get_capabilities(void *vendor_handle, struct wondertap_capability *capabilities)
+{
+	capabilities->version = 0;
+	bzero(&capabilities->bits, sizeof(capabilities->bits));
+	capabilities->bits.amsdu_aggregation = 1;
+	capabilities->bits.rate_adaptation = 1;
+	return 0;
+}
+
+static const struct wondertap_ops wondertap_ops = {
+	.init = dhd_wondertap_ops_init,
+	.deinit = dhd_wondertap_ops_deinit,
+	.set_freq = NULL,
+	.set_filter = dhd_wondertap_set_filter,
+	.set_fixed_tx_rate = NULL,
+	.set_tx_rate_mask = dhd_wondertap_set_tx_rate_mask,
+	.get_capabilities = dhd_wondertap_get_capabilities,
+};
+
+static const struct wondertap_priv dhd_wonder_priv = {
+	.ver = WONDER_VERSION_1_4,
+	.wonder_ops = &wondertap_ops,
+};
+
+static int dhd_wondertap_bind(struct device *dev, struct device *master, void *data)
+{
+	dev_info(dev, "%s(): Bound to master %s\n", __func__, dev_name(master));
+	return 0;
+}
+
+static void dhd_wondertap_unbind(struct device *dev, struct device *master, void *data)
+{
+	dev_info(dev, "%s(): Unbound\n", __func__);
+}
+
+static const struct component_ops dhd_wifi_comp_ops = {
+	.bind = dhd_wondertap_bind,
+	.unbind = dhd_wondertap_unbind,
+};
+
+static int dhd_wonder_probe(struct platform_device *pdev)
+{
+	dev_info(&pdev->dev, "%s()\n", __func__);
+	/* wondertap */
+	platform_set_drvdata(pdev, (void *)&dhd_wonder_priv);
+	component_add(&pdev->dev, &dhd_wifi_comp_ops);
+	return 0;
+}
+
+static void dhd_wonder_remove(struct platform_device *pdev)
+{
+	dev_info(&pdev->dev, "%s()\n", __func__);
+	component_del(&pdev->dev, &dhd_wifi_comp_ops);
+}
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
+static int dhd_wonder_remove_wrapper(struct platform_device *pdev)
+{
+	dhd_wonder_remove(pdev);
+	return 0;
+}
+
+#define dhd_wonder_remove dhd_wonder_remove_wrapper
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0) */
+
+static const struct of_device_id dhd_wonder_dt_ids[] = {
+	{ .compatible = "android,bcmdhd_wlan-wonder" },
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(of, dhd_wonder_dt_ids);
+
+static struct platform_driver dhd_wonder_driver = {
+	.probe = dhd_wonder_probe,
+	.remove = dhd_wonder_remove,
+	.driver = {
+		.name = "dhd_wonder_dev",
+		.of_match_table = dhd_wonder_dt_ids,
+		},
+};
+#endif /* WONDERTAP */

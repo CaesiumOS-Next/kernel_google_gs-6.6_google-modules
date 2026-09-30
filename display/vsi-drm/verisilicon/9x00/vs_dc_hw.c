@@ -44,8 +44,13 @@
 #define DPU_REF_CLK_MHZ 100
 #define PRINT_NAME_WIDTH "%-25s"
 
+#define BE_IDLE_DBG_STATUS_MASK BIT(14)
+#define BE_IDLE_DBG_STATUS_SEL_VALUE 0x2
+#define BE_IDLE_DBG_POLL_US 100
+#define BE_IDLE_DBG_TIMEOUT_US 100000
+
 static u8 display_wb_pos[HW_DISPLAY_NUM] = { VS_WB_POS_CNT, VS_WB_POS_CNT, VS_WB_POS_CNT,
-					     VS_WB_POS_CNT, VS_WB_POS_CNT, VS_WB_POS_CNT };
+					     VS_WB_POS_CNT, VS_WB_POS_CNT };
 static bool wb_busy[HW_WB_NUM] = { 0 };
 static u32 cb8to2_store_value = DCREG_WB_CROSSBAR8_TO2_ResetValue;
 u8 wb_split_id;
@@ -508,25 +513,6 @@ void dc_hw_save_status(struct dc_hw *hw)
 }
 #endif
 
-void dc_write_u32_blob(struct dc_hw *hw, u32 reg, const u32 *data, u32 size)
-{
-	const u32 u32_stride = sizeof(u32);
-	u32 i;
-
-	for (i = 0; i < size; i++)
-		dc_write(hw, reg + u32_stride * i, data[i]);
-}
-
-/* alternaive version of dc_write_u32_blob, use relaxed API to write register */
-void dc_write_relaxed_u32_blob(struct dc_hw *hw, u32 reg, const u32 *data, u32 size)
-{
-	const u32 u32_stride = sizeof(u32);
-	u32 i;
-
-	for (i = 0; i < size; i++)
-		dc_write_relaxed(hw, reg + u32_stride * i, data[i]);
-}
-
 /* Get the plane address offset based on HW_PLANE_0 */
 static u32 _get_plane_offset(u32 hw_id)
 {
@@ -612,8 +598,6 @@ static u32 _get_display_tp_offset(u32 hw_id, u32 output_id, enum drm_vs_disp_tp_
  ************************************************************************/
 void dc_hw_config_load_filter(struct dc_hw *hw, u8 hw_id, const u32 *coef_v, const u32 *coef_h)
 {
-	u32 i;
-	u32 reg_offset = 0x04;
 	const u32 *ch = default_scaling_coeff_horizontal;
 	const u32 *cv = default_scaling_coeff_vertical;
 
@@ -622,20 +606,14 @@ void dc_hw_config_load_filter(struct dc_hw *hw, u8 hw_id, const u32 *coef_v, con
 		ch = coef_h;
 		cv = coef_v;
 	}
-	for (i = 0; i < H_COEF_SIZE; i++)
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, HSCALE_COEF_DATA_Address) + (i * reg_offset),
-			 ch[i]);
 
-	for (i = 0; i < V_COEF_SIZE; i++)
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, VSCALE_COEF_DATA_Address) + (i * reg_offset),
-			 cv[i]);
+	dc_write_u32_blob(hw, VS_SH_LAYER_FIELD(hw_id, HSCALE_COEF_DATA_Address), ch, H_COEF_SIZE);
+
+	dc_write_u32_blob(hw, VS_SH_LAYER_FIELD(hw_id, VSCALE_COEF_DATA_Address), cv, V_COEF_SIZE);
 }
 
 static void load_be_default_filter(struct dc_hw *hw, u8 hw_id)
 {
-	u32 i;
-	u32 reg_offset = 0x04;
-
 	/* TBD
 	 * Lack of filter tap registers.
 	 */
@@ -645,17 +623,11 @@ static void load_be_default_filter(struct dc_hw *hw, u8 hw_id)
 	dc_write(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, SCALE_INITIAL_OFFSET_Y_Address),
 		 0x8000);
 
-	for (i = 0; i < H_COEF_SIZE; i++)
-		dc_write(hw,
-			 VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, HSCALE_COEF_DATA_Address) +
-				 (i * reg_offset),
-			 default_scaling_coeff_horizontal[i]);
+	dc_write_u32_blob(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, HSCALE_COEF_DATA_Address),
+			  default_scaling_coeff_horizontal, H_COEF_SIZE);
 
-	for (i = 0; i < V_COEF_SIZE; i++)
-		dc_write(hw,
-			 VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, VSCALE_COEF_DATA_Address) +
-				 (i * reg_offset),
-			 default_scaling_coeff_vertical[i]);
+	dc_write_u32_blob(hw, VS_SET_PANEL01_FIELD(DCREG_SH_PANEL, hw_id, VSCALE_COEF_DATA_Address),
+			  default_scaling_coeff_vertical, V_COEF_SIZE);
 }
 
 int dc_fe0_hw_init(struct dc_hw *hw)
@@ -893,10 +865,8 @@ int dc_hw_init(struct dc_hw *hw)
 	/* default to NS interrupt destination */
 	hw->intr_dest = BIT(0);
 
-	if (chip_id == VS_CHIP_ID_9400 || chip_id == VS_CHIP_ID_9200)
+	if (chip_id == VS_CHIP_ID_9400)
 		hw->rev = DC_REV_0;
-	else
-		hw->rev = DC_REV_1;
 
 	mutex_init(&hw->secure_lock);
 	spin_lock_init(&hw->histogram_slock);
@@ -938,6 +908,8 @@ void dc_be_hw_deinit(struct dc_hw *hw)
 
 	for (i = 0; i < hw->info->display_num; i++) {
 		vs_dc_deinitialize_property_states(&hw->display[i].states);
+		vs_dc_hist_chans_reset(hw, i);
+		vs_dc_hist_rgb_reset(hw, i);
 		memset(&hw->display[i], 0, sizeof(struct dc_hw_display));
 	}
 }
@@ -1436,7 +1408,7 @@ void dc_hw_setup_wb(struct dc_hw *hw, u8 id)
 
 	if (wb) {
 		hw_id = hw->info->write_back[id].id;
-		hw->func->writeback(hw, hw_id);
+		hw->func->wb_commit(hw, hw_id);
 	}
 }
 
@@ -1499,9 +1471,22 @@ void dc_hw_enable_wb_irqs(struct dc_hw *hw, u8 wb_hw_id, bool enable)
 	DPU_ATRACE_END("%s id %u, en:%u", __func__, wb_hw_id, enable);
 }
 
-void dc_hw_set_wb_stall(struct dc_hw *hw, bool enable)
+bool dc_hw_writeback_is_active(struct dc_hw *hw)
 {
-	dc_write(hw, DCREG_POST_PRO_WB_STALL_Address, enable);
+	int i;
+	unsigned long flags;
+	bool is_wb_active = false;
+
+	spin_lock_irqsave(&hw->be_irq_slock, flags);
+	for (i = 0; i < HW_WB_NUM; i++) {
+		if (hw->wb_irq_refcnt[i] > 0) {
+			is_wb_active = true;
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&hw->be_irq_slock, flags);
+
+	return is_wb_active;
 }
 
 void dc_hw_config_plane_status(struct dc_hw *hw, u8 id, bool config)
@@ -2382,6 +2367,7 @@ static void _dc_hw_ltm_enable_shadow_register(struct dc_hw *hw, u8 display_id, b
 		vs_dc_hw_get_display_property(hw, hw_id, "GTM_LUMA_AVE_CONFIG", &gtm_enable);
 
 	if (ltm_enable || gtm_enable) {
+		trace_hw_ltm_reg_switch(hw_id, enable);
 		config = dc_read_immediate(hw, VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id,
 								    LTM_CONFIG_Address));
 		dc_write_immediate(hw, VS_SET_PANEL01_FIELD(DCREG_PANEL, hw_id, LTM_CONFIG_Address),
@@ -2395,17 +2381,14 @@ void dc_hw_enable_shadow_register(struct dc_hw *hw, u8 display_id, bool enable)
 	u32 i, hw_id = 0;
 	u32 config = 0;
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-	if (enable)
-		regcache_sync(hw->regmap);
-#endif
-
 	/* for layer */
 	for (i = 0; i < hw->info->layer_num; i++) {
 		if (!hw->plane[i].config_status || (hw->plane[i].fb.display_id != display_id))
 			continue;
 
 		hw_id = dc_hw_get_plane_id(i, hw);
+		trace_hw_layer_reg_switch(hw_id, enable);
+
 		config = dc_read_immediate(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, CONFIG_Address));
 		dc_write_immediate(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, CONFIG_Address),
 				   VS_SET_FIELD(config, DCREG_LAYER0_CONFIG, REG_SWITCH, enable));
@@ -2420,6 +2403,7 @@ void dc_hw_enable_shadow_register(struct dc_hw *hw, u8 display_id, bool enable)
 		if (hw_id >= HW_DISPLAY_4)
 			continue;
 
+		trace_hw_panel_reg_switch(hw_id, enable);
 		config = dc_read_immediate(hw,
 					   VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id, CONFIG_Address));
 		dc_write_immediate(hw, VS_SET_PANEL_FIELD(DCREG_PANEL, hw_id, CONFIG_Address),
@@ -2428,6 +2412,7 @@ void dc_hw_enable_shadow_register(struct dc_hw *hw, u8 display_id, bool enable)
 		/* LTM/GTM shadow register switch */
 		_dc_hw_ltm_enable_shadow_register(hw, i, enable);
 
+		trace_hw_display_reg_switch(hw->display[i].output_id, enable);
 		config = dc_read_immediate(hw, VS_SET_PANEL_FIELD(DCREG_OUTPUT,
 								  hw->display[i].output_id,
 								  CONFIG_Address));
@@ -2437,12 +2422,17 @@ void dc_hw_enable_shadow_register(struct dc_hw *hw, u8 display_id, bool enable)
 				   VS_SET_FIELD(config, DCREG_OUTPUT0_CONFIG, REG_SWITCH, enable));
 	}
 
+	/* avoid wb programming when secure is enabled */
+	if (!bitmap_empty(hw->secured_layers_mask, HW_PLANE_NUM))
+		return;
+
 	/* for writeback interfaces */
 	for (i = 0; i < hw->info->wb_num; i++) {
 		if (!hw->wb[i].config_status || hw->wb[i].fb.display_id != display_id)
 			continue;
 
 		hw_id = hw->info->write_back[i].id;
+		trace_hw_wb_reg_switch(hw_id, enable);
 		hw->sub_func->wb_reg_switch(hw, hw_id, enable);
 	}
 }
@@ -2532,6 +2522,7 @@ static void spliter_trigger(struct dc_hw *hw, u8 src_panel, u8 output_id, bool t
 					  hw->display[src_panel - 1].output_id);
 		config = panel_output_mux(config, src_panel, output_id);
 		dc_write_immediate(hw, DCREG_POST_PROCESS_OUT_Address, config);
+		trace_disp_output_mux_sel(src_panel, output_id, config);
 		hw->output_mux_value = config;
 		spin_unlock_irqrestore(&hw->output_mux_slock, flags);
 		dc_write_immediate(hw,
@@ -2578,6 +2569,7 @@ void online_trigger(struct dc_hw *hw, u8 src_panel, u8 output_id, bool trig_enab
 		config = hw->output_mux_value;
 		config = panel_output_mux(config, src_panel, output_id);
 		dc_write_immediate(hw, DCREG_POST_PROCESS_OUT_Address, config);
+		trace_disp_output_mux_sel(src_panel, output_id, config);
 		hw->output_mux_value = config;
 		spin_unlock_irqrestore(&hw->output_mux_slock, flags);
 		dc_write_immediate(hw, VS_SET_PANEL_FIELD(DCREG_OUTPUT, output_id, START_Address),
@@ -2954,14 +2946,6 @@ void dc_hw_start_trigger(struct dc_hw *hw, u8 display_id, struct drm_crtc *crtc)
 				dc_hw_sw_sof_trigger(hw, output_id, hw->display[i].mode.enable);
 			}
 		}
-
-		if (wb && hw->rev == DC_REV_1) {
-			if (hw_id == HW_DISPLAY_5)
-				link_node_offline_trigger(hw, hw_id, hw->wb[wb->wb_id].fb.enable);
-			else
-				link_node_online_trigger(hw, hw_id, hw->display[i].mode.enable,
-							 wb->enable, wb->wb_point, output_id);
-		}
 	}
 
 	/* for offline trigger */
@@ -3012,7 +2996,7 @@ void dc_hw_do_fe0_reset(struct dc_hw *hw)
 	u8 fe0_rst_status = 0;
 	u8 i = 0;
 
-	if (hw->rev != DC_REV_1) {
+	if (hw->rev == DC_REV_0) {
 		hw->reset_status[FE0_SW_RESET] = 0;
 		dev_info(hw->dev, "%s: trigger FE0 software reset\n", __func__);
 		dc_write_immediate(hw, DCREG_FE0_INTR_ENABLE_Address,
@@ -3042,7 +3026,7 @@ void dc_hw_do_fe1_reset(struct dc_hw *hw)
 	u8 fe1_rst_status = 0;
 	u8 i = 0, j = 0;
 
-	if (hw->rev != DC_REV_1) {
+	if (hw->rev == DC_REV_0) {
 		hw->reset_status[FE1_SW_RESET] = 0;
 		dev_info(hw->dev, "%s: trigger FE1 software reset\n", __func__);
 		dc_write_immediate(hw, DCREG_FE1_INTR_ENABLE_Address,
@@ -3073,7 +3057,7 @@ void dc_hw_do_be_reset(struct dc_hw *hw)
 	int ret;
 	u8 i, j, be_rst_status = 0;
 
-	if (hw->rev != DC_REV_1) {
+	if (hw->rev == DC_REV_0) {
 		hw->reset_status[BE_SW_RESET] = 0;
 		dev_info(hw->dev, "%s: trigger BE software reset\n", __func__);
 		dc_write_immediate(hw, DCREG_BE_INTR_ENABLE1_Address,
@@ -3127,24 +3111,9 @@ void dc_hw_do_be_reset(struct dc_hw *hw)
 			}
 		}
 	}
-
-	if (hw->rev == DC_REV_1) {
-		dc_write_immediate(hw, DCREG_WB0_CONFIG_Address, 0x0);
-		dc_write_immediate(hw, DCREG_WB1_CONFIG_Address, 0x0);
-		dc_write_immediate(hw, DCREG_WB0_OT_NUMBER_Address, 0x20);
-		dc_write_immediate(hw, DCREG_WB1_OT_NUMBER_Address, 0x20);
-
-		for (i = 0; i < DC_DISPLAY_NUM; i++) {
-			hw->display[i].sbs_split_dirty = false;
-			hw->display[i].wb_split_dirty = false;
-		}
-
-		for (i = 0; i < HW_WB_NUM; i++)
-			wb_busy[i] = false;
-	}
 }
 
-bool dc_hw_is_layer_idle(struct dc_hw *hw, u8 hw_id)
+static bool dc_hw_is_layer_idle(struct dc_hw *hw, u8 hw_id)
 {
 	struct device *dev = hw->dev;
 	u32 dbg_dma_st, dbg_dma_out_coord;
@@ -3237,25 +3206,28 @@ static void toggle_secure(struct dc_hw *hw, u8 layer, bool secure)
 
 	mutex_lock(&hw->secure_lock);
 	if (test_bit(plane_info->id, hw->secured_layers_mask) == secure)
-		dev_warn(dev, "layer %d already has secure %d, double enable or disable", layer,
-			 secure);
+		dev_warn(dev, "layer %d already has secure %d, double enable or disable",
+			 plane_info->id, secure);
 
 	if (secure)
 		set_bit(plane_info->id, hw->secured_layers_mask);
 	mutex_unlock(&hw->secure_lock);
 
-	trace_disp_trusty_protect_ip(layer, sid, hw->secured_layers_mask, secure);
+	DPU_ATRACE_BEGIN("trusty_protect_ip");
 	ret = trusty_protect_ip(&(dc->tzprot_pdev->dev), sid, secure);
 	if (ret)
 		dev_err(dev,
 			"%s: trusty_protect_ip call failed for sid %d, fb->secure: %d. error %d",
 			__func__, sid, secure, ret);
+	DPU_ATRACE_END("trusty_protect_ip");
 
 	if (!secure) {
 		mutex_lock(&hw->secure_lock);
 		clear_bit(plane_info->id, hw->secured_layers_mask);
 		mutex_unlock(&hw->secure_lock);
 	}
+
+	trace_disp_trusty_protect_ip(plane_info->id, sid, hw->secured_layers_mask, secure);
 }
 
 static void plane_set_secure(struct dc_hw *hw, u8 layer, struct dc_hw_fb *fb)
@@ -3331,54 +3303,6 @@ static void plane_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
 
 	offset = _get_plane_out_offset(hw_id);
 
-	/* output path configuration*/
-	if (hw->rev == DC_REV_0)
-		dc_write(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, OUTPUT_PATH_ID_Address),
-			 VS_SET_FIELD(0, DCREG_LAYER0_OUTPUT_PATH_ID, ID, fb->display_id));
-
-	if (hw->rev == DC_REV_1) {
-		config = 0;
-		config = VS_SET_FIELD(config, DCREG_SH_LAYER0_IN_ROI_SIZE, WIDTH, fb->width) |
-			 VS_SET_FIELD(config, DCREG_SH_LAYER0_IN_ROI_SIZE, HEIGHT, fb->height);
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, IN_ROI_SIZE_Address), config);
-
-		/* crop in width/height */
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_SOURCE_WIDTH_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_SOURCE_WIDTH, VALUE, fb->width));
-
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_SOURCE_HEIGHT_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_SOURCE_HEIGHT, VALUE, fb->height));
-
-		/* crop out width/height */
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_WIDTH0_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_WIDTH0, VALUE, fb->width));
-
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_HEIGHT0_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_HEIGHT0, VALUE, fb->height));
-	}
-
-	if (hw->rev == DC_REV_1) {
-		if (fb->display_id == HW_DISPLAY_5) {
-			dc_write(hw,
-				 VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id, OUTPUT_PATH_ID_EX_Address),
-				 VS_SET_FIELD_VALUE(0, DCREG_SH_LAYER0_OUTPUT_PATH_ID_EX, ID,
-						    WRITE_BACK));
-
-			dc_write(hw, VS_SH_LAYER_FIELD(hw_id, SBSBUF_MODE_Address), VS_SBS_LEFT);
-		} else {
-			dc_write(hw,
-				 VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id, OUTPUT_PATH_ID_EX_Address),
-				 fb->display_id);
-
-			if (fb->display_id & 0x1)
-				dc_write(hw, VS_SH_LAYER_FIELD(hw_id, SBSBUF_MODE_Address),
-					 VS_SBS_RIGHT);
-			else
-				dc_write(hw, VS_SH_LAYER_FIELD(hw_id, SBSBUF_MODE_Address),
-					 VS_SBS_LEFT);
-		}
-	}
-
 	config = 0;
 	/* zorder configuration */
 	if (hw->rev == DC_REV_0) {
@@ -3389,15 +3313,26 @@ static void plane_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
 
 		dc_write(hw, DCREG_SH_LAYER0_BLEND_STACK_ID_Address + layer_offset, config);
 	}
-	if (hw->rev == DC_REV_1) {
-		config = VS_SET_FIELD(config, DCREG_SH_LAYER0_BLEND_STACK_ID_EX, ID0,
-				      fb->zpos & 0xF) |
-			 VS_SET_FIELD(config, DCREG_SH_LAYER0_BLEND_STACK_ID_EX, ID1, 0);
-		dc_write(hw, VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id, BLEND_STACK_ID_EX_Address),
-			 config);
-	}
 
 	fb->dirty = false;
+}
+
+/**
+ * plane_set_outpath() - Configure the output path for a plane.
+ * @hw: Pointer to the hardware structure.
+ * @hw_id: Hardware ID of the plane (layer).
+ * @fb: Pointer to the framebuffer structure containing routing info.
+ *
+ * This function configures the routing of a hardware plane to a specific
+ * display output path (display_id).
+ */
+static void plane_set_outpath(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
+{
+	trace_config_hw_layer_feature("OUTPATH", hw_id, "en:%d id:%d", fb->enable, fb->display_id);
+
+	if (hw->rev == DC_REV_0)
+		dc_write(hw, VS_SET_FE_FIELD(DCREG_LAYER, hw_id, OUTPUT_PATH_ID_Address),
+			 VS_SET_FIELD(0, DCREG_LAYER0_OUTPUT_PATH_ID, ID, fb->display_id));
 }
 
 static void plane_set_ext_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
@@ -3447,8 +3382,7 @@ static void plane_set_pos(struct dc_hw *hw, u8 hw_id, struct dc_hw_position *pos
 static void plane_set_y2r(struct dc_hw *hw, u8 hw_id, struct dc_hw_y2r *y2r_conf)
 {
 	u32 csc_mode = 0, csc_gamut = 0;
-	u32 i = 0, config = 0;
-	u32 idx_offset = 0x04;
+	u32 config = 0;
 
 	trace_config_hw_layer_feature("Y2R", hw_id, "en:%d gamut:%d mode:%d", y2r_conf->enable,
 				      y2r_conf->gamut, y2r_conf->mode);
@@ -3503,12 +3437,9 @@ static void plane_set_y2r(struct dc_hw *hw, u8 hw_id, struct dc_hw_y2r *y2r_conf
 			break;
 		}
 	} else {
-		for (i = 0; i < VS_MAX_Y2R_COEF_NUM; i++) {
-			dc_write(hw,
-				 VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id, YUV_TO_RGB_COEF0_Address) +
-					 i * idx_offset,
-				 y2r_conf->coef[i]);
-		}
+		dc_write_u32_blob(hw,
+				  VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id, YUV_TO_RGB_COEF0_Address),
+				  y2r_conf->coef, VS_MAX_Y2R_COEF_NUM);
 	}
 
 	dc_write(hw, VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id, Y2R_CONFIG_Address),
@@ -3553,22 +3484,6 @@ static void plane_set_scale(struct dc_hw *hw, u8 hw_id, struct dc_hw_scale *scal
 	dc_write(hw, VS_SH_LAYER_FIELD(hw_id, SCALE_INITIAL_OFFSET_Y_Address), offset_y);
 	dc_write(hw, VS_SH_LAYER_FIELD(hw_id, HSCALE_FACTOR_Address), scale->factor_x);
 	dc_write(hw, VS_SH_LAYER_FIELD(hw_id, VSCALE_FACTOR_Address), scale->factor_y);
-
-	if (hw->rev == DC_REV_1) {
-		/* crop in width/height */
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_SOURCE_WIDTH_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_SOURCE_WIDTH, VALUE, scale->src_w));
-
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_SOURCE_HEIGHT_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_SOURCE_HEIGHT, VALUE, scale->src_h));
-
-		/* crop out width/height */
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_WIDTH0_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_WIDTH0, VALUE, scale->dst_w));
-
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_HEIGHT0_Address),
-			 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_HEIGHT0, VALUE, scale->dst_h));
-	}
 
 	trace_config_hw_layer_feature(
 		"SCALE_DATA", hw_id,
@@ -3630,16 +3545,6 @@ static void plane_set_roi(struct dc_hw *hw, u8 hw_id, struct dc_hw_roi *roi_hw)
 			       VS_SET_FIELD(config_rect0, DCREG_SH_LAYER0_OUT_ROI_SIZE, HEIGHT,
 					    roi_hw->out_rect[0].h);
 		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, OUT_ROI_SIZE_Address), config_rect0);
-
-		if (hw->rev == DC_REV_1) {
-			/* crop out width/height */
-			dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_WIDTH0_Address),
-				 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_WIDTH0, VALUE,
-					      roi_hw->out_rect[0].w));
-			dc_write(hw, VS_SH_LAYER_FIELD(hw_id, CROP_HEIGHT0_Address),
-				 VS_SET_FIELD(0, DCREG_SH_LAYER0_CROP_HEIGHT0, VALUE,
-					      roi_hw->out_rect[0].h));
-		}
 	}
 
 	if (roi_hw->mode == VS_DMA_TWO_ROI || roi_hw->mode == VS_DMA_EXT_LAYER_EX ||
@@ -3784,7 +3689,7 @@ static void plane_set_3d_lut(struct dc_hw *hw, u8 hw_id, struct dc_hw_block *lut
 
 static void plane_set_std_bld(struct dc_hw *hw, u8 hw_id, struct dc_hw_std_bld *std_bld)
 {
-	u32 config = 0, config_ex = 0;
+	u32 config = 0;
 
 	trace_config_hw_layer_feature("BLEND_MODE", hw_id, "alpha:%d blend_mode:%d", std_bld->alpha,
 				      std_bld->blend_mode);
@@ -3798,17 +3703,6 @@ static void plane_set_std_bld(struct dc_hw *hw, u8 hw_id, struct dc_hw_std_bld *
 		dc_write(hw, VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id, ALPHA_BLEND_CONFIG_Address),
 			 config);
 
-		if (hw->rev == DC_REV_1) {
-			config_ex = dc_read(hw, VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id,
-								ALPHA_BLEND_CONFIG_EX_Address));
-			config_ex = VS_SET_FIELD_PREDEF(config_ex,
-							DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-							ALPHA_BLEND, DISABLED);
-			dc_write(hw,
-				 VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id,
-						 ALPHA_BLEND_CONFIG_EX_Address),
-				 config_ex);
-		}
 	} else {
 		config = dc_read(hw, VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id,
 						     ALPHA_BLEND_CONFIG_Address));
@@ -3820,22 +3714,6 @@ static void plane_set_std_bld(struct dc_hw *hw, u8 hw_id, struct dc_hw_std_bld *
 					     SRC_ALPHA_MODE, NORMAL);
 		config = VS_SET_FIELD_PREDEF(config, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG,
 					     DST_ALPHA_MODE, NORMAL);
-
-		if (hw->rev == DC_REV_1) {
-			config_ex = dc_read(hw, VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id,
-								ALPHA_BLEND_CONFIG_EX_Address));
-			config_ex = VS_SET_FIELD_PREDEF(config_ex,
-							DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-							ALPHA_BLEND, ENABLED);
-			config_ex = VS_SET_FIELD_PREDEF(config_ex,
-							DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-							ALPHA_BLEND_FAST, DISABLED);
-
-			dc_write(hw,
-				 VS_SET_FE_FIELD(DCREG_SH_LAYER, hw_id,
-						 ALPHA_BLEND_CONFIG_EX_Address),
-				 config_ex);
-		}
 
 		switch (std_bld->blend_mode) {
 		case DRM_MODE_BLEND_PREMULTI:
@@ -4373,18 +4251,6 @@ static void display_set_mode(struct dc_hw *hw, u8 hw_id, u8 output_id,
 						   !is_urgent_enabled());
 		}
 
-		if (hw->rev == DC_REV_1) {
-			/* commit OFIFO W/H. */
-			dc_write(hw,
-				 VS_SET_OUTPUT012_FIELD(DCREG_SH_OUTPUT, output_id,
-							OFIFO_HA_WIDTH_Address),
-				 mode->h_active);
-			dc_write(hw,
-				 VS_SET_OUTPUT012_FIELD(DCREG_SH_OUTPUT, output_id,
-							OFIFO_VA_HEIGHT_Address),
-				 mode->v_active);
-		}
-
 		/* set panel image size */
 		dc_write(hw, VS_SET_PANEL_FIELD(DCREG_SH_PANEL, hw_id, WIDTH_Address),
 			 mode->h_active);
@@ -4865,11 +4731,6 @@ static void wb_enable_shadow(struct dc_hw *hw, u8 hw_id, bool enable)
 {
 	u32 config = 0;
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-	if (enable)
-		regcache_sync(hw->regmap);
-#endif
-
 	if (hw_id < HW_BLEND_WB) {
 		config = dc_read_immediate(hw, VS_SET_POSTWB_FIELD(DCREG_POST_PRO_WB, hw_id,
 								   CONFIG_Address));
@@ -4888,19 +4749,15 @@ static void wb_ex_enable_shadow(struct dc_hw *hw, u8 hw_id, bool enable)
 	u32 offset = hw_id * (DCREG_WB1_CONFIG_Address - DCREG_WB0_CONFIG_Address);
 	u32 config = 0;
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-	if (enable)
-		regcache_sync(hw->regmap);
-#endif
-
 	config = dc_read_immediate(hw, DCREG_WB0_CONFIG_Address + offset);
 	dc_write_immediate(hw, DCREG_WB0_CONFIG_Address + offset,
 			   VS_SET_FIELD(config, DCREG_WB0_CONFIG, REG_SWITCH, enable));
 }
 
-static void wb_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
+static void wb_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_wb *wb)
 {
 	u32 config = 0;
+	struct dc_hw_fb *fb = &wb->fb;
 
 	trace_config_hw_wb_fb("WB_FB", hw_id, fb);
 
@@ -4926,6 +4783,11 @@ static void wb_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
 		/* TODO (b/436294486) Always program the WB in two path mode */
 		dc_write_immediate(hw, DCREG_POST_PRO_WB_PATH_NUM_Address,
 				   DCREG_POST_PRO_WB_PATH_NUM_VALUE_WB_TWO_PATH);
+
+		if (wb->info->wb_stall)
+			dc_write(hw, DCREG_POST_PRO_WB_STALL_Address,
+				 DCREG_POST_PRO_WB_STALL_VALUE_ENABLED);
+
 		dc_write(hw, VS_SET_POSTWB_FIELD(DCREG_SH_POST_PRO_WB, hw_id, DEST_STRIDE_Address),
 			 fb->stride);
 		dc_write(hw, VS_SET_POSTWB_FIELD(DCREG_SH_POST_PRO_WB, hw_id, DEST_ADDRESS_Address),
@@ -5042,11 +4904,12 @@ static void wb_set_r2y(struct dc_hw *hw, u8 hw_id, struct dc_hw_r2y *r2y_conf)
 	dc_write(hw, DCREG_SH_BLD_WB_CONFIG_Address, wb_config);
 }
 
-static void wb_ex_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb)
+static void wb_ex_set_fb(struct dc_hw *hw, u8 hw_id, struct dc_hw_wb *wb)
 {
 	u32 offset = hw_id * (DCREG_WB1_CONFIG_Address - DCREG_WB0_CONFIG_Address);
 	u32 config = 0;
 	u8 addr_ext[3] = { 0 };
+	struct dc_hw_fb *fb = &wb->fb;
 
 	trace_config_hw_wb_fb("EX_WB_FB", hw_id, fb);
 
@@ -5224,6 +5087,35 @@ static void plane_commit(struct dc_hw *hw, u8 display_id)
 	}
 }
 
+/**
+ * plane_commit_non_shadow - Commit non-shadow plane configurations.
+ * @hw: Pointer to the hardware structure.
+ * @display_id: Display ID.
+ *
+ * This function commits plane configurations that are non-shadow.
+ */
+static void plane_commit_non_shadow(struct dc_hw *hw, u8 display_id)
+{
+	struct dc_hw_plane *plane;
+	u8 hw_id, layer_num = hw->info->layer_num;
+	u32 i;
+
+	for (i = 0; i < layer_num; i++) {
+		plane = &hw->plane[i];
+		hw_id = dc_hw_get_plane_id(i, hw);
+		if (plane->fb.display_id != display_id)
+			continue;
+
+		if (!plane->config_status)
+			continue;
+
+		if (plane->info->rcd_plane)
+			continue;
+
+		plane_set_outpath(hw, hw_id, &plane->fb);
+	}
+}
+
 void dc_hw_disable_plane_features(struct dc_hw *hw, u8 display_id)
 {
 	plane_set_secure_bits(hw, display_id, false);
@@ -5289,6 +5181,10 @@ static void wb_commit(struct dc_hw *hw, u8 display_id)
 	u8 hw_id, wb_num = hw->info->wb_num;
 	u32 i, j;
 
+	/* avoid wb programming when secure is enabled */
+	if (!bitmap_empty(hw->secured_layers_mask, HW_PLANE_NUM))
+		return;
+
 	for (i = 0; i < wb_num; i++) {
 		wb = &hw->wb[i];
 		hw_id = hw->info->write_back[i].id;
@@ -5301,7 +5197,7 @@ static void wb_commit(struct dc_hw *hw, u8 display_id)
 
 		/* program dirty properties */
 		if (wb->fb.dirty)
-			hw->sub_func->wb_fb(hw, hw_id, &wb->fb);
+			hw->sub_func->wb_fb(hw, hw_id, wb);
 
 		if (wb->r2y.dirty)
 			wb_set_r2y(hw, hw_id, &wb->r2y);
@@ -5317,18 +5213,15 @@ static void wb_commit(struct dc_hw *hw, u8 display_id)
 
 			vs_dc_property_config_hw(hw, hw_id, state);
 		}
-
-		/* always set wb stall */
-		if (wb->info->wb_stall)
-			dc_hw_set_wb_stall(hw, true);
 	}
 }
 
 static const struct dc_hw_funcs hw_func = {
 	.set_mode = display_set_mode,
-	.writeback = wb_commit,
-	.plane = plane_commit,
-	.display = display_commit,
+	.wb_commit = wb_commit,
+	.plane_commit = plane_commit,
+	.plane_commit_non_shadow = plane_commit_non_shadow,
+	.display_commit = display_commit,
 };
 
 static const struct dc_hw_sub_funcs hw_sub_func[] = {
@@ -5351,7 +5244,14 @@ static const struct dc_hw_sub_funcs hw_sub_func[] = {
 void dc_hw_plane_commit(struct dc_hw *hw, u8 display_id)
 {
 	DPU_ATRACE_BEGIN(__func__);
-	hw->func->plane(hw, display_id);
+	hw->func->plane_commit(hw, display_id);
+	DPU_ATRACE_END(__func__);
+}
+
+void dc_hw_plane_commit_non_shadow(struct dc_hw *hw, u8 display_id)
+{
+	DPU_ATRACE_BEGIN(__func__);
+	hw->func->plane_commit_non_shadow(hw, display_id);
 	DPU_ATRACE_END(__func__);
 }
 
@@ -5360,7 +5260,7 @@ void dc_hw_display_commit(struct dc_hw *hw, u8 display_id)
 	u8 i;
 
 	DPU_ATRACE_BEGIN(__func__);
-	hw->func->display(hw, display_id);
+	hw->func->display_commit(hw, display_id);
 	DPU_ATRACE_END(__func__);
 
 	/* Only update secure bit here if it is being enabled */
@@ -5373,7 +5273,7 @@ void dc_hw_display_commit(struct dc_hw *hw, u8 display_id)
 void dc_hw_wb_commit(struct dc_hw *hw, u8 display_id)
 {
 	DPU_ATRACE_BEGIN(__func__);
-	hw->func->writeback(hw, display_id);
+	hw->func->wb_commit(hw, display_id);
 	DPU_ATRACE_END(__func__);
 }
 
@@ -5399,9 +5299,12 @@ void dc_hw_display_flip_done(struct dc_hw *hw, u8 display_id)
 /* Get the display address offset based on HW_DISPLAY_0 */
 u32 vs_dc_get_display_offset(u32 hw_id)
 {
-	u32 offset = 0;
+	u32 offset;
 
 	switch (hw_id) {
+	case HW_DISPLAY_0:
+		offset = DCREG_SH_PANEL0_CONFIG_Address - DCREG_SH_PANEL0_CONFIG_Address;
+		break;
 	case HW_DISPLAY_1:
 		offset = DCREG_SH_PANEL1_CONFIG_Address - DCREG_SH_PANEL0_CONFIG_Address;
 		break;
@@ -5414,10 +5317,8 @@ u32 vs_dc_get_display_offset(u32 hw_id)
 	case HW_DISPLAY_4:
 		offset = DCREG_SH_BLD_WB_CONFIG_Address - DCREG_SH_PANEL0_CONFIG_Address;
 		break;
-	case HW_DISPLAY_5:
-		offset = DC_HW_INVALID;
-		break;
 	default:
+		offset = DC_HW_INVALID;
 		break;
 	}
 
@@ -5427,9 +5328,13 @@ u32 vs_dc_get_display_offset(u32 hw_id)
 /* Get the panel dither table address offset based on HW_DISPLAY_0 */
 u32 vs_dc_get_panel_dither_table_offset(u32 hw_id)
 {
-	u32 offset = 0x0;
+	u32 offset;
 
 	switch (hw_id) {
+	case HW_DISPLAY_0:
+		offset = DCREG_SH_PANEL0_DTH_RTABLE_LOW_Address -
+			 DCREG_SH_PANEL0_DTH_RTABLE_LOW_Address;
+		break;
 	case HW_DISPLAY_1:
 		offset = DCREG_SH_PANEL1_DTH_RTABLE_LOW_Address -
 			 DCREG_SH_PANEL0_DTH_RTABLE_LOW_Address;
@@ -5446,10 +5351,8 @@ u32 vs_dc_get_panel_dither_table_offset(u32 hw_id)
 		offset = DCREG_SH_BLD_WB_DTH_RTABLE_LOW_Address -
 			 DCREG_SH_PANEL0_DTH_RTABLE_LOW_Address;
 		break;
-	case HW_DISPLAY_5:
-		offset = DC_HW_INVALID;
-		break;
 	default:
+		offset = DC_HW_INVALID;
 		break;
 	}
 
@@ -5501,7 +5404,7 @@ const struct dc_hw_display *vs_dc_hw_get_display(const struct dc_hw *hw, u32 hw_
 	return NULL;
 }
 
-const int vs_dc_hw_get_display_id(const struct dc_hw *hw, u32 hw_id)
+int vs_dc_hw_get_display_id(const struct dc_hw *hw, u32 hw_id)
 {
 	for (int i = 0; i < hw->info->display_num; i++)
 		if (hw->display[i].info->id == hw_id)
@@ -5615,53 +5518,6 @@ void dc_hw_collect_reg_dump(struct device *dev, enum dc_hw_reg_dump_options opti
 		dc_hw_reg_dump(&dc->hw, NULL, DC_HW_REG_BANK_ACTIVE);
 }
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-void dc_write(struct dc_hw *hw, u32 reg, u32 value)
-{
-	dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg, value);
-	trace_dc_write(reg, value);
-	regmap_write(hw->regmap, reg, value);
-}
-
-void dc_write_immediate(struct dc_hw *hw, u32 reg, u32 value)
-{
-	dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg, value);
-	trace_dc_write(reg, value);
-	regcache_cache_bypass(hw->regmap, true);
-	regmap_write(hw->regmap, reg, value);
-	regcache_cache_bypass(hw->regmap, false);
-}
-
-u32 dc_read(struct dc_hw *hw, u32 reg)
-{
-	int ret = 0;
-	u32 value = 0;
-
-	ret = regmap_read(hw->regmap, reg, &value);
-	dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg, value);
-	trace_dc_read(reg, value);
-	if (!ret)
-		return value;
-	else
-		return -1;
-}
-
-u32 dc_read_immediate(struct dc_hw *hw, u32 reg)
-{
-	int ret = 0;
-	u32 value = 0;
-
-	regcache_cache_bypass(hw->regmap, true);
-	ret = regmap_read(hw->regmap, reg, &value);
-	regcache_cache_bypass(hw->regmap, false);
-	dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg, value);
-	trace_dc_read(reg, value);
-	if (!ret)
-		return value;
-	else
-		return -1;
-}
-#else
 void dc_write(struct dc_hw *hw, u32 reg, u32 value)
 {
 	dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg, value);
@@ -5679,10 +5535,22 @@ u32 dc_read(struct dc_hw *hw, u32 reg)
 	return value;
 }
 
+void dc_write_u32_blob(struct dc_hw *hw, u32 reg, const u32 *data, u32 size)
+{
+	const u32 u32_stride = sizeof(u32);
+	u32 i;
+
+	for (i = 0; i < size; i++) {
+		dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg + u32_stride * i, data[i]);
+		trace_dc_write_u32_blob(reg + u32_stride * i, data[i]);
+		writel(data[i], hw->reg_base + reg + u32_stride * i);
+	}
+}
+
 void dc_write_relaxed(struct dc_hw *hw, u32 reg, u32 value)
 {
 	dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg, value);
-	trace_dc_write(reg, value);
+	trace_dc_write_relaxed(reg, value);
 	writel_relaxed(value, hw->reg_base + reg);
 }
 
@@ -5691,11 +5559,22 @@ u32 dc_read_relaxed(struct dc_hw *hw, u32 reg)
 	u32 value = readl_relaxed(hw->reg_base + reg);
 
 	dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg, value);
-	trace_dc_read(reg, value);
+	trace_dc_read_relaxed(reg, value);
 
 	return value;
 }
-#endif
+
+void dc_write_relaxed_u32_blob(struct dc_hw *hw, u32 reg, const u32 *data, u32 size)
+{
+	const u32 u32_stride = sizeof(u32);
+	u32 i;
+
+	for (i = 0; i < size; i++) {
+		dev_dbg(hw->dev, "%s: 0x%08x = 0x%08x\n", __func__, reg + u32_stride * i, data[i]);
+		trace_dc_write_relaxed_u32_blob(reg + u32_stride * i, data[i]);
+		writel_relaxed(data[i], hw->reg_base + reg + u32_stride * i);
+	}
+}
 
 inline bool vs_dc_display_is_wb(u32 hw_id)
 {
@@ -5799,13 +5678,14 @@ int dc_hw_get_ltm_hist(struct dc_hw *hw, u8 hw_id, struct drm_vs_ltm_histogram_d
 	return rc;
 }
 
-void print_tab(struct seq_file *s, u8 indent)
+static void print_tab(struct seq_file *s, u8 indent)
 {
 	while (indent--)
 		seq_puts(s, "\t");
 }
 
-void print_hw_states(struct seq_file *s, const struct vs_dc_property_state_group *states, u8 indent)
+static void print_hw_states(struct seq_file *s, const struct vs_dc_property_state_group *states,
+			    u8 indent)
 {
 	u8 j;
 
@@ -5820,215 +5700,220 @@ void print_hw_states(struct seq_file *s, const struct vs_dc_property_state_group
 	}
 }
 
-void print_hw_display_mode(struct seq_file *s, const struct dc_hw_display_mode *mode, u8 indent)
+static void print_hw_display_mode(struct seq_file *s, const struct dc_hw_display_mode *mode,
+				  u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d\n", "mode", mode->enable);
 }
 
-void print_hw_display_bld_size(struct seq_file *s, const struct dc_hw_size *bld_size, u8 indent)
+static void print_hw_display_bld_size(struct seq_file *s, const struct dc_hw_size *bld_size,
+				      u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "bld_size", bld_size->enable,
 		   bld_size->dirty);
 }
 
-void print_hw_display_data_ext(struct seq_file *s, const struct dc_hw_data_extend *data_ext,
-			       u8 indent)
+static void print_hw_display_data_ext(struct seq_file *s, const struct dc_hw_data_extend *data_ext,
+				      u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "data_ext", data_ext->enable,
 		   data_ext->dirty);
 }
 
-void print_hw_display_gamma(struct seq_file *s, const struct dc_hw_gamma *gamma, u8 indent)
+static void print_hw_display_gamma(struct seq_file *s, const struct dc_hw_gamma *gamma, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=[%d %d %d], dirty=%d\n", "gamma", gamma->enable[0],
 		   gamma->enable[1], gamma->enable[2], gamma->dirty);
 }
 
-void print_hw_display_wb(struct seq_file *s, const struct dc_hw_display_wb *wb, u8 indent)
+static void print_hw_display_wb(struct seq_file *s, const struct dc_hw_display_wb *wb, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "wb", wb->enable, wb->dirty);
 }
 
-void print_hw_display_blur_mask(struct seq_file *s, const struct dc_hw_fb *blur_mask, u8 indent)
+static void print_hw_display_blur_mask(struct seq_file *s, const struct dc_hw_fb *blur_mask,
+				       u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "blur_mask", blur_mask->enable,
 		   blur_mask->dirty);
 }
 
-void print_hw_display_brightness_mask(struct seq_file *s, const struct dc_hw_fb *brightness_mask,
-				      u8 indent)
+static void print_hw_display_brightness_mask(struct seq_file *s,
+					     const struct dc_hw_fb *brightness_mask, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "brightness_mask",
 		   brightness_mask->enable, brightness_mask->dirty);
 }
 
-void print_hw_display_ltm_enable(struct seq_file *s, const struct dc_hw_ltm_enable *ltm_enable,
-				 u8 indent)
+static void print_hw_display_ltm_enable(struct seq_file *s,
+					const struct dc_hw_ltm_enable *ltm_enable, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_enable", ltm_enable->enable,
 		   ltm_enable->dirty);
 }
 
-void print_hw_display_ltm_degamma(struct seq_file *s, const struct dc_hw_ltm_xgamma *ltm_degamma,
-				  u8 indent)
+static void print_hw_display_ltm_degamma(struct seq_file *s,
+					 const struct dc_hw_ltm_xgamma *ltm_degamma, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_degamma",
 		   ltm_degamma->enable, ltm_degamma->dirty);
 }
 
-void print_hw_display_ltm_gamma(struct seq_file *s, const struct dc_hw_ltm_xgamma *ltm_gamma,
-				u8 indent)
+static void print_hw_display_ltm_gamma(struct seq_file *s, const struct dc_hw_ltm_xgamma *ltm_gamma,
+				       u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_gamma", ltm_gamma->enable,
 		   ltm_gamma->dirty);
 }
 
-void print_hw_display_ltm_luma(struct seq_file *s, const struct dc_hw_ltm_luma *ltm_luma, u8 indent)
+static void print_hw_display_ltm_luma(struct seq_file *s, const struct dc_hw_ltm_luma *ltm_luma,
+				      u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_luma", ltm_luma->enable,
 		   ltm_luma->dirty);
 }
 
-void print_hw_display_freq_decomp(struct seq_file *s,
-				  const struct dc_hw_ltm_freq_decomp *freq_decomp, u8 indent)
+static void print_hw_display_freq_decomp(struct seq_file *s,
+					 const struct dc_hw_ltm_freq_decomp *freq_decomp, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "freq_decomp",
 		   freq_decomp->enable, freq_decomp->dirty);
 }
 
-void print_hw_display_luma_adj(struct seq_file *s, const struct dc_hw_ltm_luma_adj *luma_adj,
-			       u8 indent)
+static void print_hw_display_luma_adj(struct seq_file *s, const struct dc_hw_ltm_luma_adj *luma_adj,
+				      u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "luma_adj", luma_adj->enable,
 		   luma_adj->dirty);
 }
 
-void print_hw_display_grid_size(struct seq_file *s, const struct dc_hw_ltm_grid *grid_size,
-				u8 indent)
+static void print_hw_display_grid_size(struct seq_file *s, const struct dc_hw_ltm_grid *grid_size,
+				       u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "grid_size", grid_size->enable,
 		   grid_size->dirty);
 }
 
-void print_hw_display_af_filter(struct seq_file *s, const struct dc_hw_ltm_af_filter *af_filter,
-				u8 indent)
+static void print_hw_display_af_filter(struct seq_file *s,
+				       const struct dc_hw_ltm_af_filter *af_filter, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "af_filter", af_filter->enable,
 		   af_filter->dirty);
 }
 
-void print_hw_display_af_slice(struct seq_file *s, const struct dc_hw_ltm_af_slice *af_slice,
-			       u8 indent)
+static void print_hw_display_af_slice(struct seq_file *s, const struct dc_hw_ltm_af_slice *af_slice,
+				      u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "af_slice", af_slice->enable,
 		   af_slice->dirty);
 }
 
-void print_hw_display_af_trans(struct seq_file *s, const struct dc_hw_ltm_af_trans *af_trans,
-			       u8 indent)
+static void print_hw_display_af_trans(struct seq_file *s, const struct dc_hw_ltm_af_trans *af_trans,
+				      u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "af_trans", af_trans->enable,
 		   af_trans->dirty);
 }
 
-void print_hw_display_tone_adj(struct seq_file *s, const struct dc_hw_ltm_tone_adj *tone_adj,
-			       u8 indent)
+static void print_hw_display_tone_adj(struct seq_file *s, const struct dc_hw_ltm_tone_adj *tone_adj,
+				      u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "tone_adj", tone_adj->enable,
 		   tone_adj->dirty);
 }
 
-void print_hw_display_ltm_color(struct seq_file *s, const struct dc_hw_ltm_color *ltm_color,
-				u8 indent)
+static void print_hw_display_ltm_color(struct seq_file *s, const struct dc_hw_ltm_color *ltm_color,
+				       u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_color", ltm_color->enable,
 		   ltm_color->dirty);
 }
 
-void print_hw_display_ltm_dither(struct seq_file *s, const struct dc_hw_ltm_dither *ltm_dither,
-				 u8 indent)
+static void print_hw_display_ltm_dither(struct seq_file *s,
+					const struct dc_hw_ltm_dither *ltm_dither, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_dither", ltm_dither->enable,
 		   ltm_dither->dirty);
 }
 
-void print_hw_display_ltm_luma_set(struct seq_file *s,
-				   const struct dc_hw_ltm_luma_set *ltm_luma_set, u8 indent)
+static void print_hw_display_ltm_luma_set(struct seq_file *s,
+					  const struct dc_hw_ltm_luma_set *ltm_luma_set, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_luma_set",
 		   ltm_luma_set->enable, ltm_luma_set->dirty);
 }
 
-void print_hw_display_ltm_luma_get(struct seq_file *s,
-				   const struct dc_hw_ltm_luma_get *ltm_luma_get, u8 indent)
+static void print_hw_display_ltm_luma_get(struct seq_file *s,
+					  const struct dc_hw_ltm_luma_get *ltm_luma_get, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_luma_get",
 		   ltm_luma_get->enable, ltm_luma_get->dirty);
 }
 
-void print_hw_display_ltm_cd_set(struct seq_file *s, const struct dc_hw_ltm_cd_set *ltm_cd_set,
-				 u8 indent)
+static void print_hw_display_ltm_cd_set(struct seq_file *s,
+					const struct dc_hw_ltm_cd_set *ltm_cd_set, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_cd_set", ltm_cd_set->enable,
 		   ltm_cd_set->dirty);
 }
 
-void print_hw_display_ltm_cd_get(struct seq_file *s, const struct dc_hw_ltm_cd_get *ltm_cd_get,
-				 u8 indent)
+static void print_hw_display_ltm_cd_get(struct seq_file *s,
+					const struct dc_hw_ltm_cd_get *ltm_cd_get, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_cd_get", ltm_cd_get->enable,
 		   ltm_cd_get->dirty);
 }
 
-void print_hw_display_ltm_hist_set(struct seq_file *s,
-				   const struct dc_hw_ltm_hist_set *ltm_hist_set, u8 indent)
+static void print_hw_display_ltm_hist_set(struct seq_file *s,
+					  const struct dc_hw_ltm_hist_set *ltm_hist_set, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_hist_set",
 		   ltm_hist_set->enable, ltm_hist_set->dirty);
 }
 
-void print_hw_display_ltm_hist_get(struct seq_file *s,
-				   const struct dc_hw_ltm_hist_get *ltm_hist_get, u8 indent)
+static void print_hw_display_ltm_hist_get(struct seq_file *s,
+					  const struct dc_hw_ltm_hist_get *ltm_hist_get, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_hist_get",
 		   ltm_hist_get->enable, ltm_hist_get->dirty);
 }
 
-void print_hw_display_ltm_ds(struct seq_file *s, const struct dc_hw_ltm_ds *ltm_ds, u8 indent)
+static void print_hw_display_ltm_ds(struct seq_file *s, const struct dc_hw_ltm_ds *ltm_ds,
+				    u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "ltm_ds", ltm_ds->enable,
 		   ltm_ds->dirty);
 }
 
-void print_hw_display_hw_hist_chan(struct seq_file *s, const struct dc_hw_hist_chan *hw_hist_chan,
-				   u8 indent)
+static void print_hw_display_hw_hist_chan(struct seq_file *s,
+					  const struct dc_hw_hist_chan *hw_hist_chan, u8 indent)
 {
 	u8 j;
 	char name[40] = {};
@@ -6041,94 +5926,96 @@ void print_hw_display_hw_hist_chan(struct seq_file *s, const struct dc_hw_hist_c
 	}
 }
 
-void print_hw_display_hw_hist_rgb(struct seq_file *s, const struct dc_hw_hist_rgb *hw_hist_rgb,
-				  u8 indent)
+static void print_hw_display_hw_hist_rgb(struct seq_file *s,
+					 const struct dc_hw_hist_rgb *hw_hist_rgb, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "hw_hist_rgb",
 		   hw_hist_rgb->enable, hw_hist_rgb->dirty);
 }
 
-void print_hw_display_sram_pool(struct seq_file *s, const struct dc_hw_sram_pool *sram_pool,
-				u8 indent)
+static void print_hw_display_sram_pool(struct seq_file *s, const struct dc_hw_sram_pool *sram_pool,
+				       u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": dirty=%d\n", "sram_pool", sram_pool->dirty);
 }
 
-void print_hw_plane_fb(struct seq_file *s, const struct dc_hw_fb *fb, u8 indent)
+static void print_hw_plane_fb(struct seq_file *s, const struct dc_hw_fb *fb, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "fb", fb->enable, fb->dirty);
 }
 
-void print_hw_plane_fb_ext(struct seq_file *s, const struct dc_hw_fb *fb_ext, u8 indent)
+static void print_hw_plane_fb_ext(struct seq_file *s, const struct dc_hw_fb *fb_ext, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "fb_ext", fb_ext->enable,
 		   fb_ext->dirty);
 }
 
-void print_hw_plane_pos(struct seq_file *s, const struct dc_hw_position *pos, u8 indent)
+static void print_hw_plane_pos(struct seq_file *s, const struct dc_hw_position *pos, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "pos", pos->enable, pos->dirty);
 }
 
-void print_hw_plane_rcd_mask(struct seq_file *s, const struct dc_hw_rcd_mask *rcd_mask, u8 indent)
+static void print_hw_plane_rcd_mask(struct seq_file *s, const struct dc_hw_rcd_mask *rcd_mask,
+				    u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "rcd_mask", rcd_mask->enable,
 		   rcd_mask->dirty);
 }
 
-void print_hw_plane_std_bld(struct seq_file *s, const struct dc_hw_std_bld *std_bld, u8 indent)
+static void print_hw_plane_std_bld(struct seq_file *s, const struct dc_hw_std_bld *std_bld,
+				   u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "std_bld", std_bld->enable,
 		   std_bld->dirty);
 }
 
-void print_hw_plane_y2r(struct seq_file *s, const struct dc_hw_y2r *y2r, u8 indent)
+static void print_hw_plane_y2r(struct seq_file *s, const struct dc_hw_y2r *y2r, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "y2r", y2r->enable, y2r->dirty);
 }
 
-void print_hw_plane_lut_3d(struct seq_file *s, const struct dc_hw_block *lut_3d, u8 indent)
+static void print_hw_plane_lut_3d(struct seq_file *s, const struct dc_hw_block *lut_3d, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "lut_3d", lut_3d->enable,
 		   lut_3d->dirty);
 }
 
-void print_hw_plane_scale(struct seq_file *s, const struct dc_hw_scale *scale, u8 indent)
+static void print_hw_plane_scale(struct seq_file *s, const struct dc_hw_scale *scale, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "scale", scale->enable,
 		   scale->dirty);
 }
 
-void print_hw_plane_roi(struct seq_file *s, const struct dc_hw_roi *roi, u8 indent)
+static void print_hw_plane_roi(struct seq_file *s, const struct dc_hw_roi *roi, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "roi", roi->enable, roi->dirty);
 }
 
-void print_hw_plane_clear(struct seq_file *s, const struct dc_hw_clear *clear, u8 indent)
+static void print_hw_plane_clear(struct seq_file *s, const struct dc_hw_clear *clear, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "clear", clear->enable,
 		   clear->dirty);
 }
 
-void print_hw_plane_sram(struct seq_file *s, const struct dc_hw_sram_pool *sram, u8 indent)
+static void print_hw_plane_sram(struct seq_file *s, const struct dc_hw_sram_pool *sram, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": dirty=%d\n", "sram", sram->dirty);
 }
 
-void print_hw_wb_fb(struct seq_file *s, const struct dc_hw_fb *fb, u8 indent)
+static void print_hw_wb_fb(struct seq_file *s, const struct dc_hw_fb *fb, u8 indent)
 {
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": enable=%d, dirty=%d\n", "fb", fb->enable, fb->dirty);
@@ -6205,3 +6092,44 @@ static void print_wb_state(struct seq_file *s, const struct dc_hw_wb *wb, u8 ind
 	print_tab(s, indent);
 	seq_printf(s, PRINT_NAME_WIDTH ": %d\n", "config_status", wb->config_status);
 }
+
+#if IS_ENABLED(CONFIG_VERISILICON_DC9400_0x32a)
+bool dc_hw_is_be_idle(struct dc_hw *hw)
+{
+	int ret;
+	u32 config;
+	u32 dbg_status_ctrl_reg =
+		SSWRP_DPU_GPCSR_SEC_MOD0_RW__DPU_BE_QCHCTL_DBG_STATUS_CTL_adjusted_address;
+	u32 dbg_status_reg = SSWRP_DPU_GPCSR_SEC_MOD0_RW__DPU_BE_QCHCTL_DBG_STATUS_adjusted_address;
+
+	if (IS_ERR_OR_NULL(hw->gpcsr_reg_base))
+		return true;
+
+	DPU_ATRACE_BEGIN("dc_hw_is_be_idle");
+
+	/* Enable debug and set DBG_STATUS_SEL to 0x2 */
+	config =
+		(1 << SSWRP_DPU_GPCSR_SEC_MOD0_RW__DPU_BE_QCHCTL_DBG_STATUS_CTL__DBG_EN_offset) |
+		(BE_IDLE_DBG_STATUS_SEL_VALUE
+		 << SSWRP_DPU_GPCSR_SEC_MOD0_RW__DPU_BE_QCHCTL_DBG_STATUS_CTL__DBG_STATUS_SEL_offset);
+	writel(config, hw->gpcsr_reg_base + dbg_status_ctrl_reg);
+
+	config = 0;
+	ret = readl_poll_timeout(hw->gpcsr_reg_base + dbg_status_reg, config,
+				 !(config & BE_IDLE_DBG_STATUS_MASK), BE_IDLE_DBG_POLL_US,
+				 BE_IDLE_DBG_TIMEOUT_US);
+	DPU_ATRACE_END("dc_hw_is_be_idle");
+	if (ret == -ETIMEDOUT) {
+		trace_disp_be_idle_timeout(config);
+		dev_err(hw->dev, "Backend idle check timed out! Status: 0x%x\n", config);
+		return false;
+	}
+
+	return true;
+}
+#else
+bool dc_hw_is_be_idle(struct dc_hw *hw)
+{
+	return true;
+}
+#endif

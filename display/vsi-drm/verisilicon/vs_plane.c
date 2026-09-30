@@ -79,6 +79,7 @@ static void vs_plane_reset(struct drm_plane *plane)
 	state->blend_id = vs_plane->id;
 	state->dma_sram_size = 0;
 	state->scl_sram_size = 0;
+	state->pre_swap_crtc = NULL;
 
 	for (i = 0; i < vs_plane->properties.num; i++) {
 		state->drm_states[i].proto = vs_plane->properties.items[i].proto;
@@ -154,6 +155,8 @@ static struct drm_plane_state *vs_plane_atomic_duplicate_state(struct drm_plane 
 	__drm_atomic_helper_plane_duplicate_state(plane, &state->base);
 
 	state->blend_id = ori_state->blend_id;
+	state->pre_swap_crtc = ori_state->pre_swap_crtc;
+
 	bitmap_clear(state->changed, 0, VS_PLANE_CHANGED_MAX);
 
 	_vs_plane_duplicate_blob(state, ori_state);

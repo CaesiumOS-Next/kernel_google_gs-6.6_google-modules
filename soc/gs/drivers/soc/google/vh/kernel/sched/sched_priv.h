@@ -115,6 +115,7 @@ extern unsigned int sched_group_tracker_rate_limit;
 
 DECLARE_STATIC_KEY_FALSE(auto_migration_margins_enable);
 DECLARE_STATIC_KEY_FALSE(auto_dvfs_headroom_enable);
+DECLARE_STATIC_KEY_FALSE(response_time_ms_fix_enable);
 DECLARE_STATIC_KEY_FALSE(per_task_memory_aware_enable);
 DECLARE_STATIC_KEY_FALSE(enable_ptick);
 
@@ -428,7 +429,6 @@ uclamp_update_active_locked(struct task_struct *p, enum uclamp_id clamp_id)
 {
 	struct rq *rq = task_rq(p);
 
-	lockdep_assert_held(&p->pi_lock);
 	lockdep_assert_rq_held(rq);
 
 	if (!uclamp_is_used())

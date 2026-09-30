@@ -1743,6 +1743,9 @@ static int calibrate(void *private_data, struct gti_calibrate_cmd *cmd)
 		cmd->result = GTI_CALIBRATE_RESULT_FAIL;
 	else
 		cmd->result = GTI_CALIBRATE_RESULT_DONE;
+
+	fts_system_reset(info, 0);
+
 	return ret;
 }
 

@@ -157,6 +157,7 @@ struct timestamps_buffer {
 static_assert(sizeof(struct timestamps_buffer) == 48);
 
 int read_cpu_pd_latency_stats(u32 power_state,
-			struct timestamps_buffer *ts_buff);
+			struct timestamps_buffer *ts_buff,
+			enum stats_type s_type);
 
 #endif // _GOOGLE_CAP_SYSFS_H

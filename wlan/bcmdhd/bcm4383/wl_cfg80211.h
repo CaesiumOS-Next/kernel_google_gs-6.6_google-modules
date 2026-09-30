@@ -2462,9 +2462,6 @@ struct bcm_cfg80211 {
 	uint32 actfrm_fail_cnt;
 	u8 feature_mask[CFG80211_FEAT_MAX_LEN];
 	bool feature_mask_init_done;
-#ifdef DHD_ART
-	u8 art_bssid[ETHER_ADDR_LEN]; /* BSSID filter */
-#endif /* DHD_ART */
 };
 
 typedef struct wl_multink_config {
@@ -3059,6 +3056,23 @@ wl_get_status_by_netdev(struct bcm_cfg80211 *cfg, s32 status,
 	return stat;
 }
 
+static inline u32
+_wl_get_status_by_netdev(struct bcm_cfg80211 *cfg, s32 status,
+	struct net_device *ndev)
+{
+	struct net_info *_net_info, *next;
+	u32 stat = 0;
+	GCC_DIAGNOSTIC_PUSH_SUPPRESS_CAST();
+	BCM_LIST_FOR_EACH_ENTRY_SAFE(_net_info, next, &cfg->net_list, list) {
+		GCC_DIAGNOSTIC_POP();
+		if (ndev && (_net_info->ndev == ndev)) {
+			stat = test_bit(status, &_net_info->sme_state);
+			break;
+		}
+	}
+	return stat;
+}
+
 static inline s32
 wl_get_mode_by_netdev(struct bcm_cfg80211 *cfg, struct net_device *ndev)
 {
@@ -3138,6 +3152,22 @@ wl_get_profile_by_netdev(struct bcm_cfg80211 *cfg, struct net_device *ndev)
 		}
 	}
 	WL_CFG_NET_LIST_SYNC_UNLOCK(&cfg->net_list_sync, flags);
+	return prof;
+}
+
+static inline struct wl_profile *
+_wl_get_profile_by_netdev(struct bcm_cfg80211 *cfg, struct net_device *ndev)
+{
+	struct net_info *_net_info, *next;
+	struct wl_profile *prof = NULL;
+	GCC_DIAGNOSTIC_PUSH_SUPPRESS_CAST();
+	BCM_LIST_FOR_EACH_ENTRY_SAFE(_net_info, next, &cfg->net_list, list) {
+		GCC_DIAGNOSTIC_POP();
+		if (ndev && (_net_info->ndev == ndev)) {
+			prof = &_net_info->profile;
+			break;
+		}
+	}
 	return prof;
 }
 
@@ -3379,6 +3409,8 @@ wl_sup_event_ieee80211_error(u32 reason)
 	(wl_get_status_all(cfg, WL_STATUS_ ## stat))
 #define wl_get_drv_status(cfg, stat, ndev)  \
 	(wl_get_status_by_netdev(cfg, WL_STATUS_ ## stat, ndev))
+#define _wl_get_drv_status(cfg, stat, ndev)  \
+	(_wl_get_status_by_netdev(cfg, WL_STATUS_ ## stat, ndev))
 #define wl_set_drv_status(cfg, stat, ndev)  \
 	(wl_set_status_by_netdev(cfg, WL_STATUS_ ## stat, ndev, 1))
 #define wl_clr_drv_status(cfg, stat, ndev)  \

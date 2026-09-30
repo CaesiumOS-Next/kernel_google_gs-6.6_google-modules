@@ -111,7 +111,18 @@ typedef enum {
 	PVR_GPUTRACE_SWITCH_TYPE_SINGLE = 3
 } PVR_GPUTRACE_SWITCH_TYPE;
 
+#define PVR_GPU_WORK_UID_CACHE_SIZE 16
+#define PVR_GPU_WORK_ONE_SEC_IN_NSECS 1000000000ULL
+
+struct pvr_gpu_work_uid_entry {
+	IMG_UINT32 ui32UID;
+	IMG_UINT64 ui64EndTimestamp;
+};
+
 typedef struct RGX_HWPERF_FTRACE_DATA {
+	struct pvr_gpu_work_uid_entry asUidEndTimes[PVR_GPU_WORK_UID_CACHE_SIZE];
+	IMG_UINT32 ui32UidRingIndex;
+
 	/* This lock ensures the HWPerf TL stream reading resources are not destroyed
 	 * by one thread disabling it while another is reading from it. Keeps the
 	 * state and resource create/destroy atomic and consistent. */
@@ -578,7 +589,7 @@ static PVRSRV_ERROR _GpuTraceEnable(PVRSRV_RGXDEV_INFO *psRgxDevInfo)
 	/* Register a notifier to collect HWPerf data whenever the HW completes
 	 * an operation.
 	 */
-	eError = PVRSRVRegisterCmdCompleteNotify(
+	eError = PVRSRVRegisterLowPrioCmdCompleteNotify(
 		&psFtraceData->hGPUTraceCmdCompleteHandle,
 		&_GpuTraceCmdCompleteNotify,
 		psRgxDevInfo);
@@ -1201,22 +1212,16 @@ static void _GpuTraceSwitchEvent(PVRSRV_RGXDEV_INFO *psDevInfo,
 
 #if defined(PVRSRV_TRACE_ROGUE_EVENTS)
 	/* Only produce events for degubbable apps or for debuggable builds.
-	 * By calling _GpuTraceDebuggableBuild() first, we can skip all
-	 * application debuggability tests on "userdebug" and "eng" builds.
-	 * "user" builds will have a minor cost to check apps debuggability,
-	 * but it's only a cost while explicitly gathering renderstages in
-	 * a non-development phone, which is rare enough.
+	 * We're not calling _GpuTraceDebuggableBuild() first, because that
+	 * would skip all application debuggability tests on "userdebug" and
+	 * "eng" builds, while "user" builds will have to check apps
+	 * debuggability, causing a disparity in workload.
 	 */
 	{
 		IMG_UINT32 ui32UID = UID_INVALID;
-		bool bIsDebuggable = _GpuTraceDebuggableBuild();
+		bool bIsDebuggable = _GpuTraceGetAppInfo(psHWPerfPktData->ui32PID, &ui32UID);
 
-		if (!bIsDebuggable)
-			bIsDebuggable = _GpuTraceGetAppInfo(psHWPerfPktData->ui32PID, &ui32UID);
-		else
-			(void) OSGetUID(psHWPerfPktData->ui32PID, &ui32UID);
-
-		if (bIsDebuggable) {
+		if (bIsDebuggable || _GpuTraceDebuggableBuild()) {
 			IMG_UINT64 ui64Timestamp;
 
 			ui64Timestamp = CalculateEventTimestamp(psDevInfo,
@@ -1338,6 +1343,43 @@ static void _GpuTraceClockChangeEvent(PVRSRV_RGXDEV_INFO *psDevInfo,
 
 unlock:
 	OSLockRelease(ghLockFTraceEventLock);
+}
+
+static IMG_BOOL pvr_check_work_period_overlap(RGX_HWPERF_FTRACE_DATA *fd,
+					      IMG_UINT32 uId,
+					      IMG_UINT64 ui64StartTimestamp,
+					      IMG_UINT64 ui64EndTimestamp)
+{
+	struct pvr_gpu_work_uid_entry *cache = fd->asUidEndTimes;
+	IMG_BOOL found = IMG_FALSE;
+	IMG_UINT32 idx;
+
+	for (idx = 0; idx < PVR_GPU_WORK_UID_CACHE_SIZE; idx++) {
+		if (cache[idx].ui32UID == uId) {
+			IMG_UINT64 lastEnd = cache[idx].ui64EndTimestamp;
+
+			found = IMG_TRUE;
+			if (ui64StartTimestamp < lastEnd) {
+				PVR_DPF((PVR_DBG_WARNING,
+					 "gpu_work_period: Overlapping UID %u",
+					 uId));
+				return IMG_FALSE;
+			}
+
+			cache[idx].ui64EndTimestamp = ui64EndTimestamp;
+			return IMG_TRUE;
+		}
+	}
+
+	if (!found) {
+		IMG_UINT32 rw_idx = fd->ui32UidRingIndex;
+
+		cache[rw_idx].ui32UID = uId;
+		cache[rw_idx].ui64EndTimestamp = ui64EndTimestamp;
+		fd->ui32UidRingIndex = (rw_idx + 1) & (PVR_GPU_WORK_UID_CACHE_SIZE - 1);
+	}
+
+	return IMG_TRUE;
 }
 #endif /* defined(PVRSRV_ANDROID_TRACE_GPU_FREQ) */
 
@@ -1679,11 +1721,34 @@ static IMG_BOOL ValidAndEmitFTraceEvent(PVRSRV_RGXDEV_INFO *psDevInfo,
 #endif /* defined(FIX_TIMESTAMPS_392109985) */
 		}
 #if !defined(FIX_TIMESTAMPS_392109985)
-		trace_gpu_work_period(psDevInfo->psDeviceNode->sDevId.ui32InternalID,
-				psHWPerfPktData->ui32UID,
-				ui64StartTimestamp,
-				ui64EndTimestamp,
-				ui64EndTimestamp - ui64StartTimestamp);
+		{
+			IMG_UINT64 duration_ns = ui64EndTimestamp - ui64StartTimestamp;
+			IMG_BOOL valid = IMG_TRUE;
+
+			if (ui64StartTimestamp >= ui64EndTimestamp) {
+				PVR_DPF((PVR_DBG_WARNING,
+					 "gpu_work_period: Illegal timestamps (start>=end) UID %u",
+					 psHWPerfPktData->ui32UID));
+				valid = IMG_FALSE;
+			} else if (duration_ns > PVR_GPU_WORK_ONE_SEC_IN_NSECS) {
+				PVR_DPF((PVR_DBG_WARNING,
+					 "gpu_work_period: Excessive duration (>1s) UID %u",
+					 psHWPerfPktData->ui32UID));
+				valid = IMG_FALSE;
+			} else {
+				valid = pvr_check_work_period_overlap(psDevInfo->pvGpuFtraceData,
+								      psHWPerfPktData->ui32UID,
+								      ui64StartTimestamp,
+								      ui64EndTimestamp);
+			}
+
+			if (valid) {
+				trace_gpu_work_period(
+					psDevInfo->psDeviceNode->sDevId.ui32InternalID,
+					psHWPerfPktData->ui32UID, ui64StartTimestamp,
+					ui64EndTimestamp, duration_ns);
+			}
+		}
 #endif
 
 		if (dev_cfg->pfnRecordWorkPeriod != NULL) {

@@ -48,6 +48,12 @@ struct cpu_latency_stats_elem {
 	struct latency_stats fw_entry_transition;
 	/* Firmware exit transition latency stats */
 	struct latency_stats fw_exit_transition;
+	/* TF-A entry latency stats */
+	struct latency_stats tf_a_entry;
+	/* TF-A exit latency stats */
+	struct latency_stats tf_a_exit;
+	/* TF-A boot latency stats */
+	struct latency_stats tf_a_boot;
 	/* End-to-end entry latency stats */
 	struct latency_stats e2e_entry;
 	/* End-to-end exit latency stats */
@@ -67,7 +73,9 @@ struct cpu_lpm_data {
 	/* -1 for clusters */
 	unsigned int core_id;
 
-	u32 power_state;
+	u32 *power_state;
+	u32 power_state_count;
+
 	struct device *genpd_dev;
 	const char *name;
 	spinlock_t lock;
@@ -90,6 +98,12 @@ struct cpu_lpm_data {
 	struct kobject pd_fw_entry_transition_stats;
 	/* <power_domain>/latency_data/fw_exit_transition sysfs directory */
 	struct kobject pd_fw_exit_transition_stats;
+	/* <power_domain>/latency_data/tf_a_entry sysfs directory */
+	struct kobject pd_tf_a_entry_stats;
+	/* <power_domain>/latency_data/tf_a_exit sysfs directory */
+	struct kobject pd_tf_a_exit_stats;
+	/* <power_domain>/latency_data/tf_a_boot sysfs directory */
+	struct kobject pd_tf_a_boot_stats;
 	/* <power_domain>/latency_data/e2e_entry sysfs directory */
 	struct kobject pd_e2e_entry_stats;
 	/* <power_domain>/latency_data/e2e_exit sysfs directory */

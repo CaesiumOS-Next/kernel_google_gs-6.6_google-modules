@@ -32,8 +32,3 @@ int vg_read(struct dptx *dptx, u32 offset);
 
 int ag_write(struct dptx *dptx, u32 offset, u32 data);
 int ag_read(struct dptx *dptx, u32 offset);
-
-int phyif_write(struct dptx *dptx, u32 offset, u32 data);
-void phyif_write_mask(struct dptx *dptx, u32 addr, u32 mask, u32 data);
-int phyif_read(struct dptx *dptx, u32 offset);
-u32 phyif_read_mask(struct dptx *dptx, u32 addr, u32 mask);

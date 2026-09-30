@@ -9651,6 +9651,13 @@ wl_cfgvif_update_assoc_fail_status(struct bcm_cfg80211 *cfg, struct net_device *
 				assoc_status = e->auth_type;
 			}
 			break;
+		case WLC_E_SET_SSID:
+			if (status == WLC_E_STATUS_NO_NETWORKS) {
+				/* Propagate FW no-networks status (3) to cfg80211 connect_done. */
+				assoc_status = -1;
+				timeout_reason = NL80211_TIMEOUT_SCAN;
+			}
+			break;
 		default:
 			break;
 	}

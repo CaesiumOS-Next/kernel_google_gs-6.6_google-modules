@@ -31,6 +31,18 @@
 #include <linux/sched/clock.h>
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0) */
 
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+#include <linux/lockdep.h>
+
+#define OSL_LOCK_CLASS_SET(lock) \
+	do {                     \
+		static struct lock_class_key __key; \
+		lockdep_set_class(((spinlock_t *)lock), (struct lock_class_key *)&__key); \
+	} while (0)
+#else
+#define OSL_LOCK_CLASS_SET(lock) do { } while (0)
+#endif
+
 #define DECLSPEC_ALIGN(x)	__attribute__ ((aligned(x)))
 
 /* Linux Kernel: File Operations: start */

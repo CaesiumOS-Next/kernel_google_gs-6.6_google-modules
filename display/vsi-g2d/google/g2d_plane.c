@@ -169,8 +169,8 @@ static int create_hw_capability_blob(struct drm_device *drm_dev, struct g2d_plan
 		return -EINVAL;
 
 	blob = drm_property_create_blob(drm_dev, sizeof(struct drm_g2d_plane_hw_caps), 0);
-	if (!blob)
-		return -EINVAL;
+	if (IS_ERR(blob))
+		return PTR_ERR(blob);
 
 	hw_caps = blob->data;
 	hw_caps->min_width = constraints->min_width;
@@ -206,7 +206,7 @@ struct g2d_plane *g2d_plane_init(struct g2d_device *g2d_device, unsigned int pos
 
 	/* one plane per pipeline */
 	if (idx >= NUM_PIPELINES)
-		return NULL;
+		return ERR_PTR(-EINVAL);
 
 	g2d_plane = drmm_universal_plane_alloc(drm, struct g2d_plane, base, possible_crtcs,
 					       &g2d_drm_plane_funcs, g2d_plane_formats,
@@ -215,7 +215,10 @@ struct g2d_plane *g2d_plane_init(struct g2d_device *g2d_device, unsigned int pos
 					       NULL);
 
 	if (IS_ERR(g2d_plane))
-		goto end;
+		return g2d_plane;
+
+	g2d_plane->id = idx;
+	g2d_plane->dev = drm->dev;
 
 	dev_dbg(drm->dev, "%s: alloc success", __func__);
 	drm_plane_helper_add(&g2d_plane->base, &g2d_plane_helper_funcs);
@@ -224,22 +227,17 @@ struct g2d_plane *g2d_plane_init(struct g2d_device *g2d_device, unsigned int pos
 	ret = drm_plane_create_rotation_property(&g2d_plane->base, DRM_MODE_ROTATE_0,
 						 DRM_MODE_ROTATE_MASK | DRM_MODE_REFLECT_MASK);
 	if (ret)
-		goto error_cleanup;
+		return ERR_PTR(ret);
 
 	/* Private Properties */
 	ret = create_hw_capability_blob(drm, g2d_plane);
 	if (ret) {
 		dev_err(drm->dev, "Failed to create HW capability blob for plane");
-		goto end;
+		return ERR_PTR(ret);
 	}
 
 	sc_plane_init(g2d_plane);
 	g2d_device->sc->plane[idx] = g2d_plane;
 
 	return g2d_plane;
-
-error_cleanup:
-	drm_plane_cleanup(&g2d_plane->base);
-end:
-	return NULL;
 }

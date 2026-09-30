@@ -27,6 +27,7 @@
 
 #include "vs_dc_info.h"
 #include "vs_crtc.h"
+#include "vs_drv.h"
 
 #define DTS_HS_EN_ELEM_SIZE 6
 
@@ -359,6 +360,7 @@ static int vs_mipi_dsi_bind(struct device *dev, struct device *master, void *dat
 	int ret, i;
 	struct vs_mipi_dsi2h *dsi = dev_get_drvdata(dev);
 	struct drm_device *drm_dev = data;
+	struct vs_drm_private *priv = drm_dev->dev_private;
 	struct dw_mipi_dsi2h_plat_data *pdata = &dsi->pdata;
 	static bool primary_attached;
 
@@ -371,7 +373,8 @@ static int vs_mipi_dsi_bind(struct device *dev, struct device *master, void *dat
 	pdata->encoder_initialized = true;
 
 	if (primary_attached || is_primary_display(dsi)) {
-		ret = dw_mipi_dsi2h_bind(dsi->dw_mipi_dsi_handle, &dsi->encoder);
+		ret = dw_mipi_dsi2h_bind(dsi->dw_mipi_dsi_handle, &dsi->encoder,
+					 &priv->dsi_coredump_funcs);
 		primary_attached = true;
 		if (ret) {
 			DRM_DEV_ERROR(dev, "Failed to bind: %d\n", ret);
@@ -382,7 +385,8 @@ static int vs_mipi_dsi_bind(struct device *dev, struct device *master, void *dat
 			if (dsi_drvdata[i] && (dsi_drvdata[i]->pdata.index != pdata->index) &&
 				dsi_drvdata[i]->pdata.encoder_initialized) {
 				ret = dw_mipi_dsi2h_bind(dsi_drvdata[i]->dw_mipi_dsi_handle,
-								&dsi_drvdata[i]->encoder);
+							 &dsi_drvdata[i]->encoder,
+							 &priv->dsi_coredump_funcs);
 				if (ret) {
 					DRM_DEV_ERROR(dev, "Failed to bind: %d\n", ret);
 					return ret;

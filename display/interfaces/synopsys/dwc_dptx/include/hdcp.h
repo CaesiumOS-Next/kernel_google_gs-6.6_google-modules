@@ -60,6 +60,8 @@ struct hdcp_device {
 	uint32_t hdcp0_count;
 };
 
+extern unsigned long hdcp_delay_ms;
+
 int run_hdcp_auth13(struct dptx *dptx);
 int run_hdcp_auth22(struct dptx *dptx);
 
@@ -74,5 +76,6 @@ int handle_cp_irq_set(struct dptx *dptx_dev);
 int hdcp_set_auth_state(struct dptx *dptx, enum auth_state state);
 enum auth_state hdcp_get_auth_state(struct dptx *dptx);
 const char *get_auth_state_str(uint32_t state);
+void dptx_hdcp_dump_regs(struct dptx *dptx);
 
 #endif

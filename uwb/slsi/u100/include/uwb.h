@@ -7,14 +7,22 @@
 
 #ifndef __UWB_H__
 #define __UWB_H__
-#include <linux/spi/spi.h>
-#include <linux/miscdevice.h>
-#include <linux/netdevice.h>
 #include <linux/atomic.h>
+#include <linux/completion.h>
+#include <linux/gpio/consumer.h>
+#include <linux/irqreturn.h>
+#include <linux/jiffies.h>
+#include <linux/kernel_stat.h>
+#include <linux/miscdevice.h>
+#include <linux/mutex.h>
+#include <linux/skbuff.h>
+#include <linux/spi/spi.h>
+#include <linux/types.h>
+#include <linux/wait.h>
 
 #include "uwb_fw.h"
-#include "uwb_sysnodes.h"
 #include "uwb_power_stats.h"
+#include "uwb_sysnodes.h"
 
 #define MAX_NAME_LEN 64
 #define MAX_RXQ_DEPTH 1024
@@ -64,7 +72,6 @@ struct uwb_irq {
 	unsigned int num;
 	unsigned long flags;
 	bool registered;
-	struct irq_desc *u100_irq;
 };
 
 struct uci_msg_hdr {
@@ -91,17 +98,17 @@ struct u100_ctx {
 	atomic_t opened;
 	struct spi_device *spi;
 	struct miscdevice uci_dev;
-	struct gpio_desc *gpio_u100_sync;
-	struct uwb_irq gpio_u100_irq;
+	struct uwb_irq u100_irq;
 	struct mutex lock;
 	atomic_t num_spi_slow_txs;
 
 	struct mutex ioctl_mutex;
 	struct mutex tx_mutex;
 
+	struct gpio_desc *gpio_u100_en;
 	struct gpio_desc *gpio_u100_power;
 	struct gpio_desc *gpio_u100_reset;
-	struct gpio_desc *gpio_u100_en;
+	struct gpio_desc *gpio_u100_sync;
 
 	wait_queue_head_t wq;
 	struct sk_buff_head sk_rx_q;
@@ -217,14 +224,9 @@ int uwbs_start_download(struct u100_ctx *u100_ctx);
 
 bool uwbs_sync_start_download(struct u100_ctx *u100_ctx);
 
-static inline unsigned int get_irq_count(struct irq_desc *irq)
+static inline unsigned int get_irq_count(struct u100_ctx *u100_ctx)
 {
-	unsigned int cnt = 0;
-
-	/* Unlike irq_count, tot_count is countable and works well after IRQ re-registration. */
-	if (!IS_ERR_OR_NULL(irq))
-		cnt = irq->tot_count;
-	return cnt;
+	return kstat_irqs_usr(u100_ctx->u100_irq.num);
 }
 
 #endif /* __UWB_H__ */

@@ -698,8 +698,8 @@ int edgetpu_soc_setup_irqs(struct edgetpu_dev *etdev)
 		if (soc_data->wdt_irq[core] > 0) {
 #if EDGETPU_USE_HW_WDT
 			ret = devm_request_irq(etdev->dev, soc_data->wdt_irq[core],
-					       edgetpu_soc_wdt_irq_handler, IRQF_ONESHOT,
-					       etdev->dev_name, etdev);
+					       edgetpu_soc_wdt_irq_handler, 0, etdev->dev_name,
+					       etdev);
 			if (ret) {
 				dev_err(etdev->dev, "%s: failed to request WDT IRQ %d: %d\n",
 					etdev->dev_name, soc_data->wdt_irq[core], ret);

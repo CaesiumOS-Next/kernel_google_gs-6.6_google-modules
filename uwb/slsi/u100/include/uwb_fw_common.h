@@ -8,6 +8,9 @@
 #ifndef __UWB_FW_COMMON_H__
 #define __UWB_FW_COMMON_H__
 
+#include <linux/errno.h>
+#include <linux/types.h>
+
 #include "uwb.h"
 
 #define RETRY_MAX_CNT 2

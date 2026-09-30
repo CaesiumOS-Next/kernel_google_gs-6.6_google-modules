@@ -2,6 +2,7 @@
 #ifndef PIXELMD_CLIENT_H_
 #define PIXELMD_CLIENT_H_
 
+#include "linux/types.h"
 #include "pixelmd_api.h"
 
 #include <linux/wait.h>
@@ -50,6 +51,9 @@ struct pixelmd_clients {
 	/* Tracks how many clients have a source enabled. */
 	atomic_t source_enable_counts[PIXELMD_NUM_SOURCES];
 };
+
+/* Returns true if the source is enabled by at least a single client. */
+bool pixelmd_clients_source_is_enabled(enum pixelmd_source source);
 
 extern struct pixelmd_clients pixelmd_clients;
 

@@ -9,10 +9,12 @@
  * Copyright (C) 2025 Google LLC
  */
 
+#include <linux/cleanup.h>
 #include <linux/idr.h>
 #include <linux/list.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/spinlock_types.h>
 #include <linux/types.h>
 
 #include <iif/iif-fence-table.h>
@@ -25,14 +27,22 @@ struct iif_direct_fence {
 	int timeline;
 	int error;
 	int num_sync_points;
-	int last_poll_timeline;
 	struct iif_fence *iif;
 	struct iif_manager *mgr;
 	struct iif_fence_params params;
 	struct list_head poll_cb_list;
-	spinlock_t poll_cb_lock;
+	bool disable_poll_cb;
+	bool poll_cb_pended;
 	bool error_set_by_kernel;
+	bool delegate_to_ap;
+	spinlock_t fence_lock;
 };
+
+static bool iif_direct_fence_is_circular(struct iif_direct_fence *fence)
+{
+	return fence->params.fence_type == IIF_FENCE_TYPE_REUSABLE &&
+	       fence->params.flags & IIF_FLAGS_CIRCULAR_REUSABLE;
+}
 
 static void iif_direct_fence_set_error(struct iif_direct_fence *fence, int error)
 {
@@ -73,7 +83,7 @@ static unsigned int iif_direct_fence_table_get_remaining_signals(struct iif_dire
 static void iif_direct_fence_table_set_remaining_signals(struct iif_direct_fence *fence,
 							 int remaining_signals)
 {
-	if (fence->iif->propagate)
+	if (fence->delegate_to_ap)
 		iif_fence_table_set_remaining_signals(&fence->mgr->fence_table, fence->id,
 						      remaining_signals);
 }
@@ -81,7 +91,7 @@ static void iif_direct_fence_table_set_remaining_signals(struct iif_direct_fence
 /* Increases the timeline value of the fence in the fence table. */
 static void iif_direct_fence_table_inc_timeline(struct iif_direct_fence *fence)
 {
-	if (fence->iif->propagate)
+	if (fence->delegate_to_ap)
 		iif_fence_table_inc_timeline(&fence->mgr->fence_table, fence->id);
 }
 
@@ -96,9 +106,11 @@ static unsigned int iif_direct_fence_table_get_timeline(struct iif_direct_fence 
 }
 
 /* Adds a new sync point to the fence table. */
-static void iif_direct_fence_table_set_sync_point(struct iif_direct_fence *fence,
-						  unsigned int timeline, unsigned int count)
+static void iif_direct_fence_table_set_sync_point_locked(struct iif_direct_fence *fence,
+							 unsigned int timeline, unsigned int count)
 {
+	lockdep_assert_held(&fence->fence_lock);
+
 	iif_fence_table_set_sync_point(&fence->mgr->fence_table, fence->id, fence->num_sync_points,
 				       timeline, count);
 	fence->num_sync_points++;
@@ -112,35 +124,126 @@ static void iif_direct_fence_table_get_sync_point(struct iif_direct_fence *fence
 				       timeline, count);
 }
 
-/* Returns true if the sync point at @sync_point_index is ready to notify waiters. */
-static bool iif_direct_fence_is_sync_point_ready(struct iif_direct_fence *fence,
-						 int sync_point_index)
+/* Updates the status of a direct single-shot fence and returns true if unblocked. */
+static bool iif_direct_fence_update_single_shot_status_locked(struct iif_direct_fence *fence,
+							      struct iif_fence_status *status)
+{
+	lockdep_assert_held(&fence->fence_lock);
+
+	status->signaled = fence->timeline >= fence->params.remaining_signalers;
+	status->error = status->signaled ? fence->error : 0;
+
+	return status->signaled;
+}
+
+/* Returns true if there is any sync point reached by the signaler at @status->timeline. */
+static bool iif_direct_fence_is_sync_point_ready_locked(struct iif_direct_fence *fence,
+							struct iif_fence_status *status)
 {
 	u8 timeline, count;
+	int i;
 
-	iif_direct_fence_table_get_sync_point(fence, sync_point_index, &timeline, &count);
+	lockdep_assert_held(&fence->fence_lock);
+
+	/* If the fence is circular, the fence must be unblocked at every single signal. */
+	if (iif_direct_fence_is_circular(fence) && status->timeline)
+		return true;
+
+	for (i = 0; i < fence->num_sync_points; i++) {
+		iif_direct_fence_table_get_sync_point(fence, i, &timeline, &count);
+		if ((count == IIF_WAIT_TABLE_SYNC_POINT_COUNT_ALL ||
+		     status->timeline < timeline + count) &&
+		    status->timeline >= timeline)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * Proceeds the fence timeline of @status (waiter's perspective) by 1 if the timeline of @fence
+ * (signaler's perspective) is ahead of it.
+ *
+ * Returns true if @status->timeline has been advanced.
+ */
+static bool iif_direct_fence_proceed_timeline(struct iif_direct_fence *fence,
+					      struct iif_fence_status *status)
+{
+	/*
+	 * If the fence was never signaled, or if the waiter is already caught up with the
+	 * signaler, we can't proceed the timeline. Additionally, if the fence is not circular and
+	 * the waiter is ahead of the signaler (likely a bug though), we can't proceed the timeline
+	 * as well.
+	 */
+	if (fence->timeline == 0 || status->timeline == fence->timeline ||
+	    (!iif_direct_fence_is_circular(fence) && status->timeline > fence->timeline))
+		return false;
 
 	/*
-	 * E.g., sync point window = [3, 5] (timeline=3, count=3)
-	 *
-	 * timeline          fence->timeline
-	 *       |           |
-	 * +-----------------------+
-	 * |...| 3 | 4 | 5 | 6 |...|
-	 * +-----------------------+
-	 *       |       |
-	 *       |       timeline + count - 1
-	 *       |
-	 *       fence->last_poll_timeline
-	 *
-	 * This case can happen if the sync point is a new one and there were no sync points which
-	 * notify waiters for timeline 4 and 5. We should consider this new sync point as ready to
-	 * notify waiters even though the current timeline, @fence->timeline, is already outside of
-	 * the sync point window.
+	 * If the fence is circular, the timeline wraps around at IIF_SIGNAL_TABLE_MAX_TIMELINE.
+	 * For non-circular fences, we also use the same modulo operation since timeline cannot
+	 * exceed IIF_SIGNAL_TABLE_MAX_TIMELINE here.
 	 */
-	return (count == IIF_WAIT_TABLE_SYNC_POINT_COUNT_ALL ||
-		fence->last_poll_timeline < timeline + count - 1) &&
-	       fence->timeline >= timeline;
+	status->timeline = (status->timeline % IIF_SIGNAL_TABLE_MAX_TIMELINE) + 1;
+
+	return true;
+}
+
+/*
+ * Updates @status to advance @status->timeline and returns true if the fence is unblocked at the
+ * updated timeline.
+ *
+ * - @status->timeline: It will be advanced to the earliest sync point reached by the signaler or
+ *                      the signaler's timeline.
+ * - @status->error: It will be set to the fence error if @status->timeline has reached the
+ *                   signaler's timeline and the fence is errored out.
+ *
+ * Return: true if @status->timeline has reached a sync point, or reached the signaler's timeline
+ * and the fence is errored out. Otherwise, false.
+ */
+static bool iif_direct_fence_update_reusable_status_locked(struct iif_direct_fence *fence,
+							   struct iif_fence_status *status)
+{
+	bool unblocked = false;
+
+	/*
+	 * Advances the timeline viewpoint of the waiter (@status->timeline) until it reaches the
+	 * signaler's timeline (@fence->timeline). If it reaches any sync-point in the middle, which
+	 * should be the earliest reachable sync-point from the original @status->timeline, break
+	 * the loop and unblock the fence.
+	 */
+	while (!unblocked && iif_direct_fence_proceed_timeline(fence, status))
+		unblocked = iif_direct_fence_is_sync_point_ready_locked(fence, status);
+
+	/*
+	 * If the timeline viewpoint of waiter reaches the signaler's and the fence is errored out,
+	 * the fence error must be propagated to the waiter regardless of sync points.
+	 */
+	if (status->timeline == fence->timeline && fence->error) {
+		status->error = fence->error;
+		unblocked = true;
+	} else {
+		status->error = 0;
+	}
+
+	return unblocked;
+}
+
+/* Returns true if the fence is unblocked. @status will be updated accordingly. */
+static bool iif_direct_fence_is_unblocked_locked(struct iif_direct_fence *fence,
+						 struct iif_fence_status *status)
+{
+	lockdep_assert_held(&fence->fence_lock);
+
+	if (fence->params.fence_type == IIF_FENCE_TYPE_SINGLE_SHOT)
+		return iif_direct_fence_update_single_shot_status_locked(fence, status);
+	else if (fence->params.fence_type == IIF_FENCE_TYPE_REUSABLE)
+		return iif_direct_fence_update_reusable_status_locked(fence, status);
+
+	iif_warn(fence->iif, "Unsupported fence type while checking fence unblocked: %d",
+		 fence->params.fence_type);
+
+	return false;
 }
 
 /* Handles the error passed while signaling the kernel fence object. */
@@ -153,16 +256,16 @@ static void iif_direct_fence_handle_signal_error(struct iif_direct_fence *fence,
 	 * For the backward compatibility of IP firmwares which don't set the fence error code to
 	 * the table (i.e., only mark the errored flag), if the errored flag was set, but the error
 	 * code is empty in the table, let the kernel driver set it on behalf of the signaler IP
-	 * firmware regardless of @fence->iif->propagate.
+	 * firmware regardless of @fence->delegate_to_ap.
 	 */
-	if (fence->iif->propagate || (errored && !table_error))
+	if (fence->delegate_to_ap || (errored && !table_error))
 		fence->error_set_by_kernel = true;
 
 	/*
 	 * If @error is 0, we don't need to handle the error.
 	 * If @fence->error_set_by_kernel is false, the firmware is supposed to set error to the
 	 * fence table, and the error of kernel fence object will be synced with the fence table
-	 * when `iif_direct_fence_sync_status()` is called.
+	 * when `iif_direct_fence_sync_status_locked()` is called.
 	 */
 	if (!error || !fence->error_set_by_kernel)
 		return;
@@ -172,13 +275,12 @@ static void iif_direct_fence_handle_signal_error(struct iif_direct_fence *fence,
 }
 
 /* Invokes poll callbacks registered to a direct single-shot fence. */
-static void iif_direct_fence_invoke_poll_callbacks_single_shot(struct iif_direct_fence *fence)
+static void
+iif_direct_fence_invoke_poll_callbacks_single_shot_locked(struct iif_direct_fence *fence)
 {
-	struct iif_manager_fence_ops_poll_cb *cur, *tmp;
-	struct iif_fence_status status;
-	unsigned long flags;
+	struct iif_fence_poll_cb *cur, *tmp;
 
-	lockdep_assert_held(&fence->iif->fence_lock);
+	lockdep_assert_held(&fence->fence_lock);
 
 	/*
 	 * For single-shot fence, notify waiters only if all signalers have signaled the fence
@@ -187,81 +289,66 @@ static void iif_direct_fence_invoke_poll_callbacks_single_shot(struct iif_direct
 	if (fence->timeline < fence->params.remaining_signalers)
 		return;
 
-	status.error = fence->error;
-	status.signaled = fence->timeline >= fence->params.remaining_signalers;
-
-	spin_lock_irqsave(&fence->poll_cb_lock, flags);
-
 	list_for_each_entry_safe(cur, tmp, &fence->poll_cb_list, node) {
+		/*
+		 * Don't need to check the return value as the if statement above guarantees the
+		 * fence unblock.
+		 */
+		iif_direct_fence_update_single_shot_status_locked(fence, &cur->status);
 		list_del_init(&cur->node);
-		cur->func(fence->iif, &status);
+		cur->func(fence->iif, cur);
 	}
-
-	spin_unlock_irqrestore(&fence->poll_cb_lock, flags);
 }
 
 /* Invokes poll callbacks registered to a direct reusable fence. */
-static void iif_direct_fence_invoke_poll_callbacks_reusable(struct iif_direct_fence *fence)
+static void iif_direct_fence_invoke_poll_callbacks_reusable_locked(struct iif_direct_fence *fence)
 {
-	struct iif_manager_fence_ops_poll_cb *cur, *tmp;
-	struct iif_fence_status status;
-	unsigned long flags;
-	bool found = false;
-	int i;
+	struct iif_fence_poll_cb *cur, *tmp;
+	bool unblocked = false;
 
-	lockdep_assert_held(&fence->iif->fence_lock);
-
-	status.timeline = fence->timeline;
-	status.error = fence->error;
-
-	if (status.error) {
-		/*
-		 * If the fence is errored out, poll callbacks should be invoked regardless of sync
-		 * points.
-		 */
-		found = true;
-	} else {
-		/* If poll callbacks were already notified for the current timeline, skip it. */
-		if (fence->last_poll_timeline >= fence->timeline)
-			return;
-
-		/* Finds any sync point which should notify waiters for the current timeline. */
-		for (i = 0; i < fence->num_sync_points; i++) {
-			if (iif_direct_fence_is_sync_point_ready(fence, i)) {
-				found = true;
-				break;
-			}
-		}
-	}
-
-	if (!found)
-		return;
-
-	spin_lock_irqsave(&fence->poll_cb_lock, flags);
+	lockdep_assert_held(&fence->fence_lock);
 
 	list_for_each_entry_safe(cur, tmp, &fence->poll_cb_list, node) {
-		/* If the fence is errored out, the fence doesn't need to be signaled anymore. */
-		if (status.error)
-			list_del_init(&cur->node);
-		cur->func(fence->iif, &status);
+		unblocked = iif_direct_fence_update_reusable_status_locked(fence, &cur->status);
+		if (unblocked) {
+			/*
+			 * If the fence is errored out, the fence doesn't need to be signaled
+			 * anymore.
+			 */
+			if (cur->status.error)
+				list_del_init(&cur->node);
+			cur->func(fence->iif, cur);
+		}
+	}
+}
+
+static void iif_direct_fence_invoke_poll_callbacks_locked(struct iif_direct_fence *fence)
+{
+	lockdep_assert_held(&fence->fence_lock);
+
+	if (unlikely(fence->disable_poll_cb)) {
+		fence->poll_cb_pended = true;
+		return;
 	}
 
-	spin_unlock_irqrestore(&fence->poll_cb_lock, flags);
+	if (fence->params.fence_type == IIF_FENCE_TYPE_SINGLE_SHOT)
+		iif_direct_fence_invoke_poll_callbacks_single_shot_locked(fence);
+	else if (fence->params.fence_type == IIF_FENCE_TYPE_REUSABLE)
+		iif_direct_fence_invoke_poll_callbacks_reusable_locked(fence);
 
-	fence->last_poll_timeline = status.timeline;
+	fence->poll_cb_pended = false;
 }
 
 /*
  * Synchronizes the fence status with the fence table. If it has been actually updated, invoke the
  * poll callback to notify the update to the IIF driver users.
  */
-static void iif_direct_fence_sync_status(struct iif_direct_fence *fence,
-					 void (*invoke_poll_cb)(struct iif_direct_fence *fence))
+static void iif_direct_fence_sync_status_locked(struct iif_direct_fence *fence)
 {
 	int table_timeline, table_error;
 	bool table_errored;
 
-	lockdep_assert_held(&fence->iif->fence_lock);
+	lockdep_assert_held(&fence->fence_lock);
 
 	table_timeline = iif_direct_fence_table_get_timeline(fence);
 	table_errored = iif_direct_fence_table_is_errored(fence);
@@ -298,8 +385,8 @@ static void iif_direct_fence_sync_status(struct iif_direct_fence *fence,
 	if (unlikely(table_errored && !table_error))
 		table_error = -ECANCELED;
 
-	/* The fence timeline must be always increasing. */
-	if (unlikely(table_timeline < fence->timeline)) {
+	/* The fence timeline must be always increasing for non-circular reusable fences. */
+	if (!iif_direct_fence_is_circular(fence) && unlikely(table_timeline < fence->timeline)) {
 		iif_warn(fence->iif, "fence timeline shouldn't be decreased\n");
 		table_timeline = fence->timeline;
 	}
@@ -316,27 +403,22 @@ static void iif_direct_fence_sync_status(struct iif_direct_fence *fence,
 	iif_direct_fence_set_error(fence, table_error);
 	iif_direct_fence_set_timeline(fence, table_timeline);
 
-	invoke_poll_cb(fence);
+	iif_direct_fence_invoke_poll_callbacks_locked(fence);
 }
 
-/* Synchronizes the fence status with the fence table. (For single-shot) */
-static inline void iif_direct_fence_sync_status_single_shot(struct iif_direct_fence *fence)
-{
-	iif_direct_fence_sync_status(fence, iif_direct_fence_invoke_poll_callbacks_single_shot);
-}
-
-/* Synchronizes the fence status with the fence table. (For reusable) */
-static inline void iif_direct_fence_sync_status_reusable(struct iif_direct_fence *fence)
-{
-	iif_direct_fence_sync_status(fence, iif_direct_fence_invoke_poll_callbacks_reusable);
-}
-
-static int iif_direct_fence_signal_single_shot(struct iif_direct_fence *fence, int error)
+/*
+ * Signals a single-shot fence with the specified error.
+ *
+ * If @retire is true, it means that this function is called for forcefully erroring out the fence
+ * if the fence hasn't been fully signaled.
+ */
+static int iif_direct_fence_signal_single_shot_locked(struct iif_direct_fence *fence, int error,
+						      bool retire)
 {
 	int table_remaining_signals;
 	bool table_errored;
 
-	lockdep_assert_held(&fence->iif->fence_lock);
+	lockdep_assert_held(&fence->fence_lock);
 
 	/*
 	 * The meaning of this function called when the signaler is an IP is that the IP has
@@ -358,47 +440,66 @@ static int iif_direct_fence_signal_single_shot(struct iif_direct_fence *fence, i
 	table_remaining_signals = iif_direct_fence_table_get_remaining_signals(fence);
 	table_errored = iif_direct_fence_table_is_errored(fence);
 
+	/* If the fence is already fully signaled, we don't need to do anything on retire. */
+	if (retire && !table_remaining_signals)
+		return 0;
+
 	if (!table_remaining_signals && !table_errored && error) {
 		error = 0;
 	} else if (!table_remaining_signals && table_errored && !error) {
 		/*
-		 * Theoretically, this case wouldn't happen since @fence->propagate was set means
-		 * that the signaler IP has been crashed and the IP driver will signal the fence
-		 * with an error. Handle it just in case and we can consider that the signaler
+		 * Theoretically, this case wouldn't happen since @fence->delegate_to_ap was set
+		 * means that the signaler IP has been crashed and the IP driver will signal the
+		 * fence with an error. Handle it just in case and we can consider that the signaler
 		 * command has been canceled.
 		 */
 		error = -ECANCELED;
 	}
 
-	if (fence->iif->propagate && table_remaining_signals)
+	if (fence->delegate_to_ap && table_remaining_signals)
 		table_remaining_signals--;
+
+	/* If the fence is retiring, set remaining signals to 0 forcefully. */
+	if (retire)
+		table_remaining_signals = 0;
 
 	/*
 	 * Sets the error and remaining signals to the fence table. Note that these functions will
-	 * be NO-OP if @propagate is false except setting @error to @fence->error.
+	 * be NO-OP if @fence->delegate_to_ap is false except setting @error to @fence->error.
 	 *
-	 * We should set the error before signaling the fence. Otherwise, if @fence->propagate is
-	 * true so that the IIF driver is updating the fence table and if it signals the fence
+	 * We should set the error before signaling the fence. Otherwise, if @fence->delegate_to_ap
+	 * is true so that the IIF driver is updating the fence table and if it signals the fence
 	 * first, waiter IPs may misundestand that the fence has been unblocked without an error.
 	 */
 	iif_direct_fence_handle_signal_error(fence, error);
 	iif_direct_fence_table_set_remaining_signals(fence, table_remaining_signals);
 
 	/* Synchronizes the fence status with the fence table. */
-	iif_direct_fence_sync_status_single_shot(fence);
+	iif_direct_fence_sync_status_locked(fence);
 
 	return 0;
 }
 
-static int iif_direct_fence_signal_reusable(struct iif_direct_fence *fence, int error)
+/*
+ * Signals a reusable fence with the specified error.
+ *
+ * If @retire is true, it means that this function is called for forcefully erroring out the fence
+ * if the fence hasn't been errored (timed out) yet.
+ */
+static int iif_direct_fence_signal_reusable_locked(struct iif_direct_fence *fence, int error,
+						   bool retire)
 {
 	int table_timeline;
 	bool table_errored;
 
-	lockdep_assert_held(&fence->iif->fence_lock);
+	lockdep_assert_held(&fence->fence_lock);
 
 	table_timeline = iif_direct_fence_table_get_timeline(fence);
 	table_errored = iif_direct_fence_table_is_errored(fence);
+
+	/* If the fence is already errored, we don't need to do anything on retire. */
+	if (retire && table_errored)
+		return 0;
 
 	/*
 	 * Theoretically, if the error flag in the fence table was set by the firmware, the error
@@ -409,30 +510,30 @@ static int iif_direct_fence_signal_reusable(struct iif_direct_fence *fence, int 
 		error = -ECANCELED;
 
 	/*
-	 * If @propagate is true, see if the fence will be timedout by this signal. Otherwise, see
-	 * if the fence was already timedout.
+	 * For non-circular fences, if @fence->delegate_to_ap is true, see if the fence will be
+	 * timedout by this signal. Otherwise, see if the fence was already timedout.
 	 */
-	if (table_timeline >= IIF_SIGNAL_TABLE_MAX_TIMELINE ||
-	    table_timeline + (fence->iif->propagate ? 1 : 0) >= fence->params.timeout)
+	if (!iif_direct_fence_is_circular(fence) &&
+	    (table_timeline >= IIF_SIGNAL_TABLE_MAX_TIMELINE ||
+	     table_timeline + (fence->delegate_to_ap ? 1 : 0) >= fence->params.timeout))
 		error = -ETIMEDOUT;
 
 	/*
 	 * Updates the error and timeline of the fence table. Note that these functions will be
-	 * NO-OP if @fence->iif->propagate is false except setting @error to @fence->error.
+	 * NO-OP if @fence->delegate_to_ap is false except setting @error to @fence->error.
 	 *
 	 * We should set the error before increasing the timeline value. Otherwise, if
-	 * @fence->propagate is true so that the IIF driver is updating the fence table and if it
-	 * signals the fence first, waiter IPs may misundestand that the fence has been unblocked
+	 * @fence->delegate_to_ap is true so that the IIF driver is updating the fence table and if
+	 * it signals the fence first, waiter IPs may misundestand that the fence has been unblocked
 	 * without an error.
 	 */
 	iif_direct_fence_handle_signal_error(fence, error);
 
-	/* Prevents overflow. */
-	if (table_timeline < IIF_SIGNAL_TABLE_MAX_TIMELINE)
-		iif_direct_fence_table_inc_timeline(fence);
+	/* Increases the fence timeline by 1. */
+	iif_direct_fence_table_inc_timeline(fence);
 
 	/* Synchronizes the fence status with the fence table. */
-	iif_direct_fence_sync_status_reusable(fence);
+	iif_direct_fence_sync_status_locked(fence);
 
 	return 0;
 }
@@ -449,12 +550,16 @@ static void iif_direct_fence_init_single_shot(struct iif_direct_fence *fence)
 static void iif_direct_fence_init_reusable(struct iif_direct_fence *fence)
 {
 	struct iif_manager *mgr = fence->mgr;
+	u8 flag = 0;
 
 	if (fence->params.timeout > IIF_SIGNAL_TABLE_MAX_TIMELINE)
 		fence->params.timeout = IIF_SIGNAL_TABLE_MAX_TIMELINE;
 
-	iif_fence_table_init_reusable_fence_entry(&mgr->fence_table, fence->id,
-						  fence->params.timeout, fence->params.waiters);
+	if (iif_direct_fence_is_circular(fence))
+		flag |= BIT(IIF_SIGNAL_TABLE_FLAG_CIRCULAR_REUSABLE_BIT);
+
+	iif_fence_table_init_reusable_fence_entry(
+		&mgr->fence_table, fence->id, fence->params.timeout, fence->params.waiters, flag);
 }
 
 static const char *iif_direct_sync_unit_name(void *driver_data)
@@ -490,9 +595,9 @@ static int iif_direct_fence_create(struct iif_fence *iif, const struct iif_fence
 	fence->mgr = mgr;
 	fence->id = id;
 	fence->params = *params;
-	fence->last_poll_timeline = -1;
+	fence->delegate_to_ap = params->signaler_ip == IIF_IP_AP;
 	INIT_LIST_HEAD(&fence->poll_cb_list);
-	spin_lock_init(&fence->poll_cb_lock);
+	spin_lock_init(&fence->fence_lock);
 
 	/* Initializes the entry of the fence table. */
 	if (params->fence_type == IIF_FENCE_TYPE_SINGLE_SHOT) {
@@ -520,7 +625,23 @@ static void iif_direct_fence_retire(struct iif_fence *iif, void *driver_data)
 {
 	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
 
+	scoped_guard(spinlock_irqsave, &fence->fence_lock) {
+		fence->delegate_to_ap = true;
+
+		if (fence->params.fence_type == IIF_FENCE_TYPE_SINGLE_SHOT)
+			iif_direct_fence_signal_single_shot_locked(fence, -EDEADLK,
+								   /*retire=*/true);
+		else if (fence->params.fence_type == IIF_FENCE_TYPE_REUSABLE)
+			iif_direct_fence_signal_reusable_locked(fence, -EDEADLK, /*retire=*/true);
+	}
+
 	ida_free(&fence->mgr->idp, fence->id);
+}
+
+static void iif_direct_fence_release(struct iif_fence *iif, void *driver_data)
+{
+	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
+
 	kfree(fence);
 }
 
@@ -529,33 +650,37 @@ static int iif_direct_fence_add_sync_point(struct iif_fence *iif, u64 timeline, 
 {
 	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
 
-	lockdep_assert_held(&fence->iif->fence_lock);
-
 	/* Only reusable fence supports adding sync points. */
 	if (fence->params.fence_type != IIF_FENCE_TYPE_REUSABLE)
 		return -EOPNOTSUPP;
-
-	/* No more space to register new sync points. */
-	if (fence->num_sync_points >= IIF_NUM_SYNC_POINTS)
-		return -ENOSPC;
 
 	/* The timeline and signal count should be bigger than 0. */
 	if (!timeline || !count)
 		return -EINVAL;
 
-	if (timeline > IIF_SIGNAL_TABLE_MAX_TIMELINE)
-		timeline = IIF_SIGNAL_TABLE_MAX_TIMELINE;
+	/* Check if the sync point timeline and count are within valid range. */
+	if (count != IIF_FENCE_SYNC_POINT_COUNT_ALL &&
+	    (count > IIF_SIGNAL_TABLE_MAX_TIMELINE ||
+	     timeline > IIF_SIGNAL_TABLE_MAX_TIMELINE - count))
+		return -EINVAL;
 
-	if (count >= IIF_WAIT_TABLE_SYNC_POINT_COUNT_ALL)
+	if (count == IIF_FENCE_SYNC_POINT_COUNT_ALL)
 		count = IIF_WAIT_TABLE_SYNC_POINT_COUNT_ALL;
 
-	iif_direct_fence_table_set_sync_point(fence, timeline, count);
+	scoped_guard(spinlock_irqsave, &fence->fence_lock) {
+		/* No more space to register new sync points. */
+		if (fence->num_sync_points >= IIF_NUM_SYNC_POINTS)
+			return -ENOSPC;
 
-	/*
-	 * If the current fence timeline already overlaps or has paased the new sync point window,
-	 * but the last timeline invoked poll callbacks was too old, invoke callbacks here.
-	 */
-	iif_direct_fence_invoke_poll_callbacks_reusable(fence);
+		iif_direct_fence_table_set_sync_point_locked(fence, timeline, count);
+
+		/*
+		 * If the current fence timeline already overlaps or has paased the new sync point
+		 * window, but the last timeline invoked poll callbacks was too old, invoke
+		 * callbacks here.
+		 */
+		iif_direct_fence_invoke_poll_callbacks_reusable_locked(fence);
+	}
 
 	return 0;
 }
@@ -564,56 +689,94 @@ static int iif_direct_fence_signal(struct iif_fence *iif, int error, void *drive
 {
 	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
 
-	lockdep_assert_held(&iif->fence_lock);
-
-	if (fence->params.fence_type == IIF_FENCE_TYPE_SINGLE_SHOT)
-		return iif_direct_fence_signal_single_shot(fence, error);
-	if (fence->params.fence_type == IIF_FENCE_TYPE_REUSABLE)
-		return iif_direct_fence_signal_reusable(fence, error);
+	scoped_guard(spinlock_irqsave, &fence->fence_lock) {
+		if (fence->params.fence_type == IIF_FENCE_TYPE_SINGLE_SHOT)
+			return iif_direct_fence_signal_single_shot_locked(fence, error,
+									  /*retire=*/false);
+		else if (fence->params.fence_type == IIF_FENCE_TYPE_REUSABLE)
+			return iif_direct_fence_signal_reusable_locked(fence, error,
+								       /*retire=*/false);
+	}
 
 	return -EOPNOTSUPP;
 }
 
-static int iif_direct_add_poll_cb(struct iif_fence *iif, struct iif_manager_fence_ops_poll_cb *cb,
+static int iif_direct_add_poll_cb(struct iif_fence *iif, struct iif_fence_poll_cb *cb,
 				  void *driver_data)
 {
 	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
-	unsigned long flags;
 
-	INIT_LIST_HEAD(&cb->node);
+	guard(spinlock_irqsave)(&fence->fence_lock);
 
-	spin_lock_irqsave(&fence->poll_cb_lock, flags);
+	if (iif_direct_fence_is_unblocked_locked(fence, &cb->status)) {
+		INIT_LIST_HEAD(&cb->node);
+		return -EPERM;
+	}
+
 	list_add_tail(&cb->node, &fence->poll_cb_list);
-	spin_unlock_irqrestore(&fence->poll_cb_lock, flags);
 
 	return 0;
 }
 
-static bool iif_direct_remove_poll_cb(struct iif_fence *iif,
-				      struct iif_manager_fence_ops_poll_cb *cb, void *driver_data)
+static bool iif_direct_remove_poll_cb(struct iif_fence *iif, struct iif_fence_poll_cb *cb,
+				      void *driver_data)
 {
 	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
-	unsigned long flags;
 	bool removed = false;
 
-	spin_lock_irqsave(&fence->poll_cb_lock, flags);
+	guard(spinlock_irqsave)(&fence->fence_lock);
 
 	if (!list_empty(&cb->node)) {
 		list_del_init(&cb->node);
 		removed = true;
 	}
 
-	spin_unlock_irqrestore(&fence->poll_cb_lock, flags);
-
 	return removed;
+}
+
+static void iif_direct_disable_poll_cb(struct iif_fence *iif, bool disable, void *driver_data)
+{
+	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
+
+	guard(spinlock_irqsave)(&fence->fence_lock);
+
+	if (fence->disable_poll_cb == disable)
+		return;
+
+	fence->disable_poll_cb = disable;
+
+	if (!disable && fence->poll_cb_pended)
+		iif_direct_fence_invoke_poll_callbacks_locked(fence);
+}
+
+static int iif_direct_fence_delegate_to_ap(struct iif_fence *iif, void *driver_data)
+{
+	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
+
+	fence->delegate_to_ap = true;
+
+	return 0;
+}
+
+static void iif_direct_fence_unblocked(struct iif_fence *iif, void *driver_data)
+{
+	struct iif_direct_fence *fence = iif_fence_get_priv_fence_data(iif);
+
+	guard(spinlock_irqsave)(&fence->fence_lock);
+
+	iif_direct_fence_sync_status_locked(fence);
 }
 
 const struct iif_manager_fence_ops iif_direct_fence_ops = {
 	.sync_unit_name = iif_direct_sync_unit_name,
 	.fence_create = iif_direct_fence_create,
 	.fence_retire = iif_direct_fence_retire,
+	.fence_release = iif_direct_fence_release,
 	.fence_add_sync_point = iif_direct_fence_add_sync_point,
 	.fence_signal = iif_direct_fence_signal,
 	.add_poll_cb = iif_direct_add_poll_cb,
 	.remove_poll_cb = iif_direct_remove_poll_cb,
+	.disable_poll_cb = iif_direct_disable_poll_cb,
+	.delegate_to_ap = iif_direct_fence_delegate_to_ap,
+	.fence_unblocked = iif_direct_fence_unblocked,
 };

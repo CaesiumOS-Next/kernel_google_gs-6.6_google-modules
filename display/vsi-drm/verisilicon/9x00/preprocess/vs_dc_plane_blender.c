@@ -34,7 +34,7 @@ static bool blend_mode_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 {
 	const struct drm_vs_blend *bld = data;
 	bool alpha_enabled = false;
-	u32 config = 0, config_ex = 0;
+	u32 config = 0;
 
 	vs_dc_hw_get_plane_property(hw, hw_id, "BLEND_ALPHA", &alpha_enabled);
 	trace_config_hw_layer_feature("BLEND_MODE", hw_id, "en:%d alpha_en:%d", enable,
@@ -42,12 +42,6 @@ static bool blend_mode_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 
 	config = dc_read(hw, VS_SH_LAYER_FIELD(hw_id, ALPHA_BLEND_CONFIG_Address));
 	config = VS_SET_FIELD(config, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG, ALPHA_BLEND, enable);
-
-	if (hw->rev == DC_REV_1) {
-		config_ex = dc_read(hw, VS_SH_LAYER_FIELD(hw_id, ALPHA_BLEND_CONFIG_EX_Address));
-		config_ex = VS_SET_FIELD(config_ex, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-					 ALPHA_BLEND, enable);
-	}
 
 	if (enable) {
 		trace_config_hw_layer_feature("BLEND_MODE_DATA", hw_id,
@@ -60,23 +54,7 @@ static bool blend_mode_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 			config = VS_SET_FIELD(config, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG,
 					      ALPHA_BLEND_FAST_MODE, bld->color_mode);
 
-			if (hw->rev == DC_REV_1) {
-				config_ex = VS_SET_FIELD_PREDEF(
-					config_ex, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-					ALPHA_BLEND_FAST, ENABLED);
-				config_ex = VS_SET_FIELD(config_ex,
-							 DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-							 ALPHA_BLEND_FAST_MODE, bld->color_mode);
-			}
 		} else {
-			if (hw->rev == DC_REV_1)
-				config_ex = VS_SET_FIELD_PREDEF(
-					config, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-					ALPHA_BLEND_FAST, DISABLED);
-
-			config = VS_SET_FIELD_PREDEF(config, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG,
-						     ALPHA_BLEND_FAST, DISABLED);
-
 			switch (bld->color_mode) {
 			case VS_BLD_CLR:
 				config = VS_SET_FIELD_PREDEF(config,
@@ -400,22 +378,12 @@ static bool blend_mode_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const 
 			}
 		}
 	} else {
-		if (!alpha_enabled) {
+		if (!alpha_enabled)
 			config = VS_SET_FIELD_PREDEF(config, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG,
 						     ALPHA_BLEND_FAST, DISABLED);
-
-			if (hw->rev == DC_REV_1) {
-				config_ex = VS_SET_FIELD_PREDEF(
-					config_ex, DCREG_SH_LAYER0_ALPHA_BLEND_CONFIG_EX,
-					ALPHA_BLEND_FAST, DISABLED);
-			}
-		}
 	}
 
 	dc_write(hw, VS_SH_LAYER_FIELD(hw_id, ALPHA_BLEND_CONFIG_Address), config);
-
-	if (hw->rev == DC_REV_1)
-		dc_write(hw, VS_SH_LAYER_FIELD(hw_id, ALPHA_BLEND_CONFIG_EX_Address), config_ex);
 
 	return true;
 }

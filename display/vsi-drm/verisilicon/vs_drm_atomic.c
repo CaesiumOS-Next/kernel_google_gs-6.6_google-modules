@@ -11,6 +11,7 @@
 #include "vs_crtc.h"
 #include "vs_drm_state_record.h"
 #include "vs_dc.h"
+#include "vs_writeback.h"
 
 #include <linux/bitmap.h>
 #include <linux/dma-fence.h>
@@ -232,12 +233,44 @@ static void vs_drm_commit_queue_work(struct drm_atomic_state *state)
 	queue_work(system_highpri_wq, &state->commit_work);
 }
 
+static int _vs_validate_secure_wb(const struct drm_device *dev, struct drm_atomic_state *state)
+{
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *new_state;
+	int i;
+	bool pending_secure = false;
+	bool pending_wb = false;
+
+	for_each_new_crtc_in_state(state, crtc, new_state, i) {
+		if (vs_crtc_state_has_secure(new_state))
+			pending_secure = true;
+		if (vs_crtc_state_is_active_and_wb(new_state, dev))
+			pending_wb = true;
+	}
+
+	if (pending_secure && vs_writeback_is_active(dev)) {
+		drm_dbg_atomic(dev, "Rejecting commit: enabling secure display while wb active\n");
+		return -EBUSY;
+	}
+
+	if (pending_wb && vs_crtc_secure_hardware_active(dev)) {
+		drm_dbg_atomic(dev, "Rejecting commit: enabling wb while secure is active\n");
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
 static int vs_drm_atomic_commit_internal(struct drm_device *dev, struct drm_atomic_state *state,
 					 bool nonblock)
 {
 	int ret;
 
 	vs_drm_atomic_mark_commit_timestamp(state, true);
+
+	ret = _vs_validate_secure_wb(dev, state);
+	if (ret)
+		return ret;
 
 	DPU_ATRACE_BEGIN("setup_commit");
 	ret = drm_atomic_helper_setup_commit(state, nonblock);
@@ -638,8 +671,8 @@ static void _check_dsi_errors(bool *coredump_executed, struct vs_crtc_state *vs_
 	bool err_triggered = test_bit(GS_DSI_ERR_HARD_RSTN, gs_conn_state->dsi_errors);
 
 	if (err_triggered) {
-		dev_err(crtc->dev->dev, "DSI errors detected on %s: 0x%*pb\n", crtc->name,
-			GS_DSI_ERR_MAX, gs_conn_state->dsi_errors);
+		dev_err_ratelimited(crtc->dev->dev, "DSI errors detected on %s: 0x%*pb\n",
+			crtc->name, GS_DSI_ERR_MAX, gs_conn_state->dsi_errors);
 		_execute_recovery_or_coredump_if_needed(coredump_executed, vs_crtc_state,
 							gs_conn_state, SSCD_SRC_DSI_ERR);
 	}
@@ -653,8 +686,8 @@ static void _check_panel_ddic_errors(bool *coredump_executed, struct vs_crtc_sta
 			      !gs_panel_only_specific_error_detected_in_bitmap(
 				      gs_conn_state->panel_errors, GS_PANEL_ERR_GRAM_COLLISION));
 	if (err_triggered) {
-		dev_err(crtc->dev->dev, "DDIC errors detected on %s: 0x%*pb\n", crtc->name,
-			GS_PANEL_ERR_MAX, gs_conn_state->panel_errors);
+		dev_err_ratelimited(crtc->dev->dev, "DDIC errors detected on %s: 0x%*pb\n",
+			crtc->name, GS_PANEL_ERR_MAX, gs_conn_state->panel_errors);
 		_execute_recovery_or_coredump_if_needed(coredump_executed, vs_crtc_state,
 							gs_conn_state, SSCD_SRC_DDIC_ERR);
 	}
@@ -668,7 +701,7 @@ static void _check_panel_gram_errors(bool *coredump_executed, struct vs_crtc_sta
 			      !gs_conn_state->coredump_for_gram_collision_triggered);
 
 	if (err_triggered) {
-		dev_err(crtc->dev->dev, "GRAM collision detected on %s\n", crtc->name);
+		dev_err_ratelimited(crtc->dev->dev, "GRAM collision detected on %s\n", crtc->name);
 		_execute_recovery_or_coredump_if_needed(coredump_executed, vs_crtc_state,
 							gs_conn_state, SSCD_SRC_GRAM_COLLISION);
 		gs_conn_state->trigger_dumps_for_gram_collision = false;
@@ -719,6 +752,73 @@ static void vs_drm_atomic_check_display_errors(struct drm_device *dev,
 		clear_bit(GS_DSI_ERR_HARD_RSTN, gs_conn_state->dsi_errors);
 		bitmap_clear(gs_conn_state->panel_errors, 0, GS_PANEL_ERR_MAX);
 	}
+}
+
+static bool _drm_commit_enables_secure_or_wb(struct drm_atomic_state *state)
+{
+	const struct drm_device *dev = state->dev;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
+	int i;
+
+	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
+		struct drm_crtc_state *old_crtc_state = drm_atomic_get_old_crtc_state(state, crtc);
+
+		if (vs_crtc_commit_enables_secure_or_wb(crtc_state, old_crtc_state, dev))
+			return true;
+	}
+
+	return false;
+}
+
+/**
+ * vs_drm_validate_secure_wb() - Validate global secure + WB status.
+ * @state: The global atomic state.
+ *
+ * This function checks for concurrent secure display and writeback configurations
+ * across all CRTCs on the device. Unmodified CRTCs are locked and peeked.
+ *
+ * Return: 0 on success,
+ *         -EINVAL if concurrent secure and writeback is detected,
+ *         -EDEADLK if a modeset lock contention occurs (requiring backoff/retry),
+ *         or other negative error codes on failure.
+ */
+static int vs_drm_validate_secure_wb(struct drm_atomic_state *state)
+{
+	const struct drm_device *dev = state->dev;
+	struct drm_crtc *crtc;
+	u32 secure_crtc_mask = 0;
+	u32 wb_crtc_mask = 0;
+
+	if (!_drm_commit_enables_secure_or_wb(state))
+		return 0;
+
+	drm_for_each_crtc(crtc, dev) {
+		struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+		int ret;
+
+		if (!crtc_state) {
+			ret = drm_modeset_lock(&crtc->mutex, state->acquire_ctx);
+			if (ret)
+				return ret;
+			crtc_state = crtc->state;
+		}
+
+		if (crtc_state) {
+			if (vs_crtc_state_has_secure(crtc_state))
+				secure_crtc_mask |= drm_crtc_mask(crtc);
+			if (vs_crtc_state_is_active_and_wb(crtc_state, dev))
+				wb_crtc_mask |= drm_crtc_mask(crtc);
+		}
+	}
+
+	if (secure_crtc_mask && wb_crtc_mask) {
+		drm_dbg_atomic(dev, "Rejecting config: concurrent secure (%#x) + wb (%#x)\n",
+			       secure_crtc_mask, wb_crtc_mask);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 int vs_drm_atomic_check(struct drm_device *dev, struct drm_atomic_state *state)
@@ -772,6 +872,10 @@ int vs_drm_atomic_check(struct drm_device *dev, struct drm_atomic_state *state)
 		drm_err(dev, "check_planes failed %d", ret);
 		goto end;
 	}
+
+	ret = vs_drm_validate_secure_wb(state);
+	if (ret)
+		goto end;
 
 	if (state->legacy_cursor_update)
 		state->async_update = !drm_atomic_helper_async_check(dev, state);

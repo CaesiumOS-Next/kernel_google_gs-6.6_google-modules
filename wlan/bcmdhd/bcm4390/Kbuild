@@ -108,11 +108,15 @@ ifeq ($(CONFIG_BCMDHD),)
   DHDCFLAGS += -DCONFIG_BCMDHD_PREALLOC_MEMDUMP=$(CONFIG_BCMDHD_PREALLOC_MEMDUMP)
   DHDCFLAGS += -DCONFIG_BCMDHD_OOB_HOST_WAKE=$(CONFIG_BCMDHD_OOB_HOST_WAKE)
   DHDCFLAGS += -DCONFIG_BCMDHD_GET_OOB_STATE=$(CONFIG_BCMDHD_GET_OOB_STATE)
-    CONFIG_WONDERTAP=y
+  # wondertap - activate only if wonder folder is present in SDK
+  WONDER_DIR=$(ROOT_DIR)/private/google-modules/wlan/wonder
+  ifneq ($(wildcard $(WONDER_DIR)),)
+  CONFIG_WONDERTAP=y
     ifeq ($(CONFIG_WONDERTAP),y)
-      WONDER_DIR=$(BCMDHD_ROOT)/../../wonder
-      DHDCFLAGS += -I$(WONDER_DIR)/include -DWONDERTAP
+      DHDCFLAGS += -I$(WONDER_DIR)/include
+      DHDCFLAGS += -DWONDERTAP
     endif
+  endif
 endif # CONFIG_BCMDHD
 
 DHDCFLAGS += \

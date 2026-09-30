@@ -5,11 +5,12 @@
  *
  */
 
-#include <linux/errno.h>
 #include <linux/delay.h>
+#include <linux/errno.h>
+
 #include "include/uwb.h"
-#include "include/uwb_spi.h"
 #include "include/uwb_fw_common.h"
+#include "include/uwb_spi.h"
 
 #define V1_SELECT_BL1_RSP_LEN 6
 #define FAST_MODE_SELECT_BL1_RSP_LEN 9

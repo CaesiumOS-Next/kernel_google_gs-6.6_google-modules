@@ -31,6 +31,9 @@ struct edgetpu_iif {
 	struct edgetpu_mailbox *mbx_hardware;
 	struct gcip_memory cmd_queue_mem;
 	struct mutex cmd_queue_lock;
+	struct gcip_memory resp_queue_mem;
+	spinlock_t resp_queue_lock;
+	unsigned long resp_queue_lock_flags;
 
 	/*
 	 * Fields used to ensure pending signal commands are flushed when firmware resets.

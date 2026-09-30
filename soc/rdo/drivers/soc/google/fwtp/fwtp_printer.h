@@ -16,12 +16,13 @@
 #include <linux/types.h>
 
 #include "fwtp_platform.h"
-#include "tracepoint_ring.h"
+#include "fwtp_ring.h"
 #else
-#include <lib/tracepoint/tracepoint_ring.h>
 #include <lib/utils/compiler.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "lib/fwtp/fwtp_ring.h"
 
 #define __counted_by(member) __attribute__((__counted_by__(member)))
 #endif
@@ -87,8 +88,8 @@ struct fwtp_tracepoint_data_reader {
  *   printer_ctx            Printer context.
  *   string_id              ID of string to get.
  */
-typedef const char *(*fwtp_get_string_func)(struct fwtp_printer_ctx *printer_ctx,
-					    uint32_t string_id);
+typedef const char *(*fwtp_get_string_func)(
+	struct fwtp_printer_ctx *printer_ctx, uint32_t string_id);
 
 /*
  * A function of this type appends the string specified by str to some output
@@ -138,6 +139,9 @@ typedef void (*fwtp_post_process_func)(struct fwtp_printer_ctx *printer_ctx,
  * a logging system that expects each log line to be given in full rather than
  * in individual pieces.
  *
+ * Provided output_buffer may be reused externally in other contexts except in
+ * implementations of assigned append_output and get_string functions.
+ *
  * If post_process is not null, then it is invoked once for each decoded
  * tracepoint. It is provided the tracepoint title string and any tracepoint
  * data items. The data_items.data_buffer and data_items.data_buffer_size fields
@@ -180,7 +184,7 @@ struct fwtp_printer_ctx {
 	struct fwtp_data_item_list data_items;
 	/* Tracepoints name. */
 	const char *name;
-	/* Timestatmp frequency in Hz. If zero, timestamp frequency is unspecified. */
+	/* Timestamp frequency in Hz. If zero, timestamp frequency is unspecified. */
 	uint32_t timestamp_hz;
 	/* Latest absolute timestamp. */
 	uint64_t absolute_timestamp;
@@ -200,12 +204,10 @@ void fwtp_print_ring_entries(struct fwtp_printer_ctx *printer_ctx,
 			     struct tracepoint_ring *ring,
 			     int recent_entry_count);
 
-void fwtp_print_ring_entries_with_decode_buffer(struct fwtp_printer_ctx
-							*printer_ctx,
-						struct tracepoint_ring *ring,
-						int recent_entry_count,
-						void *decode_buffer,
-						unsigned int decode_buffer_size);
+void fwtp_print_ring_entries_with_decode_buffer(
+	struct fwtp_printer_ctx *printer_ctx, struct tracepoint_ring *ring,
+	int recent_entry_count, void *decode_buffer,
+	unsigned int decode_buffer_size);
 
 void fwtp_print_entries(struct fwtp_printer_ctx *printer_ctx,
 			const uint64_t *entry_words, int num_words);

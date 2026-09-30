@@ -156,6 +156,16 @@ struct vs_crtc_state {
 	bool wb_connectors_updated;
 	bool need_boost_freq;
 
+	/**
+	 * @swapped_plane_mask: A bitmask of planes that have been swapped to this CRTC.
+	 */
+	u32 swapped_plane_mask;
+
+	/**
+	 * @secure_plane_mask: A bitmask of planes using a secure buffer
+	 */
+	u32 secure_plane_mask;
+
 	bool recovery_disabled;
 	/** @recovery_info: information about any request for recovery trigger */
 	struct vs_recovery_request_data recovery_info;
@@ -266,7 +276,10 @@ struct vs_crtc {
 	bool ltm_hist_query_pending;
 	atomic_t frame_start_timeout, frame_done_timeout;
 	atomic_t frame_start_missing, frame_done_missing;
-	atomic_t underrun_count;
+	/* frame-based underrun counter */
+	atomic_t frame_underrun_count;
+	/* scanline-based underrun counter */
+	atomic_t line_underrun_count;
 	struct frame_irq_err_counters frame_irq_err_counters;
 	bool needs_hw_reset;
 	atomic_t hw_reset_count;
@@ -311,6 +324,8 @@ struct vs_crtc {
 	u32 fboost_state;
 	struct kthread_work fboost_work;
 	struct kthread_worker *fboost_worker;
+
+	unsigned long last_notify_dpu_underrun_time;
 };
 
 int vs_crtc_check_power_state(struct drm_atomic_state *state, struct drm_crtc *crtc,
@@ -343,6 +358,14 @@ void vs_crtc_trigger_panel_dsi_coredump(struct vs_crtc *vs_crtc,
 					u64 dsi_errors, enum coredump_source source);
 bool vs_crtc_state_is_recovery_source_enabled(const struct vs_crtc_state *vs_crtc_state,
 					      enum coredump_source source);
+
+bool vs_crtc_state_has_secure(const struct drm_crtc_state *crtc_state);
+bool vs_crtc_state_is_active_and_wb(const struct drm_crtc_state *crtc_state,
+				    const struct drm_device *drm_dev);
+bool vs_crtc_commit_enables_secure_or_wb(const struct drm_crtc_state *crtc_state,
+					 const struct drm_crtc_state *old_state,
+					 const struct drm_device *dev);
+bool vs_crtc_secure_hardware_active(const struct drm_device *dev);
 
 #define to_vs_crtc(crtc) container_of(crtc, struct vs_crtc, base)
 

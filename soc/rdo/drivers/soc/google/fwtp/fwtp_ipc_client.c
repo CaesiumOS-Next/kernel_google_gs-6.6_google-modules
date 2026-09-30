@@ -22,6 +22,8 @@
 
 #include <interfaces/protocols/mba/fwtp/fwtp_protocol.h>
 #include <string.h>
+
+#include "lib/utils/array.h"
 #endif
 
 /*******************************************************************************
@@ -72,12 +74,10 @@ fwtp_ipc_client_get_string_table(struct fwtp_ipc_client *fwtp_ipc_client)
 		msg_get_strings->chunk_size =
 			FWTP_IPC_CLIENT_LARGE_MSG_SIZE -
 			sizeof(struct fwtp_msg_get_strings);
-		err = fwtp_ipc_client->fwtp_if
-			      .send_message(&(fwtp_ipc_client->fwtp_if),
-					    msg_get_strings,
-					    FWTP_IPC_CLIENT_LARGE_MSG_SIZE,
-					    sizeof(struct fwtp_msg_get_strings),
-					    &rx_msg_data_size);
+		err = fwtp_ipc_client->fwtp_if.send_message(
+			&(fwtp_ipc_client->fwtp_if), msg_get_strings,
+			FWTP_IPC_CLIENT_LARGE_MSG_SIZE,
+			sizeof(struct fwtp_msg_get_strings), &rx_msg_data_size);
 		if (err == kFwtpOk)
 			err = msg_get_strings->base.error;
 		if (err != kFwtpOk) {
@@ -103,9 +103,9 @@ fwtp_ipc_client_get_string_table(struct fwtp_ipc_client *fwtp_ipc_client)
 				goto out;
 			}
 			if (table_size > FWTP_MAX_STRING_TABLE_SIZE) {
-				FWTP_IPC_CLIENT_LOG_ERR(fwtp_ipc_client,
-							"Table size %d too big.\n",
-							table_size);
+				FWTP_IPC_CLIENT_LOG_ERR(
+					fwtp_ipc_client,
+					"Table size %d too big.\n", table_size);
 				err = kFwtpErrTooBig;
 				goto out;
 			}
@@ -200,11 +200,10 @@ fwtp_ipc_client_register(struct fwtp_ipc_client *fwtp_ipc_client)
 	/* Exchange protocol versions. */
 	msg_version.base.type = kFwtpMsgTypeExchangeVersion;
 	msg_version.version = FWTP_PROTOCOL_VERSION;
-	err = fwtp_ipc_client->fwtp_if
-		      .send_message(&(fwtp_ipc_client->fwtp_if), &msg_version,
-				    sizeof(struct fwtp_msg_version),
-				    sizeof(struct fwtp_msg_version),
-				    &rx_msg_data_size);
+	err = fwtp_ipc_client->fwtp_if.send_message(
+		&(fwtp_ipc_client->fwtp_if), &msg_version,
+		sizeof(struct fwtp_msg_version),
+		sizeof(struct fwtp_msg_version), &rx_msg_data_size);
 	if (err == kFwtpOk)
 		err = msg_version.base.error;
 	if (err != kFwtpOk) {
@@ -250,21 +249,31 @@ EXPORT_SYMBOL_GPL(fwtp_ipc_client_unregister);
 /**
  * fwtp_ipc_client_print_tracepoints - Prints the FWTP tracepoints.
  *
+ * Prints FWTP tracepoints from all rings in the FWTP IPC client specified by
+ * fwtp_ipc_client using the printer context specified by printer_ctx. If
+ * print_all is true, prints all of the tracepoints. Otherwise, prints
+ * tracepoints starting from the head offset in each FWTP IPC client ring and
+ * updates the head offset accordingly.
+ *
  * Sets the get_string and get_string_ctx fields in the printer context and
  * updates the timestamp_hz field.
  *
  * @fwtp_ipc_client: The FWTP IPC client for which to print the tracepoints.
  * @printer_ctx: Context to use for printing.
+ * @print_all: If true, print all tracepoints; otherwise, print tracepoints from
+ *             head.
  *
  * Return: kFwtpOk on success, non-zero error code on error.
  */
 fwtp_error_code_t
 fwtp_ipc_client_print_tracepoints(struct fwtp_ipc_client *fwtp_ipc_client,
-				  struct fwtp_printer_ctx *printer_ctx)
+				  struct fwtp_printer_ctx *printer_ctx,
+				  bool print_all)
 {
 	struct fwtp_msg_get_tracepoints *msg_get_tracepoints;
-	uint16_t rx_msg_data_size;
-	fwtp_error_code_t err;
+	int client_ring_count;
+	int max_client_ring_count;
+	fwtp_error_code_t err = kFwtpOk;
 
 	/* Set up printer context. */
 	fwtp_ipc_client_printer_ctx_init(fwtp_ipc_client, printer_ctx);
@@ -276,52 +285,80 @@ fwtp_ipc_client_print_tracepoints(struct fwtp_ipc_client *fwtp_ipc_client,
 		goto out;
 	}
 
-	/* Get tracepoints until all of them are retrieved. */
-	do {
-		/* Get the tracepoints. */
-		memset(msg_get_tracepoints, 0, sizeof(*msg_get_tracepoints));
-		msg_get_tracepoints->base.type = kFwtpMsgTypeGetTracepoints;
-		msg_get_tracepoints->head_offset =
-			fwtp_ipc_client->tracepoints_head_offset;
-		msg_get_tracepoints->ring_num = fwtp_ipc_client->ring_num;
-		err = fwtp_ipc_client->fwtp_if.send_message(
-			&(fwtp_ipc_client->fwtp_if), msg_get_tracepoints,
-			FWTP_IPC_CLIENT_LARGE_MSG_SIZE,
-			sizeof(struct fwtp_msg_get_tracepoints),
-			&rx_msg_data_size);
-		if (err == kFwtpOk)
-			err = msg_get_tracepoints->base.error;
-		if (err != kFwtpOk) {
-			FWTP_IPC_CLIENT_LOG_ERR(
-				fwtp_ipc_client,
-				"Get tracepoints request failed with error %d.\n",
-				err);
-			goto out;
-		}
-		if (rx_msg_data_size <
-		    (sizeof(struct fwtp_msg_get_tracepoints) +
-		     msg_get_tracepoints->tracepoints_size)) {
-			FWTP_IPC_CLIENT_LOG_ERR(
-				fwtp_ipc_client,
-				"Received message size %d too short for tracepoints of size %d.\n",
-				rx_msg_data_size,
-				msg_get_tracepoints->tracepoints_size);
-			err = kFwtpErrBadMsg;
-			goto out;
-		}
-		fwtp_ipc_client->tracepoints_head_offset =
-			msg_get_tracepoints->head_offset;
-		printer_ctx->timestamp_hz = msg_get_tracepoints->timestamp_hz;
-		if (msg_get_tracepoints->tracepoints_size == 0)
-			break;
+	/* Print all tracepoints from all client rings. */
+	max_client_ring_count = ARRAY_SIZE(fwtp_ipc_client->client_ring_list);
+	client_ring_count = fwtp_ipc_client->client_ring_count <
+					    max_client_ring_count ?
+				    fwtp_ipc_client->client_ring_count :
+				    max_client_ring_count;
+	for (int client_ring_index = 0; client_ring_index < client_ring_count;
+	     ++client_ring_index) {
+		/* Get the client ring. */
+		struct fwtp_ipc_client_ring *client_ring =
+			&(fwtp_ipc_client->client_ring_list[client_ring_index]);
 
-		/* Print tracepoints. */
-		fwtp_print_entries(printer_ctx,
-				   (uint64_t *)msg_get_tracepoints->tracepoints,
-				   msg_get_tracepoints->tracepoints_size /
-					   sizeof(uint64_t));
-	} while (msg_get_tracepoints->head_offset !=
-		 msg_get_tracepoints->tail_offset);
+		/* Get the head offset from which to start printing. */
+		uint32_t head_offset =
+			(print_all ? 0 : client_ring->head_offset);
+
+		/* Print tracepoints in chunks. */
+		do {
+			uint16_t rx_msg_data_size;
+
+			/* Get the tracepoints. */
+			memset(msg_get_tracepoints, 0,
+			       sizeof(*msg_get_tracepoints));
+			msg_get_tracepoints->base.type =
+				kFwtpMsgTypeGetTracepoints;
+			msg_get_tracepoints->head_offset = head_offset;
+			msg_get_tracepoints->ring_num = client_ring->ring_num;
+			err = fwtp_ipc_client->fwtp_if.send_message(
+				&(fwtp_ipc_client->fwtp_if),
+				msg_get_tracepoints,
+				FWTP_IPC_CLIENT_LARGE_MSG_SIZE,
+				sizeof(struct fwtp_msg_get_tracepoints),
+				&rx_msg_data_size);
+			if (err == kFwtpOk)
+				err = msg_get_tracepoints->base.error;
+			if (err != kFwtpOk) {
+				FWTP_IPC_CLIENT_LOG_ERR(
+					fwtp_ipc_client,
+					"Get tracepoints request failed with error %d.\n",
+					err);
+				goto out;
+			}
+			if (rx_msg_data_size <
+			    (sizeof(struct fwtp_msg_get_tracepoints) +
+			     msg_get_tracepoints->tracepoints_size)) {
+				FWTP_IPC_CLIENT_LOG_ERR(
+					fwtp_ipc_client,
+					"Received message size %d too short for tracepoints of size %d.\n",
+					rx_msg_data_size,
+					msg_get_tracepoints->tracepoints_size);
+				err = kFwtpErrBadMsg;
+				goto out;
+			}
+			printer_ctx->timestamp_hz =
+				msg_get_tracepoints->timestamp_hz;
+			if (msg_get_tracepoints->tracepoints_size == 0)
+				break;
+
+			/* Print tracepoints. */
+			fwtp_print_entries(
+				printer_ctx,
+				(uint64_t *)msg_get_tracepoints->tracepoints,
+				msg_get_tracepoints->tracepoints_size /
+					sizeof(uint64_t));
+
+			/* Update the head offset for the next chunk. */
+			head_offset = msg_get_tracepoints->head_offset;
+		} while (msg_get_tracepoints->head_offset !=
+			 msg_get_tracepoints->tail_offset);
+
+		/* Update the client ring head offset if not printing all tracepoints. */
+		if (!print_all)
+			client_ring->head_offset = head_offset;
+	}
 
 out:
 	/* Clean up. */
@@ -430,10 +467,10 @@ fwtp_ipc_client_get_filter_list(struct fwtp_ipc_client *fwtp_ipc_client)
 		if ((sizeof(struct fwtp_msg_get_filter_info) +
 		     msg_get_filter_info->filter_names_size) >
 		    rx_msg_data_size) {
-			FWTP_IPC_CLIENT_LOG_ERR(fwtp_ipc_client,
-						"Filter names size %d too big.\n",
-						msg_get_filter_info
-							->filter_names_size);
+			FWTP_IPC_CLIENT_LOG_ERR(
+				fwtp_ipc_client,
+				"Filter names size %d too big.\n",
+				msg_get_filter_info->filter_names_size);
 			err = kFwtpErrBadMsg;
 			goto out;
 		}
@@ -580,3 +617,72 @@ int fwtp_ipc_client_get_filter_index(struct fwtp_ipc_client *fwtp_ipc_client,
 	return -1;
 }
 EXPORT_SYMBOL_GPL(fwtp_ipc_client_get_filter_index);
+
+/**
+ * fwtp_ipc_client_subscribe - Subscribes to tracepoint rings used by client.
+ *
+ * Subscribes to or unsubscribes from all tracepoint rings used by the client
+ * specified by fwtp_ipc_client. If start is true, subscribes to tracepoint
+ * rings; otherwise, unsubscribes from all tracepoint rings. The subscription
+ * notification byte count is specified by notify_byte_count.
+ *
+ * @fwtp_ipc_client: FWTP IPC client for which to make subscriptions.
+ * @start: If true, start subscribing; otherwise, stop subscribing.
+ * @notify_byte_count: Send notification after this number of bytes are written
+ *                     to ring.
+ */
+fwtp_error_code_t
+fwtp_ipc_client_subscribe(struct fwtp_ipc_client *fwtp_ipc_client, bool start,
+			  uint32_t notify_byte_count)
+{
+	uint16_t rx_msg_data_size;
+	int client_ring_count;
+	int max_client_ring_count;
+	fwtp_error_code_t err;
+
+	/* Subscribe to all tracepoint rings used by client. */
+	max_client_ring_count = ARRAY_SIZE(fwtp_ipc_client->client_ring_list);
+	client_ring_count = fwtp_ipc_client->client_ring_count <
+					    max_client_ring_count ?
+				    fwtp_ipc_client->client_ring_count :
+				    max_client_ring_count;
+	for (int client_ring_index = 0; client_ring_index < client_ring_count;
+	     ++client_ring_index) {
+		/* Set up the subscription message. */
+		struct fwtp_msg_ring_subscribe msg_subscribe = {
+			.base.type = kFwtpMsgTypeRingSubscribe,
+			.ring_num =
+				fwtp_ipc_client
+					->client_ring_list[client_ring_index]
+					.ring_num,
+			.start = start,
+			.notify_byte_count = notify_byte_count,
+		};
+
+		/* Send the subscription message. */
+		err = fwtp_ipc_client->fwtp_if.send_message(
+			&(fwtp_ipc_client->fwtp_if), &msg_subscribe,
+			sizeof(msg_subscribe), sizeof(msg_subscribe),
+			&rx_msg_data_size);
+		if (err == kFwtpOk) {
+			if (rx_msg_data_size < sizeof(msg_subscribe.base)) {
+				FWTP_IPC_CLIENT_LOG_ERR(
+					fwtp_ipc_client,
+					"Received message size %d too short.\n",
+					rx_msg_data_size);
+				return kFwtpErrBadMsg;
+			}
+			err = msg_subscribe.base.error;
+		}
+		if (err != kFwtpOk) {
+			FWTP_IPC_CLIENT_LOG_ERR(
+				fwtp_ipc_client,
+				"Ring subscription failed for client ring index %d with error %d.\n",
+				client_ring_index, err);
+			return err;
+		}
+	}
+
+	return kFwtpOk;
+}
+EXPORT_SYMBOL_GPL(fwtp_ipc_client_subscribe);

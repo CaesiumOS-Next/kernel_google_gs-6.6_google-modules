@@ -3094,27 +3094,37 @@ void rvh_enqueue_task_fair_pixel_mod(void *data, struct rq *rq, struct task_stru
 		vp->prev_sum_exec_runtime = p->se.sum_exec_runtime;
 		vp->ignore_util_est_update = true;
 		vp->util_enqueued = task_util(p);
-		vp->prev_util = vp->util_dequeued;
 
 		/*
-		 * If the utilization is rising, keep accounting for delta_exec
-		 * so that we can catch up with a bursty task appropriately.
-		 *
-		 * If the utilization is stable, it is hard to know whether
-		 * this is due to the slow update rate (at top end util will
-		 * grow much slower) or due to the fact it has settled. If it
-		 * started to drop that's an indication the task is settling
-		 * and we can stop accounting for delta exec.
-		 *
-		 * We need to ensure util_est_update() doesn't mess up the
-		 * util_est we're building up, so set a flag to ignore it. But
-		 * allow us to latch back to util_avg once we have settled.
+		 * Update the dequeued utility value only if the task slept for at least 1ms,
+		 * which matches the PELT update period resolution.
 		 */
-		util_reduced = abs(vp->util_dequeued - vp->prev_util_dequeued) <= UTIL_EST_MARGIN;
-		util_reduced |= vp->util_dequeued + UTIL_EST_MARGIN <= vp->prev_util_dequeued;
-		if (dequeued_enough && util_reduced) {
-			vp->delta_exec = 0;
-			vp->ignore_util_est_update = false;
+		if (dequeued_enough) {
+			vp->util_dequeued = vp->util_dequeued_candidate;
+			vp->prev_util = vp->util_dequeued;
+
+			/*
+			 * If the utilization is rising, keep accounting for delta_exec
+			 * so that we can catch up with a bursty task appropriately.
+			 *
+			 * If the utilization is stable, it is hard to know whether
+			 * this is due to the slow update rate (at top end util will
+			 * grow much slower) or due to the fact it has settled. If it
+			 * started to drop that's an indication the task is settling
+			 * and we can stop accounting for delta exec.
+			 *
+			 * We need to ensure util_est_update() doesn't mess up the
+			 * util_est we're building up, so set a flag to ignore it. But
+			 * allow us to latch back to util_avg once we have settled.
+			 */
+			util_reduced =
+				abs(vp->util_dequeued - vp->prev_util_dequeued) <= UTIL_EST_MARGIN;
+			util_reduced |=
+				vp->util_dequeued + UTIL_EST_MARGIN <= vp->prev_util_dequeued;
+			if (util_reduced) {
+				vp->delta_exec = 0;
+				vp->ignore_util_est_update = false;
+			}
 		}
 	}
 
@@ -3159,7 +3169,7 @@ void rvh_dequeue_task_fair_pixel_mod(void *data, struct rq *rq, struct task_stru
 	if (!task_on_rq_migrating(p) && !(vp->state_dequeued & TASK_UNINTERRUPTIBLE)) {
 		vp->prev_sum_exec_runtime = p->se.sum_exec_runtime;
 		vp->prev_util_dequeued = vp->util_dequeued;
-		vp->util_dequeued = task_util(p);
+		vp->util_dequeued_candidate = task_util(p);
 		vp->last_dequeue = sched_clock();
 	}
 

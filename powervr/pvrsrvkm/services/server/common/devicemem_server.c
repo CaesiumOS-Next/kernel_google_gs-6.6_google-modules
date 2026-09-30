@@ -2495,6 +2495,13 @@ DevmemIntMapPMR(DEVMEMINT_RESERVATION *psReservation, PMR *psPMR)
 
 	PMRLockPMR(psPMR);
 
+	/* Don't allow repeated mappings of exclusive PMRs */
+	if (PMR_IsExclusiveUse(psPMR) && (PMR_GetGpuMapCount(psPMR) > 0))
+	{
+		PVR_DPF((PVR_DBG_ERROR, "%s: PMR is exclusive use and already mapped.", __func__));
+		PVR_GOTO_WITH_ERROR(eError, PVRSRV_ERROR_INVALID_PARAMS, ErrorUnlockPhysAddr);
+	}
+
 	/* Check if the PMR that needs to be mapped is sparse */
 	bIsSparse = PMR_IsSparse(psPMR);
 
@@ -2502,7 +2509,7 @@ DevmemIntMapPMR(DEVMEMINT_RESERVATION *psReservation, PMR *psPMR)
 	if (eRemapPolicy == MMU_PTE_REMAP_POLICY_BLOCK && bIsSparse)
 	{
 		/* Don't allow sparse mappings if remap is disallowed */
-		PVR_GOTO_WITH_ERROR(eError, PVRSRV_ERROR_INVALID_PARAMS, ErrorReturnError);
+		PVR_GOTO_WITH_ERROR(eError, PVRSRV_ERROR_INVALID_PARAMS, ErrorUnlockPhysAddr);
 	}
 
 	if (bIsSparse)
@@ -2564,6 +2571,7 @@ DevmemIntMapPMR(DEVMEMINT_RESERVATION *psReservation, PMR *psPMR)
 		}
 
 		OSFreeMem(pvTmpBuf);
+		pvTmpBuf = NULL;
 	}
 #if defined(SUPPORT_LINUX_OSPAGE_MIGRATION)
 	else
@@ -2633,6 +2641,20 @@ DevmemIntMapPMR(DEVMEMINT_RESERVATION *psReservation, PMR *psPMR)
 
 #if defined(SUPPORT_LINUX_OSPAGE_MIGRATION)
 ErrorUnsetMappedPMR:
+	if (bIsSparse)
+	{
+		/* Roll back PMR reference counts and mapping indices set during the
+		 * sparse PMR loop before clearing psMappedPMR. */
+		for (i = 0; i < ui32NumDevPages; i++)
+		{
+			if (DevmemIntReservationIsIndexMapped(psReservation, i))
+			{
+				PVRSRV_ERROR eError1 = PMRUnrefPMR(psReservation->psMappedPMR);
+				PVR_LOG_IF_ERROR(eError1, "PMRUnrefPMR");
+				DevmemIntReservationSetMappingIndex(psReservation, i, IMG_FALSE);
+			}
+		}
+	}
 	psReservation->psMappedPMR = NULL;
 #endif
 ErrorUnmap:
@@ -2946,7 +2968,6 @@ ErrorReturnError:
 PVRSRV_ERROR
 DevmemIntUnreserveRange(DEVMEMINT_RESERVATION *psReservation)
 {
-	IMG_UINT32 i;
 	DEVMEMINT_HEAP *psDevmemHeap = psReservation->psDevmemHeap;
 	PVRSRV_ERROR eError;
 
@@ -2982,17 +3003,6 @@ DevmemIntUnreserveRange(DEVMEMINT_RESERVATION *psReservation)
 	         psReservation->sBase,
 	         psReservation->uiLength,
 	         psDevmemHeap->uiLog2PageSize);
-
-	for (i = 0; i < _DevmemReservationPageCount(psReservation); i++)
-	{
-		if (DevmemIntReservationIsIndexMapped(psReservation, i))
-		{
-			eError = PMRUnrefPMR(psReservation->psMappedPMR);
-			PVR_LOG_IF_ERROR(eError, "PMRUnrefPMR");
-
-			DevmemIntReservationSetMappingIndex(psReservation, i, IMG_FALSE);
-		}
-	}
 
 	DevmemIntHeapRelease(psDevmemHeap);
 
@@ -3412,6 +3422,16 @@ DevmemIntChangeSparse(IMG_UINT32 ui32AllocPageCount,
 	{
 		IMG_UINT32 i;
 
+		/* Reference the PMR in bulk before mapping pages */
+		eError = PMRRefPMRN(psReservation->psMappedPMR, uiMapPageCount);
+		if (PVRSRV_OK != eError)
+		{
+			PVR_DPF((PVR_DBG_ERROR,
+			         "%s: Failed to reference PMR in bulk.",
+			         __func__));
+			goto e1;
+		}
+
 		/* Map the pages and mark them Valid in the MMU PTE */
 		eError = MMU_MapPages(psReservation->psDevmemHeap->psDevmemCtx->psMMUContext,
 		                      uiFlags,
@@ -3426,6 +3446,8 @@ DevmemIntChangeSparse(IMG_UINT32 ui32AllocPageCount,
 			PVR_DPF((PVR_DBG_ERROR,
 			         "%s: Failed to map alloc indices.",
 			         __func__));
+			/* Rollback bulk reference */
+			(void)PMRUnrefPMRN(psReservation->psMappedPMR, uiMapPageCount);
 			goto e1;
 		}
 
@@ -3433,15 +3455,11 @@ DevmemIntChangeSparse(IMG_UINT32 ui32AllocPageCount,
 		{
 			IMG_UINT32 uiIndex = paui32MapIndices[i];
 
-			if (!DevmemIntReservationIsIndexMapped(psReservation, uiIndex))
-			{
-				PVRSRV_ERROR eError2 = PMRRefPMR(psReservation->psMappedPMR);
-				PVR_LOG_IF_ERROR(eError2, "PMRRefPMR");
-
-				DevmemIntReservationSetMappingIndex(psReservation,
-				                                    uiIndex,
-				                                    IMG_TRUE);
-			}
+			// b/501525122: fail loudly in case our use of PMRRefPMRN needs to be changed
+			BUG_ON(DevmemIntReservationIsIndexMapped(psReservation, uiIndex));
+			DevmemIntReservationSetMappingIndex(psReservation,
+			                                    uiIndex,
+			                                    IMG_TRUE);
 		}
 	}
 

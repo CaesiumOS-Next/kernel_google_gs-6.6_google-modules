@@ -72,11 +72,18 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 Command Complete Notifier Interface
 */ /**************************************************************************/
 
+typedef enum PVRSRV_NOTIFY_PRIORITY_TAG
+{
+	NOTIFY_PRIORITY_NORMAL,
+	NOTIFY_PRIORITY_LOW,
+} PVRSRV_NOTIFY_PRIORITY;
+
 typedef struct PVRSRV_CMDCOMP_NOTIFY_TAG
 {
 	PVRSRV_CMDCOMP_HANDLE	hCmdCompHandle;
 	PFN_CMDCOMP_NOTIFY		pfnCmdCompleteNotify;
 	DLLIST_NODE				sListNode;
+	PVRSRV_NOTIFY_PRIORITY	ePriority;
 } PVRSRV_CMDCOMP_NOTIFY;
 
 /* Head of the list of callbacks called when command complete happens */
@@ -128,10 +135,11 @@ PVRSRVCmdCompleteDeinit(void)
 	}
 }
 
-PVRSRV_ERROR
-PVRSRVRegisterCmdCompleteNotify(IMG_HANDLE *phNotify,
-								PFN_CMDCOMP_NOTIFY pfnCmdCompleteNotify,
-								PVRSRV_CMDCOMP_HANDLE hCmdCompHandle)
+static PVRSRV_ERROR
+PVRSRVRegisterCmdCompleteNotifyInternal(IMG_HANDLE *phNotify,
+										PFN_CMDCOMP_NOTIFY pfnCmdCompleteNotify,
+										PVRSRV_CMDCOMP_HANDLE hCmdCompHandle,
+										PVRSRV_NOTIFY_PRIORITY ePriority)
 {
 	PVRSRV_CMDCOMP_NOTIFY *psNotify;
 
@@ -145,6 +153,7 @@ PVRSRVRegisterCmdCompleteNotify(IMG_HANDLE *phNotify,
 	/* Set-up the notify data */
 	psNotify->hCmdCompHandle = hCmdCompHandle;
 	psNotify->pfnCmdCompleteNotify = pfnCmdCompleteNotify;
+	psNotify->ePriority = ePriority;
 
 	/* Add it to the list of Notify functions */
 	OSWRLockAcquireWrite(g_hCmdCompNotifyLock);
@@ -154,6 +163,24 @@ PVRSRVRegisterCmdCompleteNotify(IMG_HANDLE *phNotify,
 	*phNotify = psNotify;
 
 	return PVRSRV_OK;
+}
+
+PVRSRV_ERROR
+PVRSRVRegisterCmdCompleteNotify(IMG_HANDLE *phNotify,
+								PFN_CMDCOMP_NOTIFY pfnCmdCompleteNotify,
+								PVRSRV_CMDCOMP_HANDLE hCmdCompHandle)
+{
+	return PVRSRVRegisterCmdCompleteNotifyInternal(
+		phNotify, pfnCmdCompleteNotify, hCmdCompHandle, NOTIFY_PRIORITY_NORMAL);
+}
+
+PVRSRV_ERROR
+PVRSRVRegisterLowPrioCmdCompleteNotify(IMG_HANDLE *phNotify,
+									   PFN_CMDCOMP_NOTIFY pfnCmdCompleteNotify,
+									   PVRSRV_CMDCOMP_HANDLE hCmdCompHandle)
+{
+	return PVRSRVRegisterCmdCompleteNotifyInternal(
+		phNotify, pfnCmdCompleteNotify, hCmdCompHandle, NOTIFY_PRIORITY_LOW);
 }
 
 PVRSRV_ERROR
@@ -173,24 +200,34 @@ PVRSRVUnregisterCmdCompleteNotify(IMG_HANDLE hNotify)
 	return PVRSRV_OK;
 }
 
-void
-PVRSRVNotifyCommandCompletion(PVRSRV_CMDCOMP_HANDLE hCmdCompCallerHandle)
-{
 #if !defined(NO_HARDWARE)
+static void
+PVRSRVNotifyCompletionLocked(PVRSRV_CMDCOMP_HANDLE hCmdCompCallerHandle,
+							 PVRSRV_NOTIFY_PRIORITY ePriority)
+{
 	DLLIST_NODE *psNode, *psNext;
-
-	/* Call notify callbacks to check if blocked work items can now proceed */
-	OSWRLockAcquireRead(g_hCmdCompNotifyLock);
 	dllist_foreach_node(&g_sCmdCompNotifyHead, psNode, psNext)
 	{
 		PVRSRV_CMDCOMP_NOTIFY *psNotify =
 			IMG_CONTAINER_OF(psNode, PVRSRV_CMDCOMP_NOTIFY, sListNode);
 
-		if (hCmdCompCallerHandle != psNotify->hCmdCompHandle)
+		if ((hCmdCompCallerHandle != psNotify->hCmdCompHandle) &&
+			(ePriority == psNotify->ePriority))
 		{
 			psNotify->pfnCmdCompleteNotify(psNotify->hCmdCompHandle);
 		}
 	}
+}
+#endif
+
+void
+PVRSRVNotifyCommandCompletion(PVRSRV_CMDCOMP_HANDLE hCmdCompCallerHandle)
+{
+#if !defined(NO_HARDWARE)
+	/* Call notify callbacks to check if blocked work items can now proceed */
+	OSWRLockAcquireRead(g_hCmdCompNotifyLock);
+	PVRSRVNotifyCompletionLocked(hCmdCompCallerHandle, NOTIFY_PRIORITY_NORMAL);
+	PVRSRVNotifyCompletionLocked(hCmdCompCallerHandle, NOTIFY_PRIORITY_LOW);
 	OSWRLockReleaseRead(g_hCmdCompNotifyLock);
 #endif
 }

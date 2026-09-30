@@ -18,14 +18,14 @@
 int core_pmic_sub_write_register(struct bcl_device *bcl_dev, u16 reg, u8 value, bool is_meter)
 {
 	if (is_meter)
-		return s2mpg14_write_reg(bcl_dev->sub_meter_i2c, reg, value);
+		return s2mpg15_write_reg(bcl_dev->sub_meter_i2c, reg, value);
 	return s2mpg15_write_reg(bcl_dev->sub_pmic_i2c, reg, value);
 }
 
 int core_pmic_sub_read_register(struct bcl_device *bcl_dev, u16 reg, u8 *value, bool is_meter)
 {
 	if (is_meter)
-		return s2mpg14_read_reg(bcl_dev->sub_meter_i2c, reg, value);
+		return s2mpg15_read_reg(bcl_dev->sub_meter_i2c, reg, value);
 	return s2mpg15_read_reg(bcl_dev->sub_pmic_i2c, reg, value);
 }
 

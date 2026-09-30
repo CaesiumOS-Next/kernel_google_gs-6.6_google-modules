@@ -29,9 +29,11 @@
 #include "vs_crtc.h"
 #include "vs_dc.h"
 #include "vs_dc_drm_property.h"
+#include "vs_drv.h"
 #include "vs_dc_hw.h"
 #include "vs_dc_post.h"
 #include "vs_module_params.h"
+#include "vs_plane.h"
 #include "vs_sysfs.h"
 #include "vs_trace.h"
 
@@ -208,6 +210,8 @@ static void vs_crtc_reset(struct drm_crtc *crtc)
 	state->encoder_type = DRM_MODE_ENCODER_NONE;
 	state->seamless_mode_change = false;
 	memset(&state->recovery_info, 0, sizeof(state->recovery_info));
+	state->swapped_plane_mask = 0;
+	state->secure_plane_mask = 0;
 
 	for (i = 0; i < vs_crtc->properties.num; i++) {
 		state->drm_states[i].proto = vs_crtc->properties.items[i].proto;
@@ -347,6 +351,8 @@ static struct drm_crtc_state *vs_crtc_atomic_duplicate_state(struct drm_crtc *cr
 	state->wb_connectors_updated = false;
 
 	state->need_boost_freq = false;
+
+	state->swapped_plane_mask = 0;
 
 	memset(&state->recovery_info, 0, sizeof(state->recovery_info));
 
@@ -976,6 +982,8 @@ static void vs_crtc_atomic_print_state(struct drm_printer *p,
 	drm_printf(p, "\toutput_id = %u\n", vs_crtc_state->output_id);
 	drm_printf(p, "\toutput_mode = %#x\n", vs_crtc_state->output_mode);
 	drm_printf(p, "\tseamless_mode_change = %d\n", vs_crtc_state->seamless_mode_change);
+	drm_printf(p, "\tswapped_plane_mask = %#x\n", vs_crtc_state->swapped_plane_mask);
+	drm_printf(p, "\tsecure_plane_mask = %#x\n", vs_crtc_state->secure_plane_mask);
 
 	drm_printf(p, "\tcommit_begin_ts = %lld\n", vs_crtc_state->commit_begin_ts);
 	drm_printf(p, "\tcommit_done_ts = %lld\n", vs_crtc_state->commit_done_ts);
@@ -1205,11 +1213,14 @@ static void vs_crtc_trigger_frame_coredump(struct vs_crtc *vs_crtc, int frames_p
 	struct device *dev = vs_crtc->dev;
 	struct vs_dc *dc = dev_get_drvdata(dev);
 	static char reason[192] = {};
+	struct drm_crtc *crtc = &vs_crtc->base;
+	struct drm_crtc_state *new_crtc_state = crtc->state;
+	struct vs_crtc_state *vs_crtc_state = to_vs_crtc_state(new_crtc_state);
 
 	scnprintf(reason, sizeof(reason),
-		  "Frame %s timeout on %s; TE %s; frame transfer %s; power state %d->%d;",
-		  is_frame_done_error ? "done" : "start", vs_crtc->base.name,
-		  te_changed ? "changed" : "unchanged",
+		  "OutIf[%u] Frame %s timeout on %s; TE %s; frame transfer %s; power state %d->%d;",
+		  vs_crtc_state->output_id, is_frame_done_error ? "done" : "start",
+		  vs_crtc->base.name, te_changed ? "changed" : "unchanged",
 		  transfer_pending ? "pending" : "not pending", old_pwr, new_pwr);
 
 	vs_dc_coredump(dc, reason);
@@ -1264,8 +1275,8 @@ void vs_crtc_record_frame_timeout(struct vs_crtc *vs_crtc, int old_te_count,
 	}
 	DRM_DEV_ERROR(
 		dev,
-		"%s: frame %s timed out during %s after %u ms, vrefresh at (%u Hz), TE count %s, frames_pending %d, transfer pending %d\n",
-		crtc->name, is_frame_done_error ? "done" : "start",
+		"%s: OutIf[%u] frame %s timed out during %s after %u ms, vrefresh at (%u Hz), TE count %s, frames_pending %d, transfer pending %d\n",
+		crtc->name, vs_crtc_state->output_id, is_frame_done_error ? "done" : "start",
 		during_disable ? "disable" : "wait_for_flip_done",
 		jiffies_to_msecs(wait_time_jiffies), drm_mode_vrefresh(&new_crtc_state->mode),
 		te_changed ? "changed" : "unchanged", frames_pending,
@@ -1824,6 +1835,34 @@ void vs_crtc_trigger_panel_dsi_coredump(struct vs_crtc *vs_crtc,
 	vs_dc_coredump(dc, reason);
 }
 
+static void vs_crtc_update_secure_plane_mask(struct drm_crtc *crtc,
+					     struct drm_crtc_state *crtc_state,
+					     struct drm_atomic_state *state)
+{
+	struct drm_device *drm_dev = crtc->dev;
+	struct vs_crtc_state *vs_crtc_state = to_vs_crtc_state(crtc_state);
+	struct drm_plane *plane;
+	struct drm_plane_state *plane_state;
+	struct vs_plane_state *vs_plane_state;
+	const void *prop;
+
+	vs_crtc_state->secure_plane_mask = 0;
+
+	drm_for_each_plane_mask(plane, drm_dev, crtc_state->plane_mask) {
+		plane_state = drm_atomic_get_new_plane_state(state, plane);
+		if (!plane_state)
+			plane_state = plane->state;
+
+		if (!plane_state || !plane_state->visible)
+			continue;
+
+		vs_plane_state = to_vs_plane_state(plane_state);
+		prop = vs_dc_drm_plane_property_get(vs_plane_state, "SECURE_BUFFER", NULL);
+		if (prop && *((const bool *)prop))
+			vs_crtc_state->secure_plane_mask |= drm_plane_mask(plane);
+	}
+}
+
 static int vs_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *state)
 {
 	int ret;
@@ -1843,6 +1882,8 @@ static int vs_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_state *
 	ret = vs_crtc->funcs->check(dev, crtc, crtc_state);
 	if (ret)
 		return ret;
+
+	vs_crtc_update_secure_plane_mask(crtc, crtc_state, state);
 
 	return vs_qos_check_qos_config(crtc, crtc_state);
 }
@@ -2267,4 +2308,81 @@ dma_addr_t vs_crtc_get_ltm_hist_dma_addr(struct device *dev, u8 hw_id)
 	spin_unlock_irqrestore(&crtc->slock_ltm_hist, flags);
 
 	return addr;
+}
+
+/**
+ * vs_crtc_state_has_secure() - Check if a CRTC state has secure planes active.
+ * @crtc_state: The DRM CRTC state to check.
+ *
+ * Return: true if the CRTC is active and has at least one secure plane,
+ *         false otherwise.
+ */
+bool vs_crtc_state_has_secure(const struct drm_crtc_state *crtc_state)
+{
+	const struct vs_crtc_state *vs_state = to_vs_crtc_state(crtc_state);
+
+	return crtc_state->active && vs_state->secure_plane_mask != 0;
+}
+
+/**
+ * vs_crtc_state_is_active_and_wb() - Check if a CRTC state is active and has writeback.
+ * @crtc_state: The DRM CRTC state to check.
+ * @drm_dev: The DRM device structure.
+ *
+ * This function checks if the given CRTC state is active and if its connector
+ * mask includes any writeback connectors.
+ *
+ * Return: true if the CRTC is active and writeback is enabled, false otherwise.
+ */
+bool vs_crtc_state_is_active_and_wb(const struct drm_crtc_state *crtc_state,
+				    const struct drm_device *drm_dev)
+{
+	struct vs_drm_private *priv = drm_dev->dev_private;
+
+	return (crtc_state->active && (crtc_state->connector_mask & priv->wb_connectors_mask));
+}
+
+/**
+ * vs_crtc_commit_enables_secure_or_wb() - Check if a commit enables secure display or writeback.
+ * @crtc_state: The new DRM CRTC state.
+ * @old_state: The old DRM CRTC state.
+ * @dev: The DRM device structure.
+ *
+ * This function checks if this CRTC is transitioning to having secure display
+ * active or writeback active in this commit.
+ *
+ * Return: true if secure or writeback is being enabled on this CRTC, false otherwise.
+ */
+bool vs_crtc_commit_enables_secure_or_wb(const struct drm_crtc_state *crtc_state,
+					 const struct drm_crtc_state *old_state,
+					 const struct drm_device *dev)
+{
+	bool old_secure = old_state ? vs_crtc_state_has_secure(old_state) : false;
+	bool new_secure = vs_crtc_state_has_secure(crtc_state);
+	bool old_wb = old_state ? vs_crtc_state_is_active_and_wb(old_state, dev) : false;
+	bool new_wb = vs_crtc_state_is_active_and_wb(crtc_state, dev);
+
+	return ((new_secure && !old_secure) || (new_wb && !old_wb));
+}
+
+/**
+ * vs_crtc_secure_hardware_active() - Check if secure display is active in hardware.
+ * @dev: The DRM device structure.
+ *
+ * Return: true if secure display is active in hardware, false otherwise.
+ */
+bool vs_crtc_secure_hardware_active(const struct drm_device *dev)
+{
+	struct vs_drm_private *priv = dev->dev_private;
+	struct vs_dc *dc = dev_get_drvdata(priv->dc_dev);
+	bool active;
+
+	if (!dc)
+		return false;
+
+	mutex_lock(&dc->hw.secure_lock);
+	active = !bitmap_empty(dc->hw.secured_layers_mask, HW_PLANE_NUM);
+	mutex_unlock(&dc->hw.secure_lock);
+
+	return active;
 }

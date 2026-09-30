@@ -110,6 +110,21 @@ TRACE_EVENT(panel_errors,
 			PANEL_ERROR_FLAGS_NAME(GRAM_COLLISION)))
 );
 
+TRACE_EVENT(gram_collision,
+	TP_PROTO(int panel_index, u32 collision_cnt),
+	TP_ARGS(panel_index, collision_cnt),
+	TP_STRUCT__entry(
+		__field(int, panel_index)
+		__field(u32, collision_cnt)
+	),
+	TP_fast_assign(
+		__entry->panel_index = panel_index;
+		__entry->collision_cnt = collision_cnt;
+	),
+	TP_printk("idx:%d GRAM collision found (underrun), total:%u", __entry->panel_index,
+		  __entry->collision_cnt)
+);
+
 TRACE_EVENT(msleep,
 	TP_PROTO(u32 delay_ms),
 	TP_ARGS(delay_ms),

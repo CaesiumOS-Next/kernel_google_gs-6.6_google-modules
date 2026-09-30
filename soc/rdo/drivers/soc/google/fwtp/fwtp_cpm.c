@@ -28,9 +28,6 @@
 /* Mailbox request timeout time in milliseconds. */
 #define FWTP_MBA_REQ_TIMEOUT_MS 3000
 
-/* Size of tracepoint decode buffer. */
-#define FWTP_CPM_DECODE_BUFFER_SIZE 128
-
 /* Set of FWTP devices. */
 enum fwtp_cpm_dev_id_t {
 	FWTP_CPM_DEV_ID_CPM = 0,
@@ -50,10 +47,8 @@ enum fwtp_cpm_dev_id_t {
  * @dma_size: Size of DMA memory.
  * @dma_base: Base address of DMA memory.
  * @dma_base_phys: Physical base address of DMA memory.
- * @memio_ring_list: List of tracepoint rings with mem I/O access.
  * @ring_notify_work: Work item for tracepoint ring notifications.
  * @debugfs_root: Root debugfs directory of device.
- * @decode_buffer: Buffer used for decoding tracepoints.
  */
 struct fwtp_cpm_dev {
 	struct device *dev;
@@ -64,10 +59,8 @@ struct fwtp_cpm_dev {
 	size_t dma_size;
 	void *dma_base;
 	dma_addr_t dma_base_phys;
-	struct tracepoint_ring memio_ring_list[FWTP_CPM_DEV_NUM];
 	struct work_struct ring_notify_work;
 	struct dentry *debugfs_root;
-	uint8_t decode_buffer[FWTP_CPM_DECODE_BUFFER_SIZE];
 };
 
 /**
@@ -134,19 +127,11 @@ static int fwtp_cpm_remove(struct platform_device *pdev);
  */
 static int fwtp_cpm_subscribe(struct fwtp_dev *fwtp_dev, bool subscribe)
 {
-	struct fwtp_msg_ring_subscribe msg_subscribe;
-	uint16_t rx_msg_data_size;
 	fwtp_error_code_t err;
 
-	/* Subscribe or unsubscribe to the tracepoint ring. */
-	msg_subscribe.base.type = kFwtpMsgTypeRingSubscribe;
-	msg_subscribe.ring_num = fwtp_dev->fwtp_ipc_client.ring_num;
-	msg_subscribe.start = (subscribe ? 1 : 0);
-	msg_subscribe.notify_byte_count = FWTP_CPM_NOTIFY_BYTE_COUNT;
-	err = fwtp_dev->fwtp_ipc_client.fwtp_if
-		      .send_message(&(fwtp_dev->fwtp_ipc_client.fwtp_if),
-				    &msg_subscribe, sizeof(msg_subscribe),
-				    sizeof(msg_subscribe), &rx_msg_data_size);
+	/* Subscribe or unsubscribe to the tracepoint rings. */
+	err = fwtp_ipc_client_subscribe(&(fwtp_dev->fwtp_ipc_client), subscribe,
+					FWTP_CPM_NOTIFY_BYTE_COUNT);
 	if (err != kFwtpOk)
 		return -EIO;
 
@@ -273,15 +258,14 @@ static fwtp_error_code_t fwtp_cpm_send_message(struct fwtp_if *fwtp_if,
  * @str: Tracepoint title string.
  * @data_items: Tracepoint data items.
  */
-static void
-fwtp_cpm_printer_post_process(struct fwtp_printer_ctx *printer_ctx,
-			      unsigned int type, u64 timestamp, u32 str_id,
-			      const char *str,
-			      struct fwtp_data_item_list *data_items)
+static void fwtp_cpm_printer_post_process(
+	struct fwtp_printer_ctx *printer_ctx, unsigned int type, u64 timestamp,
+	u32 str_id, const char *str, struct fwtp_data_item_list *data_items)
 {
 	uint8_t *p_starting_next_data_item;
 	u32 data;
 	int data_item_size;
+	u64 boottime_timestamp;
 
 	/*
 	 * Pass the tracepoint string and data item to the CPM tracepoint
@@ -291,8 +275,11 @@ fwtp_cpm_printer_post_process(struct fwtp_printer_ctx *printer_ctx,
 	data = 0;
 	data_item_size =
 		fwtp_get_next_data_item(data_items, &data, sizeof(data));
-	if (data_item_size > 0)
-		cpm_tracepoint_decode(str_id, data, timestamp);
+	if (data_item_size > 0) {
+		boottime_timestamp = fwtp_dev_get_boottime_timestamp(
+			timestamp, printer_ctx->timestamp_hz);
+		cpm_tracepoint_decode(str_id, data, boottime_timestamp);
+	}
 	data_items->p_next_data_item = p_starting_next_data_item;
 
 	/* Continue post-processing the tracepoint. */
@@ -316,6 +303,7 @@ static void fwtp_cpm_handle_ring_notify_work(struct work_struct *work)
 	for (i = 0; i < FWTP_CPM_DEV_NUM; i++) {
 		struct fwtp_dev *fwtp_dev = &(fwtp_cpm_dev->fwtp_dev_list[i]);
 		struct fwtp_printer_ctx *printer_ctx = &(fwtp_dev->printer_ctx);
+		uint8_t decode_buffer[FWTP_DECODE_BUFFER_SIZE];
 
 		/*
 		 * Initialize the printer context for use with the FWTP IPC
@@ -330,10 +318,11 @@ static void fwtp_cpm_handle_ring_notify_work(struct work_struct *work)
 		 * may issue unaligned reads which are not allowed for CPM
 		 * memory.
 		 */
-		fwtp_print_ring_entries_with_decode_buffer(
-			printer_ctx, &(fwtp_cpm_dev->memio_ring_list[i]), 0,
-			fwtp_cpm_dev->decode_buffer,
-			sizeof(fwtp_cpm_dev->decode_buffer));
+		if (fwtp_dev->memio_ring) {
+			fwtp_print_ring_entries_with_decode_buffer(
+				printer_ctx, fwtp_dev->memio_ring, 0,
+				decode_buffer, sizeof(decode_buffer));
+		}
 	}
 }
 
@@ -355,11 +344,15 @@ static void fwtp_cpm_handle_ring_notify(struct fwtp_cpm_dev *fwtp_cpm_dev,
 	struct fwtp_msg_ring_notify *ring_notify =
 		container_of(msg_base, struct fwtp_msg_ring_notify, base);
 	for (i = 0; i < FWTP_CPM_DEV_NUM; i++) {
+		struct fwtp_dev *fwtp_dev = &fwtp_cpm_dev->fwtp_dev_list[i];
 		struct fwtp_ipc_client *fwtp_ipc_client =
-			&(fwtp_cpm_dev->fwtp_dev_list[i].fwtp_ipc_client);
-		if (ring_notify->ring_num == fwtp_ipc_client->ring_num) {
-			fwtp_cpm_dev->memio_ring_list[i].tail_offset =
-				ring_notify->tail_offset;
+			&(fwtp_dev->fwtp_ipc_client);
+
+		if (ring_notify->ring_num ==
+		    fwtp_ipc_client->client_ring_list[0].ring_num) {
+			if (fwtp_dev->memio_ring)
+				fwtp_dev->memio_ring->tail_offset =
+					ring_notify->tail_offset;
 			break;
 		}
 	}
@@ -421,10 +414,10 @@ static int fwtp_cpm_debugfs_write_subscribe(void *data, u64 val)
 		if (enable) {
 			/* Initialize tracepoint decoder clients. */
 			fwtp_ipc_client = &(fwtp_dev->fwtp_ipc_client);
-			client_init_callbacks(fwtp_ipc_client->string_table,
-					      fwtp_ipc_client->string_table_size,
-					      fwtp_ipc_client
-						      ->string_table_offset);
+			client_init_callbacks(
+				fwtp_ipc_client->string_table,
+				fwtp_ipc_client->string_table_size,
+				fwtp_ipc_client->string_table_offset);
 		} else {
 			client_exit_callbacks();
 		}
@@ -546,18 +539,18 @@ static int fwtp_cpm_init_dev(struct fwtp_cpm_dev *fwtp_cpm_dev,
 			     int ring_num, int string_table_num)
 {
 	struct fwtp_dev *fwtp_dev;
-	struct tracepoint_ring *memio_ring;
 	struct dentry *root_subdev_debugfs;
+	struct dentry *dentry;
 	int ret;
 
 	/* Create the root sub-device debugfs directory. */
 	root_subdev_debugfs =
 		debugfs_create_dir(tracepoint_name, fwtp_cpm_dev->debugfs_root);
-	if (!root_subdev_debugfs) {
+	if (IS_ERR(root_subdev_debugfs)) {
 		dev_err(fwtp_cpm_dev->dev,
 			"Failed to create a debugfs directory for \"%s\".\n",
 			tracepoint_name);
-		return -ENOENT;
+		return PTR_ERR(root_subdev_debugfs);
 	}
 
 	/* Configure and initialize the FWTP sub-device. */
@@ -566,7 +559,8 @@ static int fwtp_cpm_init_dev(struct fwtp_cpm_dev *fwtp_cpm_dev,
 	fwtp_dev->root_debugfs = root_subdev_debugfs;
 	fwtp_dev->fwtp_ipc_client.fwtp_if.send_message = fwtp_cpm_send_message;
 	fwtp_dev->fwtp_ipc_client.fwtp_if.send_message_ctx = fwtp_cpm_dev;
-	fwtp_dev->fwtp_ipc_client.ring_num = ring_num;
+	fwtp_dev->fwtp_ipc_client.client_ring_list[0].ring_num = ring_num;
+	fwtp_dev->fwtp_ipc_client.client_ring_count = 1;
 	fwtp_dev->fwtp_ipc_client.string_table_num = string_table_num;
 	fwtp_dev->printer_ctx.name = tracepoint_name;
 	fwtp_dev->ftrace_enabled = true;
@@ -579,10 +573,15 @@ static int fwtp_cpm_init_dev(struct fwtp_cpm_dev *fwtp_cpm_dev,
 	}
 
 	/* Get the tracepoint ring with mem I/O access. */
-	memio_ring = &(fwtp_cpm_dev->memio_ring_list[dev_num]);
-	ret = fwtp_dev_get_memio_ring(fwtp_dev,
-				      fwtp_dev->fwtp_ipc_client.ring_num,
-				      memio_ring);
+	fwtp_dev->memio_ring = devm_kzalloc(
+		fwtp_cpm_dev->dev, sizeof(struct tracepoint_ring), GFP_KERNEL);
+	if (!fwtp_dev->memio_ring)
+		return -ENOMEM;
+
+	ret = fwtp_dev_get_memio_ring(
+		fwtp_dev,
+		fwtp_dev->fwtp_ipc_client.client_ring_list[0].ring_num,
+		fwtp_dev->memio_ring);
 	if (ret) {
 		dev_err(fwtp_dev->dev,
 			"Failed to get tracepoint ring with error %d.\n", ret);
@@ -590,25 +589,30 @@ static int fwtp_cpm_init_dev(struct fwtp_cpm_dev *fwtp_cpm_dev,
 	}
 
 	/* Create the various device debugfs files. */
-	if (!debugfs_create_file("request_subscribe", 0220, root_subdev_debugfs,
-				 fwtp_dev, &fwtp_cpm_debugfs_fops_subscribe)) {
+	dentry = debugfs_create_file("request_subscribe", 0220,
+				     root_subdev_debugfs, fwtp_dev,
+				     &fwtp_cpm_debugfs_fops_subscribe);
+	if (IS_ERR(dentry)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create a subscription debugfs file.\n");
-		return -ENOENT;
+		return PTR_ERR(dentry);
 	}
-	if (!debugfs_create_file("enable_log", 0220, root_subdev_debugfs,
-				 fwtp_dev, &fwtp_cpm_debugfs_fops_enable_log)) {
+	dentry = debugfs_create_file("enable_log", 0220, root_subdev_debugfs,
+				     fwtp_dev,
+				     &fwtp_cpm_debugfs_fops_enable_log);
+	if (IS_ERR(dentry)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create an enable kernel log debugfs file.\n");
-		return -ENOENT;
+		return PTR_ERR(dentry);
 	}
 
-	if (!debugfs_create_file("enable_ftrace", 0220, root_subdev_debugfs,
-				 fwtp_dev,
-				 &fwtp_cpm_debugfs_fops_enable_ftrace)) {
+	dentry = debugfs_create_file("enable_ftrace", 0220, root_subdev_debugfs,
+				     fwtp_dev,
+				     &fwtp_cpm_debugfs_fops_enable_ftrace);
+	if (IS_ERR(dentry)) {
 		dev_err(fwtp_dev->dev,
 			"Failed to create an enable ftrace debugfs file.\n");
-		return -ENOENT;
+		return PTR_ERR(dentry);
 	}
 
 	return 0;
@@ -641,9 +645,8 @@ static int fwtp_cpm_init_dev_list(struct fwtp_cpm_dev *fwtp_cpm_dev)
 		const char *sub_dev_name;
 
 		/* Get the sub-device name. */
-		ret = of_property_read_string_index(dev->of_node,
-						    "tracepoint-list", i,
-						    &sub_dev_name);
+		ret = of_property_read_string_index(
+			dev->of_node, "tracepoint-list", i, &sub_dev_name);
 		if (ret) {
 			dev_err(dev,
 				"Failed to get sub-device index %d name with error %d.\n",
@@ -776,9 +779,9 @@ static int fwtp_cpm_probe(struct platform_device *pdev)
 	 * tracepoints.
 	 */
 	fwtp_cpm_dev->debugfs_root = debugfs_create_dir(dev_name(dev), NULL);
-	if (!fwtp_cpm_dev->debugfs_root) {
+	if (IS_ERR(fwtp_cpm_dev->debugfs_root)) {
 		dev_err(dev, "Failed to create a debugfs directory.\n");
-		ret = -ENOENT;
+		ret = PTR_ERR(fwtp_cpm_dev->debugfs_root);
 		goto out;
 	}
 
@@ -794,13 +797,12 @@ static int fwtp_cpm_probe(struct platform_device *pdev)
 	/* Initialize the CPM tracepoint decoder. */
 	initialize_cpm_tracepoint_decoder();
 	fwtp_ipc_client = &(fwtp_dev->fwtp_ipc_client);
-	cpm_tracepoint_decoder_set_string_table(fwtp_ipc_client->string_table,
-						fwtp_ipc_client
-							->string_table_size,
-						fwtp_ipc_client
-							->string_table_offset);
-	cpm_tracepoint_decoder_set_enable_cb(fwtp_cpm_tracepoint_decoder_enable_cb,
-					     fwtp_dev);
+	cpm_tracepoint_decoder_set_string_table(
+		fwtp_ipc_client->string_table,
+		fwtp_ipc_client->string_table_size,
+		fwtp_ipc_client->string_table_offset);
+	cpm_tracepoint_decoder_set_enable_cb(
+		fwtp_cpm_tracepoint_decoder_enable_cb, fwtp_dev);
 
 out:
 	/* Clean up. */
@@ -838,12 +840,6 @@ static int fwtp_cpm_remove(struct platform_device *pdev)
 	/* Deinitialize the CPM tracepoint decoder. */
 	cpm_tracepoint_decoder_set_enable_cb(NULL, NULL);
 	cpm_tracepoint_decoder_set_string_table(NULL, 0, 0);
-
-	/* Free the mem I/O tracepoint rings. */
-	for (i = 0; i < FWTP_CPM_DEV_NUM; i++) {
-		fwtp_dev_free_memio_ring(&(fwtp_cpm_dev->fwtp_dev_list[i]),
-					 &(fwtp_cpm_dev->memio_ring_list[i]));
-	}
 
 	/*
 	 * Remove the debugfs directory used to configure publishing of CPM

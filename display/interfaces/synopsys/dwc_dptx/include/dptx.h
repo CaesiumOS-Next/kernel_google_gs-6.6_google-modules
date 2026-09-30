@@ -57,11 +57,21 @@
 struct dptx;
 
 /* Number of Clocks */
-#define DPTX_NUM_PIXEL_CLKS 5
+enum {
+	GPCM_PLLDP = 0,
+	HSION_PIX0,
+	DPU_PIX0,
+	HSION_PIX1,
+	DPU_PIX1,
+	DPTX_NUM_PIXEL_CLKS
+};
 
 /* The max rate and lanes supported by the core */
 #define DPTX_MAX_LINK_RATE DPTX_PHYIF_CTRL_RATE_HBR3
 #define DPTX_MAX_LINK_LANES 4
+#define DPTX_MAX_VS_LEVEL 3
+#define DPTX_MAX_PE_LEVEL 3
+#define DPTX_MAX_VS_PE_SUM 3
 
 /* The default rate and lanes to use for link training */
 #define DPTX_DEFAULT_LINK_RATE DPTX_PHYIF_CTRL_RATE_HBR
@@ -112,6 +122,7 @@ struct dptx_aux {
 	u32 sts;
 	u32 data[4];
 	atomic_t abort;
+	ktime_t noreply_timeout;
 };
 
 struct sdp_header {
@@ -383,6 +394,7 @@ struct dptx {
 	struct work_struct hpd_unplug_work;
 	struct work_struct hpd_irq_work;
 	bool hpd_unplug_running;
+	bool hpd_irq_unplug_running;
 
 	/* Clocks */
 	struct clk_bulk_data pixel_clks[DPTX_NUM_PIXEL_CLKS];
@@ -417,6 +429,8 @@ struct dptx {
 	 * No DP video, DP audio, or HDCP is enabled in this mode.
 	 */
 	bool link_test_mode;
+	bool link_test_force_cr;
+	bool link_test_force_cheq;
 
 	/* AUX debug */
 	bool aux_debug_en;
@@ -584,7 +598,7 @@ void dptx_update_link_status(struct dptx *dptx, enum link_training_status link_s
 
 static inline u32 __dptx_read_reg(struct dptx *dp, char const *func, int line, struct regmap *regm, u32 reg)
 {
-	u32 val;
+	u32 val = 0;
 
 	regmap_read(regm, reg, &val);
 	#ifdef DPTX_DEBUG_REG
@@ -613,7 +627,7 @@ static inline void __dptx_write_reg(struct dptx *dp, char const *func, int line,
 
 static inline u32 __dptx_read_regfield(struct dptx *dp, char const *func, int line, struct regmap_field *reg_field)
 {
-	u32 val;
+	u32 val = 0;
 
 	regmap_field_read(reg_field, &val);
 
@@ -711,6 +725,10 @@ void dptx_connection_result_update(struct dptx *dptx, bool success);
 #define EDID_TAG_SHIFT		5
 #define EDID_SIZE_MASK		GENMASK(4, 0)
 #define EDID_SIZE_SHIFT		0
+
+/* EDID HF-EEODB */
+#define EDID_EEODB_TAG		7
+#define EDID_EEODB_EXT_TAG	0x78
 
 /* Established timing blocks */
 #define ET1_800x600_60hz	BIT(0)

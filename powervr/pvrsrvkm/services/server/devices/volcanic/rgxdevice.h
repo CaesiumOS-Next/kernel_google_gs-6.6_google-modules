@@ -696,21 +696,6 @@ typedef struct _PVRSRV_RGXDEV_INFO_
 
 #if defined(SUPPORT_PDVFS)
 	/**
-	 * Host memdesc and pointer to memory containing core clock rate in Hz.
-	 * Firmware (PDVFS) updates the memory on changing the core clock rate over
-	 * GPIO.
-	 * Note: Shared memory needs atomic access from Host driver and firmware,
-	 * hence size should not be greater than memory transaction granularity.
-	 * Currently it is chosen to be 32 bits.
-	 */
-	DEVMEM_MEMDESC			*psRGXFWIFCoreClkRateMemDesc;
-	volatile IMG_UINT32		*pui32RGXFWIFCoreClkRate;
-	/**
-	 * Last sampled core clk rate.
-	 */
-	volatile IMG_UINT32		ui32CoreClkRateSnapshot;
-
-	/**
 	 * Utilisation.
 	 */
 	DEVMEM_MEMDESC			*psRGXFWIFUtilisationMemDesc;

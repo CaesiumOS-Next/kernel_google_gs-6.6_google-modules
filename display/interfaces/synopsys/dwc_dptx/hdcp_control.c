@@ -22,7 +22,7 @@ module_param(hdcp_max_ver, ulong, 0664);
 MODULE_PARM_DESC(hdcp_max_ver,
 	"support up to specific hdcp version by setting hdcp_max_ver=x");
 
-static unsigned long hdcp_delay_ms = 1000;
+unsigned long hdcp_delay_ms = 1000;
 module_param(hdcp_delay_ms, ulong, 0664);
 MODULE_PARM_DESC(hdcp_delay_ms,
 	"set number of milliseconds to delay HDCP negotiation after HPD_PLUG");
@@ -258,3 +258,25 @@ void dptx_hdcp_remove(struct dptx *dptx)
 	dptx_hdcp_disconnect(dptx);
 	hdcp_tee_close(dptx);
 }
+
+void dptx_hdcp_dump_regs(struct dptx *dptx)
+{
+	dptx_err(dptx, "HDCP Reg Dump:\n");
+	dptx_err(dptx, "  DPTX_VERSION_NUMBER:  0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], DPTX_VERSION_NUMBER));
+	dptx_err(dptx, "  DPTX_VERSION_TYPE:    0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], DPTX_VERSION_TYPE));
+	dptx_err(dptx, "  DPTX_CONFIG_REG1:     0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], DPTX_CONFIG_REG1));
+	dptx_err(dptx, "  VSAMPLE_CTRL[0]:      0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], VSAMPLE_CTRL));
+	dptx_err(dptx, "  GENERAL_INTERRUPT[0]: 0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], GENERAL_INTERRUPT));
+	dptx_err(dptx, "  HDCPCFG:              0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], HDCPCFG));
+	dptx_err(dptx, "  HDCPOBS:              0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], HDCPOBS));
+	dptx_err(dptx, "  HDCPAPIINTSTAT:       0x%08x\n",
+		 dptx_read_reg(dptx, dptx->regs[DPTX], HDCPAPIINTSTAT));
+}
+

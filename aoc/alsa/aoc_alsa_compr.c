@@ -617,7 +617,8 @@ int aoc_compr_get_decoder_position(struct aoc_alsa_stream *alsa_stream, uint64_t
 		return -EINVAL;
 	}
 
-	*position = current_decoder_frame - alsa_stream->compr_pcm_decoder_base;
+	*position = (current_decoder_frame - alsa_stream->compr_pcm_decoder_base) *
+			(long)alsa_stream->params_rate / AOC_COMPR_OFFLOAD_DEFAULT_SR;
 
 	pr_debug("%s: current_decoder_frame=%llu base=%llu, position=%llu\n", __func__,
 			current_decoder_frame, alsa_stream->compr_pcm_decoder_base, *position);

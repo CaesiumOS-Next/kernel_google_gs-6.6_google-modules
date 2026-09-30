@@ -13,8 +13,8 @@
 #define DPTX_MP_DUAL_PIXEL		1
 #define DPTX_MP_QUAD_PIXEL		2
 
-#define DPTX_ID_DEVICE_ID		0x9001
-#define DPTX_ID_VENDOR_ID		0x16c3
+#define DPTX_ID_DEVICE_ID		0x9001U
+#define DPTX_ID_VENDOR_ID		0x16c3U
 
 /* MST */
 #define DPTX_MST_VCP_TABLE_REG_N(n)	(0x210 + (n) * 4)

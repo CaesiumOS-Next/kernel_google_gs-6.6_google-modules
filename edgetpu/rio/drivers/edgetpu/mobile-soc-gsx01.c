@@ -889,8 +889,8 @@ int edgetpu_soc_setup_irqs(struct edgetpu_dev *etdev)
 	for (i = 0; i < n; i++) {
 		etdev->mailbox_irq[i] = platform_get_irq(pdev, i);
 		ret = devm_request_irq(etdev->dev, etdev->mailbox_irq[i],
-				       edgetpu_mailbox_irq_handler, IRQF_ONESHOT, etdev->dev_name,
-				       etdev);
+				       edgetpu_mailbox_irq_handler, 0,
+				       etdev->dev_name, etdev);
 		if (ret) {
 			dev_err(etdev->dev, "%s: failed to request mailbox irq %d: %d\n",
 				etdev->dev_name, etdev->mailbox_irq[i], ret);

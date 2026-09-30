@@ -161,7 +161,7 @@ static int g2d_get_dmabuf(struct g2d_task *task,
 		goto err;
 	}
 
-	sgt = dma_buf_map_attachment(attachment, dir);
+	sgt = dma_buf_map_attachment_unlocked(attachment, dir);
 	if (IS_ERR(sgt)) {
 		ret = PTR_ERR(sgt);
 		perrfndev(g2d_dev, "failed to map dmabuf (%d)", ret);
@@ -185,7 +185,8 @@ err:
 static int g2d_put_dmabuf(struct g2d_device *g2d_dev, struct g2d_buffer *buffer,
 			  enum dma_data_direction dir)
 {
-	dma_buf_unmap_attachment(buffer->dmabuf.attachment, buffer->sgt, dir);
+	dma_buf_unmap_attachment_unlocked(buffer->dmabuf.attachment,
+					  buffer->sgt, dir);
 	dma_buf_detach(buffer->dmabuf.dmabuf, buffer->dmabuf.attachment);
 	dma_buf_put(buffer->dmabuf.dmabuf);
 

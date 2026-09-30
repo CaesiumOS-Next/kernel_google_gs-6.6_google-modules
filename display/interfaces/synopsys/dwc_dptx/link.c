@@ -6,8 +6,8 @@
  */
 
 #include "dptx.h"
+#include "dptx_utils.h"
 #include "intr.h"
-#include "phy/phy_n621.h"
 #include "regmaps/ctrl_fields.h"
 
 static int dptx_link_read_status(struct dptx *dptx)
@@ -17,28 +17,16 @@ static int dptx_link_read_status(struct dptx *dptx)
 					 DP_LINK_STATUS_SIZE);
 }
 
-static int dptx_link_check_cr_done(struct dptx *dptx, bool *out_done)
+static int dptx_link_check_cr_done(struct dptx *dptx, bool *out_done, u32 delay)
 {
 	int retval;
-	u8 byte;
-	u32 reg;
 
 	if (WARN_ON(!out_done))
 		return -EINVAL;
 
 	*out_done = false;
 
-	retval = dptx_read_dpcd(dptx, DP_TRAINING_AUX_RD_INTERVAL, &byte);
-	if (retval)
-		return retval;
-	dptx_dbg_link(dptx, "%s - DP_TRAINING_AUX_RD_INTERVAL: 0x%02X\n", __func__, byte);
-
-	reg = min_t(u32, (byte & 0x7f), 4);
-	reg *= 4000;
-	if (!reg)
-		reg = 400;
-
-	fsleep(reg);
+	fsleep(delay);
 
 	retval = dptx_link_read_status(dptx);
 	if (retval)
@@ -47,6 +35,13 @@ static int dptx_link_check_cr_done(struct dptx *dptx, bool *out_done)
 	*out_done = drm_dp_clock_recovery_ok(dptx->link.status,
 					     dptx->link.lanes);
 
+	if (dptx->link_test_mode && dptx->link_test_force_cr) {
+		/* force DP link training clock recovery to pass */
+		dptx_dbg_link(dptx, "%s: LINK STATUS: %02x %02x %02x\n", __func__,
+			      dptx->link.status[0], dptx->link.status[1], dptx->link.status[2]);
+		*out_done = true;
+	}
+
 	dptx_dbg_link(dptx, "%s: CR_DONE = %d\n", __func__, *out_done);
 
 	return 0;
@@ -54,7 +49,7 @@ static int dptx_link_check_cr_done(struct dptx *dptx, bool *out_done)
 
 static int dptx_link_check_ch_eq_done(struct dptx *dptx,
 				      bool *out_cr_done,
-				      bool *out_ch_eq_done)
+				      bool *out_ch_eq_done, u32 delay)
 {
 	int retval;
 	bool done;
@@ -62,7 +57,7 @@ static int dptx_link_check_ch_eq_done(struct dptx *dptx,
 	if (WARN_ON(!out_cr_done || !out_ch_eq_done))
 		return -EINVAL;
 
-	retval = dptx_link_check_cr_done(dptx, &done);
+	retval = dptx_link_check_cr_done(dptx, &done, delay);
 	if (retval)
 		return retval;
 
@@ -76,8 +71,8 @@ static int dptx_link_check_ch_eq_done(struct dptx *dptx,
 	*out_ch_eq_done = drm_dp_channel_eq_ok(dptx->link.status,
 					       dptx->link.lanes);
 
-	if (dptx->link_test_mode) {
-		/* WAR: PHY pattern testing: bypass CH_EQ failures */
+	if (dptx->link_test_mode && dptx->link_test_force_cheq) {
+		/* force DP link training channel equalization to pass */
 		dptx_dbg_link(dptx, "%s: LINK STATUS: %02x %02x %02x\n", __func__,
 			      dptx->link.status[0], dptx->link.status[1], dptx->link.status[2]);
 		*out_ch_eq_done = true;
@@ -104,7 +99,7 @@ static void dptx_link_set_preemp_vswing(struct dptx *dptx)
 		pe = dptx->link.preemp_level[i];
 		vs = dptx->link.vswing_level[i];
 
-		dptx_dbg_link(dptx, "setting VS=%d PE=%d for lane %d\n", vs, pe, i);
+		dptx_dbg_link(dptx, "set PHY lane %u to VS=%u PE=%u\n", i, vs, pe);
 		/*
 		 * PHY_TX_EQ registers do not have signals tied to the ComboPHY and are effectively
 		 * no-op so the usb phy driver callback is needed. Programming the registers
@@ -131,14 +126,14 @@ static int dptx_link_training_lanes_set(struct dptx *dptx)
 			  DP_TRAIN_VOLTAGE_SWING_SHIFT) &
 			 DP_TRAIN_VOLTAGE_SWING_MASK);
 
-		if (dptx->link.vswing_level[i] == 3)
+		if (dptx->link.vswing_level[i] == DPTX_MAX_VS_LEVEL)
 			byte |= DP_TRAIN_MAX_SWING_REACHED;
 
 		byte |= ((dptx->link.preemp_level[i] <<
 			  DP_TRAIN_PRE_EMPHASIS_SHIFT) &
 			 DP_TRAIN_PRE_EMPHASIS_MASK);
 
-		if (dptx->link.preemp_level[i] == 3)
+		if (dptx->link.preemp_level[i] == DPTX_MAX_PE_LEVEL)
 			byte |= DP_TRAIN_MAX_PRE_EMPHASIS_REACHED;
 
 		bytes[i] = byte;
@@ -152,64 +147,68 @@ static int dptx_link_training_lanes_set(struct dptx *dptx)
 	return 0;
 }
 
-static int dptx_link_adjust_drive_settings(struct dptx *dptx, int *out_changed)
+static int dptx_link_adjust_drive_settings(struct dptx *dptx, bool *out_changed,
+					   bool *out_max_reached)
 {
-	int retval;
-	unsigned int lanes;
 	unsigned int i;
-	u8 byte;
-	u8 adj[4] = { 0, };
-	int changed = false;
-
-	lanes = dptx->link.lanes;
-
-	switch (lanes) {
-	case 4:
-		retval = dptx_read_dpcd(dptx, DP_ADJUST_REQUEST_LANE2_3, &byte);
-		if (retval)
-			return retval;
-
-		adj[2] = byte & 0x0f;
-		adj[3] = (byte & 0xf0) >> 4;
-		fallthrough;
-	case 2:
-	case 1:
-		retval = dptx_read_dpcd(dptx, DP_ADJUST_REQUEST_LANE0_1, &byte);
-		if (retval)
-			return retval;
-
-		adj[0] = byte & 0x0f;
-		adj[1] = (byte & 0xf0) >> 4;
-		break;
-	default:
-		WARN(1, "Invalid number of lanes %d\n", lanes);
-		return -EINVAL;
-	}
+	bool changed = false;
+	bool max_reached = false;
 
 	/* Save the drive settings */
-	for (i = 0; i < lanes; i++) {
-		u8 vs = adj[i] & 0x3;
-		u8 pe = (adj[i] & 0xc) >> 2;
+	for (i = 0; i < dptx->link.lanes; i++) {
+		u8 vs = drm_dp_get_adjust_request_voltage(dptx->link.status, i);
+		u8 pe = drm_dp_get_adjust_request_pre_emphasis(dptx->link.status, i);
 
+		vs >>= DP_TRAIN_VOLTAGE_SWING_SHIFT;
+		pe >>= DP_TRAIN_PRE_EMPHASIS_SHIFT;
+
+		if (vs > DPTX_MAX_VS_LEVEL) {
+			dptx_dbg_link(dptx, "%s: VS=%u > DPTX_MAX_VS_LEVEL\n", __func__, vs);
+			vs = DPTX_MAX_VS_LEVEL;
+		}
+		if (pe > DPTX_MAX_PE_LEVEL) {
+			dptx_dbg_link(dptx, "%s: PE=%u > DPTX_MAX_PE_LEVEL\n", __func__, pe);
+			pe = DPTX_MAX_PE_LEVEL;
+		}
+		if ((vs + pe) > DPTX_MAX_VS_PE_SUM) {
+			dptx_dbg_link(dptx, "%s: VS+PE=%u > DPTX_MAX_VS_PE_SUM\n", __func__, vs+pe);
+			vs = DPTX_MAX_VS_PE_SUM - pe;
+		}
+
+		if (vs == DPTX_MAX_VS_LEVEL || pe == DPTX_MAX_PE_LEVEL)
+			max_reached = true;
 		if (dptx->link.vswing_level[i] != vs)
+			changed = true;
+		if (dptx->link.preemp_level[i] != pe)
 			changed = true;
 
 		dptx->link.vswing_level[i] = vs;
 		dptx->link.preemp_level[i] = pe;
-		dptx_dbg_link(dptx, "%s - set VS/PE values: VS=%X PE=%X\n", __func__, vs, pe);
+		dptx_dbg_link(dptx, "adjust lane %u to VS=%u PE=%u\n", i, vs, pe);
 	}
-
-	dptx_link_set_preemp_vswing(dptx);
-
-	retval = dptx_link_training_lanes_set(dptx);
-	if (retval)
-		return retval;
 
 	if (out_changed)
 		*out_changed = changed;
 
+	if (out_max_reached)
+		*out_max_reached = max_reached;
+
 	return 0;
 }
+
+static int dptx_link_apply_drive_settings(struct dptx *dptx)
+{
+	dptx_link_set_preemp_vswing(dptx);
+	return dptx_link_training_lanes_set(dptx);
+}
+
+static unsigned long dp_init_pe = 0;
+module_param(dp_init_pe, ulong, 0664);
+MODULE_PARM_DESC(dp_init_pe, "DP link initial pre-emphasis value: 0-3");
+
+static unsigned long dp_init_vs = 0;
+module_param(dp_init_vs, ulong, 0664);
+MODULE_PARM_DESC(dp_init_vs, "DP link initial voltage swing value: 0-3");
 
 int dptx_set_link_configs(struct dptx *dptx, u8 rate, u8 lanes)
 {
@@ -225,9 +224,18 @@ int dptx_set_link_configs(struct dptx *dptx, u8 rate, u8 lanes)
 		 "Invalid lanes %d\n", lanes))
 		lanes = 1;
 
+	if (dp_init_pe > DPTX_MAX_PE_LEVEL)
+		dp_init_pe = 0;
+
+	if (dp_init_vs > DPTX_MAX_VS_LEVEL)
+		dp_init_vs = 0;
+
+	if ((dp_init_pe + dp_init_vs) > DPTX_MAX_VS_PE_SUM)
+		dp_init_vs = DPTX_MAX_VS_PE_SUM - dp_init_pe;
+
 	/* Initialize link parameters */
-	memset(dptx->link.preemp_level, 0, sizeof(u8) * 4);
-	memset(dptx->link.vswing_level, 0, sizeof(u8) * 4);
+	memset(dptx->link.preemp_level, (u8)dp_init_pe, sizeof(u8) * 4);
+	memset(dptx->link.vswing_level, (u8)dp_init_vs, sizeof(u8) * 4);
 	memset(dptx->link.status, 0, DP_LINK_STATUS_SIZE);
 
 	sink_max_lanes = drm_dp_max_lane_count(dptx->rx_caps);
@@ -285,37 +293,46 @@ static int dptx_link_wait_cr_and_adjust(struct dptx *dptx, bool ch_eq)
 {
 	int i;
 	int retval;
-	int changed = 0;
+	bool changed = false;
+	bool max_reached = false;
 	bool done = false;
+	u32 same_vs_pe = 0;
+	u32 cr_delay = 100;  /* cr_delay: 100 usec */
 
 	/* First check for clock recovery status */
-	retval = dptx_link_check_cr_done(dptx, &done);
+	retval = dptx_link_check_cr_done(dptx, &done, cr_delay);
 	if (retval)
 		return retval;
 
 	if (done)
 		return 0;
 
-	/* Adjust and check max 4 more times */
-	for (i = 0; i < 4; i++) {
-		retval = dptx_link_adjust_drive_settings(dptx, &changed);
+	/*
+	 * Adjust and check status max 9 more times
+	 * Unchanged VS/PE request is checked max 4 more times
+	 */
+	for (i = 0; i < 9; i++) {
+		retval = dptx_link_adjust_drive_settings(dptx, &changed, &max_reached);
 		if (retval)
 			return retval;
 
-		/* Reset iteration count if we changed settings */
 		if (changed)
-			i = 0;
+			same_vs_pe = 0;
+		else if (++same_vs_pe == 5)
+			return -EPROTO;
 
-		retval = dptx_link_check_cr_done(dptx, &done);
+		retval = dptx_link_apply_drive_settings(dptx);
+		if (retval)
+			return retval;
+
+		retval = dptx_link_check_cr_done(dptx, &done, cr_delay);
 		if (retval)
 			return retval;
 
 		if (done)
 			return 0;
 
-		/* TODO check for all lanes? */
-		/* Failed and reached the maximum voltage swing */
-		if (dptx->link.vswing_level[0] == 3)
+		if (max_reached)
 			return -EPROTO;
 	}
 
@@ -326,9 +343,7 @@ static int dptx_link_cr(struct dptx *dptx)
 {
 	int retval, count;
 	u8 byte;
-	u8 training_set_bytes[5] = { 0x21, 0x00, 0x00, 0x00, 0x00 };
 	struct ctrl_regfields *ctrl_fields;
-	u32 tx_ready;
 	u32 phyif_reg;
 	u32 rst;
 
@@ -411,18 +426,6 @@ static int dptx_link_cr(struct dptx *dptx)
 		return retval;
 	}
 
-	count = 0;
-	tx_ready = 1;  //TODO: phyif_read_mask(dptx, PHY_TX_READY, PHY_TX_READY_MASK);
-	while (tx_ready != 1) {
-		count++;
-		if (count > 20) {
-			dptx_err(dptx, "%s: TIMEOUT - TX_READY", __func__);
-			return -EAGAIN;
-		}
-		fsleep(10);
-		tx_ready = phyif_read_mask(dptx, PHY_TX_READY, PHY_TX_READY_MASK);
-	}
-
 	/* Set PHY_TX_EQ */
 	dptx_link_set_preemp_vswing(dptx);
 
@@ -468,9 +471,16 @@ static int dptx_link_cr(struct dptx *dptx)
 	if (retval)
 		return retval;
 
-	// Set TRAINING_PATTERN_SET and TRAINING_LANEx_SET registerss
-	dptx_write_bytes_to_dpcd(dptx, DP_TRAINING_PATTERN_SET,
-					  training_set_bytes, 5);
+	/* Set TRAINING_PATTERN_SET register */
+	retval = dptx_write_dpcd(dptx, DP_TRAINING_PATTERN_SET,
+				 DP_TRAINING_PATTERN_1 | DP_LINK_SCRAMBLING_DISABLE);
+	if (retval)
+		return retval;
+
+	/* Set TRAINING_LANEx_SET registers */
+	retval = dptx_link_training_lanes_set(dptx);
+	if (retval)
+		return retval;
 
 	retval = dptx_link_wait_cr_and_adjust(dptx, false);
 
@@ -486,6 +496,8 @@ static int dptx_link_ch_eq(struct dptx *dptx)
 	unsigned int i;
 	u8 dp_pattern;
 	struct ctrl_regfields *ctrl_fields;
+	u8 byte;
+	u32 ch_eq_delay;
 
 	ctrl_fields = dptx->ctrl_fields;
 
@@ -500,47 +512,68 @@ static int dptx_link_ch_eq(struct dptx *dptx)
 		dp_pattern = DP_TRAINING_PATTERN_2;
 	}
 
+	/* ch_eq_delay: 400/4000/8000/12000/16000 usec */
+	retval = dptx_read_dpcd(dptx, DP_TRAINING_AUX_RD_INTERVAL, &byte);
+	if (retval)
+		return retval;
+
+	ch_eq_delay = min_t(u32, (byte & 0x7f), 4);
+	ch_eq_delay *= 4000;
+	if (ch_eq_delay == 0)
+		ch_eq_delay = 400;
+
 	dptx_phy_set_pattern(dptx, pattern);
 
-	/* TODO this needs to be different for other versions of
-	 * DPRX
-	 */
+	/* Set TRAINING_PATTERN_SET register */
 	if (dp_pattern != DP_TRAINING_PATTERN_4) {
-		retval = dptx_link_training_pattern_set(dptx, dp_pattern | 0x20);
+		retval = dptx_link_training_pattern_set(dptx,
+							dp_pattern | DP_LINK_SCRAMBLING_DISABLE);
 	} else {
 		retval = dptx_link_training_pattern_set(dptx, dp_pattern);
-
-		dptx_dbg_link(dptx, "%s:  Enabling scrambling for TPS4\n",
-		 __func__);
+		dptx_dbg_link(dptx, "%s:  Enabling scrambling for TPS4\n", __func__);
 		dptx_write_regfield(dptx, ctrl_fields->field_scramble_dis, 0);
 	}
 
 	if (retval)
 		return retval;
 
-	/* Check status and adjust max 5 times. On the 6th iteration, only check status. */
-	for (i = 0; i < 6; i++) {
-		retval = dptx_link_check_ch_eq_done(dptx, &cr_done, &ch_eq_done);
+	/* Set TRAINING_LANEx_SET registers */
+	retval = dptx_link_training_lanes_set(dptx);
+	if (retval)
+		return retval;
 
+	/* First check for channel equalization status */
+	retval = dptx_link_check_ch_eq_done(dptx, &cr_done, &ch_eq_done, ch_eq_delay);
+	if (retval)
+		return retval;
+
+	dptx->cr_fail = !cr_done;
+	if (!cr_done)
+		return -EPROTO;
+
+	if (ch_eq_done)
+		return 0;
+
+	/* Adjust and check status max 5 more times */
+	for (i = 0; i < 5; i++) {
+		retval = dptx_link_adjust_drive_settings(dptx, NULL, NULL);
 		if (retval)
 			return retval;
 
-		dptx->cr_fail = false;
+		retval = dptx_link_apply_drive_settings(dptx);
+		if (retval)
+			return retval;
 
-		if (!cr_done) {
-			dptx->cr_fail = true;
+		retval = dptx_link_check_ch_eq_done(dptx, &cr_done, &ch_eq_done, ch_eq_delay);
+		if (retval)
+			return retval;
+
+		dptx->cr_fail = !cr_done;
+		if (!cr_done)
 			return -EPROTO;
-		}
 
 		if (ch_eq_done)
 			return 0;
-
-		if (i == 5)
-			continue;
-
-		retval = dptx_link_adjust_drive_settings(dptx, NULL);
-		if (retval)
-			return retval;
 	}
 
 	return -EPROTO;
@@ -589,7 +622,6 @@ static int dptx_link_reduce_lanes(struct dptx *dptx)
 	dptx_dbg_link(dptx, "%s: Reducing lanes from %d to %d\n",
 		 __func__, dptx->link.lanes, lanes);
 	dptx->link.lanes = lanes;
-	dptx->link.rate  = dptx->max_rate;
 	return 0;
 }
 
@@ -609,6 +641,13 @@ int dptx_link_training(struct dptx *dptx)
 
 	dptx_dbg_link(dptx, "--- START LINK TRAINING ---\n");
 
+	/* Check LTTPR (Link Training Tunable PHY Repeater) presence */
+	if (dptx->rx_caps[0] >= DP_DPCD_REV_14) {
+		byte = 0;
+		dptx_read_dpcd(dptx, DP_PHY_REPEATER_CNT, &byte);
+		dptx_dbg_link(dptx, "LTTPR count = 0x%02x\n", byte);
+	}
+
 	phyif_reg = ctrl_read(dptx, PHYIF_CTRL);
 	dptx_dbg(dptx, "PHYIF REG: 0x%X\n", phyif_reg);
 
@@ -626,34 +665,20 @@ again:
 	retval = dptx_link_cr(dptx);
 	if (retval) {
 		if (retval == -EPROTO) {
-			dptx_dbg_link(dptx, ">>> Reduce Rate\n");
 			if (dptx_link_reduce_rate(dptx)) {
-				/* TODO If CR_DONE bits for some lanes
-				 * are set, we should reduce lanes to
-				 * those lanes.
-				 */
-				dptx_dbg_link(dptx, ">>> Reduce Lanes\n");
-				if (dptx_link_reduce_lanes(dptx)) {
-					retval = -EPROTO;
+				if (dptx_link_reduce_lanes(dptx))
 					goto fail;
-				} else {
-					/*
-					 * Check clock recovery status (LANE0_CR_DONE bit) in LANE0_1_STATUS DPCD register
-					 * and fail training, if clock recovery failed for Lane 0
-					 */
-					if (!(dptx->link.status[0] & 1))
-						goto fail;
-				}
+				dptx_dbg_link(dptx, ">>> Reduce Lanes\n");
+				dptx->link.rate = dptx->max_rate;
+			} else {
+				dptx_dbg_link(dptx, ">>> Reduce Rate\n");
 			}
 
-			dptx_set_link_configs(dptx,
-						dptx->link.rate,
-						dptx->link.lanes);
+			dptx_set_link_configs(dptx, dptx->link.rate, dptx->link.lanes);
 			goto again;
 		} else {
 			goto fail;
 		}
-
 	}
 
 	dptx_dbg_link(dptx, "... Channel Equalization ...\n");
@@ -661,20 +686,22 @@ again:
 	if (retval) {
 		if (retval == -EPROTO) {
 			if (!dptx->cr_fail) {
-				dptx_dbg_link(dptx, "Link training failure %0x\n", retval);
-				if (dptx->link.lanes == 1) {
+				if (dptx_link_reduce_lanes(dptx)) {
 					if (dptx_link_reduce_rate(dptx))
-						goto fail_reset_eq;
+						goto fail;
+					dptx_dbg_link(dptx, ">>> Reduce Rate\n");
 					dptx->link.lanes = dptx->max_lanes;
 				} else {
-					dptx_link_reduce_lanes(dptx);
+					dptx_dbg_link(dptx, ">>> Reduce Lanes\n");
 				}
 			} else {
 				if (dptx_link_reduce_rate(dptx)) {
-					if (dptx_link_reduce_lanes(dptx)) {
-						retval = -EPROTO;
-						goto fail_reset_eq;
-					}
+					if (dptx_link_reduce_lanes(dptx))
+						goto fail;
+					dptx_dbg_link(dptx, ">>> Reduce Lanes\n");
+					dptx->link.rate = dptx->max_rate;
+				} else {
+					dptx_dbg_link(dptx, ">>> Reduce Rate\n");
 				}
 			}
 
@@ -685,10 +712,12 @@ again:
 		}
 	}
 
+	/* Mute audio to set VB-ID AudioMute flag for DP idle pattern */
+	dptx_write_regfield(dptx, ctrl_fields->field_audio_mute, 1);
+
 	dptx_phy_set_pattern(dptx, DPTX_PHYIF_CTRL_TPS_NONE);
 
-	retval = dptx_link_training_pattern_set(dptx,
-						DP_TRAINING_PATTERN_DISABLE);
+	retval = dptx_link_training_pattern_set(dptx, DP_TRAINING_PATTERN_DISABLE);
 	if (retval)
 		goto fail;
 
@@ -700,12 +729,12 @@ again:
 
 	return 0;
 
-fail_reset_eq:
+fail:
 	/* Reset TX EQ message bus */
 	for (int i = 0; i < num_lanes; i++)
 		google_dpphy_pipe_tx_eq_set(dptx->dp_phy, i, 0, 0);
 	google_dpphy_eq_tune_ovrd_enable(dptx->dp_phy, num_lanes, false);
-fail:
+
 	hpd_sts = dptx_read_regfield(dptx, ctrl_fields->field_hpd_status);
 	if (hpd_sts) {
 		dptx_phy_set_pattern(dptx, DPTX_PHYIF_CTRL_TPS_NONE);
@@ -827,7 +856,7 @@ int dptx_link_check_status(struct dptx *dptx, u8 *irq_vector)
 		if (dptx->sink_count > 0 && sink_count == 0) {
 			/* sink unplugged from DFP port */
 			dptx->sink_count = sink_count;
-			return handle_hotunplug_core(dptx);
+			return handle_hotunplug_core(dptx, true);
 		}
 	}
 
@@ -851,7 +880,7 @@ int dptx_link_check_status(struct dptx *dptx, u8 *irq_vector)
 	     !drm_dp_clock_recovery_ok(dptx->link.status, dptx->link.lanes))) {
 		dptx_dbg_link(dptx, "%s: Retraining link\n", __func__);
 		dptx->stats.link_unstable_failures++;
-		handle_hotunplug_core(dptx);
+		handle_hotunplug_core(dptx, true);
 		handle_hotplug_core(dptx);
 	}
 

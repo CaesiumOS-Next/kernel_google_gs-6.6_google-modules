@@ -21,6 +21,7 @@
 #endif
 
 static int init_genpd_sysfs(struct pixel_gpu_device *pixel_dev);
+static void deinit_genpd_sysfs(struct pixel_gpu_device *pixel_dev);
 
 static const char *action_to_string(unsigned long action)
 {
@@ -380,6 +381,8 @@ static PVRSRV_ERROR post_power_state(IMG_HANDLE sys_data,
 
 void deinit_genpd(struct pixel_gpu_device *pixel_dev)
 {
+	deinit_genpd_sysfs(pixel_dev);
+
 	if (pixel_dev->notifiers_registered) {
 		dev_pm_genpd_remove_notifier(pixel_dev->gpu_core_logic_pd);
 		dev_pm_genpd_remove_notifier(pixel_dev->sswrp_gpu_pd);
@@ -718,4 +721,10 @@ static int init_genpd_sysfs(struct pixel_gpu_device *pixel_dev)
 	}
 
 	return result;
+}
+
+static void deinit_genpd_sysfs(struct pixel_gpu_device *pixel_dev)
+{
+	sysfs_remove_file(&pixel_dev->dev->kobj, &dev_attr_apm_latency_ms.attr);
+	sysfs_remove_group(&pixel_dev->dev->kobj, &power_state_attr_group);
 }

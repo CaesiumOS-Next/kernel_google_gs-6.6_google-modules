@@ -42,10 +42,10 @@ struct vimon_client_info {
 
 static struct logbuffer *vimon_monitor_lb;
 
-static void on_debug_sample_ready(void *private, const enum vimon_trigger_source reason,
+static void on_debug_sample_ready(void *private_data, const enum vimon_trigger_source reason,
 				  const u16 *data, const size_t len)
 {
-	struct max77779_vimon_data *vimon = private;
+	struct max77779_vimon_data *vimon = private_data;
 	size_t i = 0, pos = 0;
 	const size_t count = len / sizeof(u16);
 	char temp[VIMON_DBG_TEMP_BUFFER_SZ];
@@ -65,16 +65,16 @@ static void on_debug_sample_ready(void *private, const enum vimon_trigger_source
 		dev_info(vimon->dev, " %s\n", temp);
 }
 
-static void on_debug_removed(void *private)
+static void on_debug_removed(void *private_data)
 {
-	struct max77779_vimon_data *vimon = private;
+	struct max77779_vimon_data *vimon = private_data;
 
 	dev_dbg(vimon->dev, "on_removed_impl called\n");
 }
 
-static bool debug_extra_trigger(void *private, const u16 *data, const size_t len)
+static bool debug_extra_trigger(void *private_data, const u16 *data, const size_t len)
 {
-	struct max77779_vimon_data *vimon = private;
+	struct max77779_vimon_data *vimon = private_data;
 
 	dev_dbg(vimon->dev, "extra_trigger_impl called\n");
 	return false;
@@ -86,10 +86,10 @@ static struct vimon_client_callbacks debug_cb_impl = {
 	.extra_trigger = debug_extra_trigger,
 };
 
-static void bms_vimon_cb_on_sample(void *private, const enum vimon_trigger_source reason,
+static void bms_vimon_cb_on_sample(void *private_data, const enum vimon_trigger_source reason,
 				   const u16 *data, const size_t len)
 {
-	int tag = (int)(uintptr_t)private;
+	int tag = (int)(uintptr_t)private_data;
 	const size_t count = len / sizeof(u16);
 	char temp[VIMON_LOGBUFFER_MAX_LEN];
 	size_t pos = 0, i;
@@ -110,9 +110,9 @@ static void bms_vimon_cb_on_sample(void *private, const enum vimon_trigger_sourc
 				     "%d: %s", tag, temp);
 }
 
-static void bms_vimon_cb_removed(void *private)
+static void bms_vimon_cb_removed(void *private_data)
 {
-	/* int tag = (int)(uintptr_t)private; */
+	/* int tag = (int)(uintptr_t)private_data; */
 }
 
 struct vimon_client_callbacks bms_monitor_cb = {
@@ -188,7 +188,7 @@ static inline struct vimon_client_info *vimon_alloc_client_info(struct max77779_
 		gen_pool_alloc(vimon_cache_pool, sizeof(struct vimon_client_info));
 }
 
-/* requires mutex_lock(&data->vimon_cb_lock) */
+/* requires mutex_lock(&data->vimon_lock) */
 static void vimon_generate_config(struct max77779_vimon_config *config)
 {
 	struct vimon_client_info *client;
@@ -233,7 +233,7 @@ static int vimon_stage_config(struct max77779_vimon_data *data,
 
 	/* bit7 is used for SPR */
 	trig_mask = (new_config.mask & MAX77779_BVIM_bvim_trig_0_6_MASK) |
-			((new_config.mask << 1) & MAX77779_BVIM_bvim_trig_8_15_MASK),
+			((new_config.mask << 1) & MAX77779_BVIM_bvim_trig_8_15_MASK);
 
 	/* configure trigger sources */
 	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_bvim_trig, trig_mask);
@@ -271,13 +271,12 @@ static int vimon_stage_config(struct max77779_vimon_data *data,
 		return ret;
 	}
 
-
 	return 0;
 }
 
 /*
  * Retrieves, stages, and submits the configuration.
- * requires mutex_lock(&data->vimon_lock) and mutex_lock(&data->vimon_cb_lock)
+ * requires mutex_lock(&data->vimon_lock)
  */
 static int vimon_reconfig_and_submit(struct max77779_vimon_data *data)
 {
@@ -310,7 +309,7 @@ static int vimon_reconfig_and_submit(struct max77779_vimon_data *data)
 	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_CTRL,
 				       MAX77779_BVIM_CTRL_BVIMON_TRIG_MASK);
 	if (ret < 0) {
-		dev_err(data->dev, "Cannot start vimon acquisition\n(%d)", ret);
+		dev_err(data->dev, "Cannot start vimon acquisition(%d)\n", ret);
 		return ret;
 	}
 
@@ -331,18 +330,16 @@ static inline void vimon_add_client(struct max77779_vimon_data *data,
 	pm_stay_awake(data->dev);
 
 	mutex_lock(&data->vimon_lock);
-	mutex_lock(&data->vimon_cb_lock);
 
 	list_add(&client->list, &vimon_clients);
 	vimon_reconfig_and_submit(data);
 
-	mutex_unlock(&data->vimon_cb_lock);
 	mutex_unlock(&data->vimon_lock);
 
 	pm_relax(data->dev);
 }
 
-int vimon_register_callback(struct device *dev, const u16 mask, const int count, void *private,
+int vimon_register_callback(struct device *dev, const u16 mask, const int count, void *private_data,
 			    struct vimon_client_callbacks *cb)
 {
 	struct max77779_vimon_data *data = dev_get_drvdata(dev);
@@ -357,7 +354,7 @@ int vimon_register_callback(struct device *dev, const u16 mask, const int count,
 	client->mask = mask;
 	client->mode = MAX77779_VIMON_DEFAULT_MODE;
 	client->count = count;
-	client->private_data = private;
+	client->private_data = private_data;
 	client->client_cb = cb;
 
 	vimon_add_client(data, client);
@@ -378,7 +375,6 @@ void vimon_unregister_callback(struct device *dev, struct vimon_client_callbacks
 	pm_stay_awake(data->dev);
 
 	mutex_lock(&data->vimon_lock);
-	mutex_lock(&data->vimon_cb_lock);
 
 	list_for_each_entry_safe(client, temp_node, &vimon_clients, list) {
 		if (client->client_cb == cb) {
@@ -390,7 +386,6 @@ void vimon_unregister_callback(struct device *dev, struct vimon_client_callbacks
 
 	vimon_reconfig_and_submit(data);
 
-	mutex_unlock(&data->vimon_cb_lock);
 	mutex_unlock(&data->vimon_lock);
 
 	pm_relax(data->dev);
@@ -648,7 +643,7 @@ static bool vimon_process_client(struct vimon_client_info *client, struct max777
 	if (client->count == VIMON_CLIENT_ALWAYS_RUN)
 		return false;
 
-	dev_err(data->dev, "Client count %d %d", client->count, adjusted_rsc);
+	dev_dbg(data->dev, "Client count %d %d", client->count, adjusted_rsc);
 	client->count -= adjusted_rsc;
 	return client->count <= 0;
 }
@@ -723,7 +718,6 @@ static void max77779_vimon_handle_data(struct work_struct *work)
 	rts = (bvim_rs & MAX77779_BVIM_bvim_rs_bvim_rts_MASK ) >>
 	      MAX77779_BVIM_bvim_rs_bvim_rts_SHIFT;
 
-	mutex_lock(&data->vimon_cb_lock);
 	update_config = false;
 
 	list_for_each_entry_safe(client, temp_node, &vimon_clients, list) {
@@ -759,8 +753,6 @@ static void max77779_vimon_handle_data(struct work_struct *work)
 		if (vimon_configs_are_equal(&data->config, &new_config) == false)
 			ret = vimon_stage_config(data, new_config);
 	}
-
-	mutex_unlock(&data->vimon_cb_lock);
 
 vimon_handle_data_exit:
 
@@ -879,7 +871,6 @@ static ssize_t unsubscribe_store(struct device *dev, struct device_attribute *at
 	}
 
 	mutex_lock(&data->vimon_lock);
-	mutex_lock(&data->vimon_cb_lock);
 
 	/* TODO: delete client only when leftover samples are received */
 	list_for_each_entry(client, &vimon_clients, list) {
@@ -902,7 +893,6 @@ static ssize_t unsubscribe_store(struct device *dev, struct device_attribute *at
 	if (update_config)
 		vimon_reconfig_and_submit(data);
 
-	mutex_unlock(&data->vimon_cb_lock);
 	mutex_unlock(&data->vimon_lock);
 
 	return count;
@@ -1256,17 +1246,13 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 	if (running)
 		dev_warn(data->dev, "VIMON is already running (%d)\n", running);
 	mutex_init(&data->vimon_lock);
-	mutex_init(&data->vimon_cb_lock);
-
-	mutex_lock(&data->vimon_lock);
-	mutex_lock(&data->vimon_cb_lock);
 
 	/* Mode is none to force reconfiguration */
 	data->config.mode = MAX77779_VIMON_NONE_MODE;
 	ret = vimon_reconfig_and_submit(data);
 	if (ret) {
 		dev_err(dev, "Failed to configure vimon mode(%d)\n", ret);
-		goto vimon_init_exit;
+		goto free_locks;
 	}
 
 	ret = of_property_read_u32(dev->of_node, "max77779,max_cnt", &data->max_cnt);
@@ -1282,18 +1268,18 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 		dev_err(dev, "max_cnt=%d, max_cnt=%d invalid buf_size\n",
 			data->max_cnt, data->max_triggers);
 		ret = -EINVAL;
-		goto vimon_init_exit;
+		goto free_locks;
 	}
 	data->buf = devm_kzalloc(dev, data->buf_size, GFP_KERNEL);
 	if (!data->buf) {
 		ret = -ENOMEM;
-		goto vimon_init_exit;
+		goto free_locks;
 	}
 
 	data->buf_adj = devm_kzalloc(dev, data->buf_size, GFP_KERNEL);
 	if (!data->buf_adj) {
 		ret = -ENOMEM;
-		goto vimon_init_exit;
+		goto free_locks;
 	}
 
 	INIT_DELAYED_WORK(&data->read_data_work, max77779_vimon_handle_data);
@@ -1304,9 +1290,9 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 				IRQF_TRIGGER_LOW | IRQF_SHARED | IRQF_ONESHOT,
 				"max77779_vimon", data);
 		if (ret < 0)
-			dev_warn(dev, "Failed to get irq thread.\n");
+			dev_warn(dev, "Failed to get irq thread (%d)\n", ret);
 	} else {
-		dev_warn(dev, "irq not setup\n");
+		dev_warn(dev, "irq not setup, irq=%d\n", data->irq);
 	}
 
 	/* register vimon in power_supply subsystem */
@@ -1322,13 +1308,13 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 
 	ret = max77779_vimon_init_fs(data);
 	if (ret < 0)
-		dev_warn(dev, "Failed to initialize debug fs\n");
+		dev_warn(dev, "Failed to initialize debug fs (%d)\n", ret);
 
 	/* turn off vimon on reboot */
 	data->reboot_notifier.notifier_call = max77779_vimon_reboot_notifier;
 	ret = register_reboot_notifier(&data->reboot_notifier);
 	if (ret)
-		dev_err(data->dev, "failed to register reboot notifier\n");
+		dev_err(data->dev, "Failed to register reboot notifier (%d)\n", ret);
 
 	ret = max77779_vimon_reg_write(data, MAX77779_BVIM_MASK, 0);
 	if (ret)
@@ -1355,12 +1341,19 @@ int max77779_vimon_init(struct max77779_vimon_data *data)
 	}
 
 	vimon_monitor_lb = logbuffer_register("bms_vimon");
-
-vimon_init_exit:
-	mutex_unlock(&data->vimon_cb_lock);
-	mutex_unlock(&data->vimon_lock);
+	if (IS_ERR(vimon_monitor_lb)) {
+		ret = PTR_ERR(vimon_monitor_lb);
+		dev_err(data->dev, "failed to create bms_vimon logbuffer, ret=%d\n", ret);
+		vimon_monitor_lb = NULL;
+		goto free_locks;
+	}
 
 	return 0;
+
+free_locks:
+	mutex_destroy(&data->vimon_lock);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(max77779_vimon_init);
 
@@ -1370,7 +1363,7 @@ void max77779_vimon_remove(struct max77779_vimon_data *data)
 	unsigned int running;
 	struct vimon_client_info *client, *temp_node;
 
-	mutex_lock(&data->vimon_cb_lock);
+	mutex_lock(&data->vimon_lock);
 
 	list_for_each_entry_safe(client, temp_node, &vimon_clients, list) {
 		client->client_cb->on_removed(client->private_data);
@@ -1380,7 +1373,7 @@ void max77779_vimon_remove(struct max77779_vimon_data *data)
 			      sizeof(struct vimon_client_info));
 	}
 
-	mutex_unlock(&data->vimon_cb_lock);
+	mutex_unlock(&data->vimon_lock);
 
 	if (vimon_cache_pool) {
 		gen_pool_destroy(vimon_cache_pool);

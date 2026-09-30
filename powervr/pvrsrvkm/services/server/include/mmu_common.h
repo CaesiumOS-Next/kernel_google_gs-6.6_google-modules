@@ -752,6 +752,18 @@ void MMU_CheckFaultAddress(MMU_CONTEXT *psMMUContext,
                            MMU_FAULT_DATA *psOutFaultData);
 
 /*************************************************************************/ /*!
+@Function       MMU_ContextIsValid
+
+@Description    Checks if the MMU context has been successfully allocated
+                and has physical backing.
+
+@Input          psMMUContext            MMU context to check
+
+@Return         IMG_TRUE if the context is valid, IMG_FALSE otherwise.
+*/ /**************************************************************************/
+IMG_BOOL MMU_ContextIsValid(MMU_CONTEXT *psMMUContext);
+
+/*************************************************************************/ /*!
 @Function       MMU_IsVDevAddrValid
 @Description    Checks if given address is valid.
 @Input          psMMUContext MMU context to store the data on

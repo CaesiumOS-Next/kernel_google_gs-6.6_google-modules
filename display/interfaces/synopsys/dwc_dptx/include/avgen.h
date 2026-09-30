@@ -8,7 +8,18 @@
 #ifndef __DPTX_AVGEN_H__
 #define __DPTX_AVGEN_H__
 
-#define AUDIO_INFOFRAME_HEADER 0x441B8400
+/*
+ * DP 1.4 spec: audio infoframes use infoframe SDP v1.2 format
+ * type = 0x84, length = 0x1B, version = 0x48 (0x48 >> 2 = 0x12)
+ */
+#define AUDIO_INFOFRAME_HEADER 0x00841B48
+/*
+ * DP 1.4 spec: SPD infoframes use infoframe SDP v1.3 format
+ * type = 0x83, length = 0x1D, version = 0x4C (0x4C >> 2 = 0x13)
+ */
+#define SPD_SDP_HEADER         0x00831D4C
+#define VSC_SDP_HEADER         0x00070513
+
 struct dptx;
 
 enum interfaceType {
@@ -48,6 +59,7 @@ struct audio_short_desc {
 
 void dptx_audio_params_reset(struct audio_params *aparams);
 void dptx_audio_config(struct dptx *dptx);
+void dptx_audio_deconfig(struct dptx *dptx);
 void dptx_audio_core_config(struct dptx *dptx);
 void dptx_audio_gen_config(struct dptx *dptx);
 void dptx_en_audio_channel(struct dptx *dptx, int ch_num, int enable);
@@ -162,6 +174,8 @@ void dptx_enable_default_video_stream(struct dptx *dptx, int stream);
 void dptx_disable_default_video_stream(struct dptx *dptx, int stream);
 void dptx_video_reset(struct dptx *dptx, int enable, int stream);
 void dptx_audio_samp_freq_config(struct dptx *dptx);
-void dptx_audio_infoframe_sdp_send(struct dptx *dptx);
+void dptx_audio_infoframe_sdp_en(struct dptx *dptx, int enabled);
+void dptx_spd_sdp_en(struct dptx *dptx, int enabled);
+void dptx_vsc_sdp_en(struct dptx *dptx, int enabled);
 void dptx_vsd_ycbcr420_send(struct dptx *dptx, u8 enable);
 #endif

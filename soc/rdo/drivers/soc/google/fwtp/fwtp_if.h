@@ -12,13 +12,13 @@
 #ifndef __FWTP_IF_H
 #define __FWTP_IF_H
 
-#ifdef __KERNEL__
-#include "fwtp_platform.h"
-#else
+#ifndef __KERNEL__
+#include <lib/utils/compiler.h>
 #include <stdint.h>
-
-#include "lib/fwtp/fwtp_platform.h"
 #endif
+
+#include "fwtp_err.h"
+#include "fwtp_platform.h"
 
 __BEGIN_CDECLS
 

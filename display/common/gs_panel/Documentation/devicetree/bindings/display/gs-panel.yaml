@@ -42,6 +42,9 @@ properties:
     maxItems: 1
     description: Specifier for a GPIO for the proximity sensor synchronization
       signal. It also indicates the current refresh rate.
+  err_fg-gpios:
+    maxItems: 1
+    description: Specifier for a GPIO for error reports from a DDIC
 
   vci-supply:
     description: VCI power supply for the panel
@@ -107,6 +110,7 @@ examples:
         /* reset, power */
         reset-gpios = <&gpp0 0 GPIO_ACTIVE_HIGH>;
         tout-gpios = <&gpp14 1 GPIO_ACTIVE_HIGH>;
+        err_fg-gpios = <DISP0_2_AP_ERR_FG(GPIO_ACTIVE_HIGH)>;
         vci-supply = <&m_ldo14_reg>;
         vddi-supply = <&s_bucka_reg>;
         vddd-supply = <&disp_vddd>;

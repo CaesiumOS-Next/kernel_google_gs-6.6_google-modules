@@ -255,6 +255,8 @@ int edgetpu_device_add(struct edgetpu_dev *etdev,
 		dev_err(etdev->dev, "failed to attach IOMMU: %d", ret);
 		goto remove_pm;
 	}
+	etdev->max_concurrent_clients =
+		min(edgetpu_mmu_get_max_attached_domains(etdev), EDGETPU_NUM_VCIDS);
 
 	edgetpu_usage_stats_init(etdev);
 

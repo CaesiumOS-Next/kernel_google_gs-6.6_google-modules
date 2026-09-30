@@ -4,7 +4,13 @@
  * @copyright Copyright (c) 2024 Samsung Electronics Co., Ltd
  *
  */
+#include <linux/completion.h>
 #include <linux/errno.h>
+#include <linux/jiffies.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/string.h>
+
 #include "include/uwb_fw_common.h"
 #include "include/uwb_spi.h"
 

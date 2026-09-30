@@ -4,12 +4,17 @@
  *
  */
 
-#include <linux/platform_device.h>
-#include <linux/irq.h>
+#include <linux/completion.h>
+#include <linux/delay.h>
 #include <linux/gpio.h>
+#include <linux/gpio/consumer.h>
+#include <linux/irq.h>
+#include <linux/netdevice.h>
+#include <linux/platform_device.h>
+
 #include "include/uwb_coredump.h"
-#include "include/uwb_gpio.h"
 #include "include/uwb_fw_common.h"
+#include "include/uwb_gpio.h"
 #include "include/uwb_power_stats.h"
 
 static unsigned long gpio_delay_ms = GPIO_DELAY_MS;
@@ -22,7 +27,7 @@ MODULE_PARM_DESC(pow_swt_gpio_delay_ms, "The delay time between VBAT switch GPIO
 
 static void uwb_free_irq(struct u100_ctx *u100_ctx)
 {
-	struct uwb_irq *irq = &u100_ctx->gpio_u100_irq;
+	struct uwb_irq *irq = &u100_ctx->u100_irq;
 
 	if (irq->registered) {
 		irq->registered = false;
@@ -34,7 +39,7 @@ static int uwb_request_irq(struct u100_ctx *u100_ctx, unsigned long irq_flag)
 {
 	int ret;
 	struct miscdevice *uci_misc = &u100_ctx->uci_dev;
-	struct uwb_irq *irq = &u100_ctx->gpio_u100_irq;
+	struct uwb_irq *irq = &u100_ctx->u100_irq;
 
 	irq_flag |= IRQF_ONESHOT;
 	if (irq->registered && irq->flags == irq_flag)
@@ -57,27 +62,22 @@ static int uwb_request_irq(struct u100_ctx *u100_ctx, unsigned long irq_flag)
 	}
 
 	irq->registered = true;
-	UWB_DEBUG("(#%d) handler registered (flags:%#08lX)\n",
-			 irq->num, irq->flags);
+	UWB_DEBUG("(#%d) handler registered (flags:%#08lX, count:%u)\n",
+			 irq->num, irq->flags, get_irq_count(u100_ctx));
 
 	return ret;
 }
 
 int uwb_init_irq(struct u100_ctx *u100_ctx, unsigned int num)
 {
-	struct uwb_irq *irq = &u100_ctx->gpio_u100_irq;
+	struct uwb_irq *irq = &u100_ctx->u100_irq;
 
 	irq->num = num;
 	irq->flags = 0;
 	UWB_DEBUG("num:%d\n", num);
 
 	irq->registered = false;
-	irq->u100_irq = irq_to_desc(num);
-	if (IS_ERR_OR_NULL(irq->u100_irq))
-		UWB_WARN("Init irq(%d) desc failed, ret %d\n", num,
-				PTR_ERR_OR_ZERO(irq->u100_irq));
-	else
-		UWB_INFO("IRQ init cnt %d", get_irq_count(irq->u100_irq));
+
 	/* Set edge-triggered IRQ at the beginning. */
 	return uwb_request_irq(u100_ctx, IRQF_TRIGGER_RISING);
 }
@@ -218,12 +218,12 @@ static void uwbs_sync_power_on_init(struct u100_ctx *u100_ctx, int wanted_state)
 static int uwbs_sync_power_on_check(struct u100_ctx *u100_ctx)
 {
 	int ret = 0;
-	u32 before_irq_cnt = get_irq_count(u100_ctx->gpio_u100_irq.u100_irq);
+	u32 before_irq_cnt = get_irq_count(u100_ctx);
 
 	if (!wait_for_completion_timeout(&u100_ctx->atr_done_cmpl, PROBE_ATTR_TIMEOUT)) {
 		ret = -ETIMEDOUT;
 		UWB_WARN("ATR did not arrive on time, irq_cnt %u-%u.", before_irq_cnt,
-			get_irq_count(u100_ctx->gpio_u100_irq.u100_irq));
+			get_irq_count(u100_ctx));
 	}
 
 	mutex_lock(&u100_ctx->atr_lock);
@@ -232,7 +232,7 @@ static int uwbs_sync_power_on_check(struct u100_ctx *u100_ctx)
 	if (u100_ctx->u100_state != u100_ctx->u100_state_wanted) {
 		UWB_ERR("U100 sync-power-on error, U100 state %#x (expected %#x), irq_cnt %u-%u.\n",
 			u100_ctx->u100_state, u100_ctx->u100_state_wanted, before_irq_cnt,
-			get_irq_count(u100_ctx->gpio_u100_irq.u100_irq));
+			get_irq_count(u100_ctx));
 		/*
 		 * Distinguish the cases of unwanted value(EPROTO) vs.
 		 * no ATR received(ETIMEDOUT).

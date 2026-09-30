@@ -65,6 +65,7 @@
 #include <net/mac80211.h>
 #include <dhd_linux_priv.h>
 #include "wl_cfg80211.h"
+#include "wl_cfgscan.h"
 #include "bcmwifi_rates.h"
 #include "wldev_common.h"
 #endif /* DHD_ART */
@@ -1878,6 +1879,8 @@ dhd_pcie_l1_exit(int ch_num)
 static int dhd_wondertap_set_reg(void *vendor_handle, const char *country_code);
 static int dhd_wondertap_set_fixed_tx_rate(void *vendor_handle,
 	const struct wondertap_fixed_tx_rate_params *params);
+static int dhd_wondertap_set_tx_rate_mask(void *vendor_handle,
+	const struct wondertap_tx_rate_mask_params *params);
 
 static enum
 nl80211_band dhd_freq_to_band(int freq)
@@ -1978,13 +1981,21 @@ dhd_wondertap_ops_init(void **handle, const struct wondertap_init_params *params
 		dhd_wondertap_ops_set_freq(*handle, &params->channel);
 		eacopy(params->bssid, dhdp->art_bssid);
 		eacopy(params->mac_addr, dhdp->art_mac_addr);
+		if (params->rate_adaptation_enable) {
+			g_dhd_pub->rate_adaptation_enable = TRUE;
+			g_dhd_pub->tx_rate_mask = params->tx_rate_mask.max_preamble;
+			DHD_PRINT(("%s RA enabled, set rate(%d) in monitor_open\n",
+				__func__, g_dhd_pub->tx_rate_mask));
+		}
 		int ret = dev_open(monitor_dev, NULL);
 
 		if (ret) {
 			DHD_ERROR(("wondertap: Failed to open interface: %d\n", ret));
 			return ret;
 		}
-		dhd_wondertap_set_fixed_tx_rate(*handle, &params->tx_rate);
+		if (!(params->rate_adaptation_enable)) {
+			dhd_wondertap_set_fixed_tx_rate(*handle, &params->tx_rate);
+		}
 	}
 
 	return 0;
@@ -2042,6 +2053,9 @@ dhd_wondertap_set_fixed_tx_rate(void *vendor_handle,
 	uint32 rspec = 0;
 	chanspec_t chanspec;
 	struct net_device *monitor_dev;
+#ifdef WL_CFG80211
+	struct bcm_cfg80211 *cfg;
+#endif /* WL_CFG80211 */
 
 	monitor_dev = dhd_get_monitor_ndev(dhdp);
 	if (!monitor_dev) {
@@ -2082,6 +2096,14 @@ dhd_wondertap_set_fixed_tx_rate(void *vendor_handle,
 		return -EINVAL;
 	}
 
+#ifdef WL_CFG80211
+	cfg = wl_get_cfg(monitor_dev);
+	if (cfg) {
+		/* abort any scan in progress */
+		wl_cfgscan_scan_abort(cfg);
+	}
+#endif /* WL_CFG80211 */
+
 	if (CHSPEC_BAND(chanspec) == WL_CHANSPEC_BAND_5G) {
 		rspec |= WL_RSPEC_LDPC;
 		error = wldev_iovar_setint(monitor_dev, "5g_rate", rspec);
@@ -2102,6 +2124,30 @@ dhd_wondertap_set_fixed_tx_rate(void *vendor_handle,
 		return -EINVAL;
 	}
 
+	return 0;
+}
+
+static int
+dhd_wondertap_set_tx_rate_mask(void *vendor_handle,
+	const struct wondertap_tx_rate_mask_params *params)
+{
+	dhd_pub_t *dhdp = (dhd_pub_t *)g_dhd_pub;
+	struct net_device *monitor_dev;
+	int ifidx;
+
+	monitor_dev = dhd_get_monitor_ndev(dhdp);
+	if (!monitor_dev) {
+		DHD_ERROR(("monitor_dev is null\n"));
+		return -ENODEV;
+	}
+
+	ifidx = dhd_net2idx(dhdp->info, monitor_dev);
+	if ((ifidx == DHD_BAD_IF) || (ifidx >= DHD_MAX_IFS)) {
+		DHD_ERROR(("wrong ifidx:%d for monitor dev:%p\n", ifidx, monitor_dev));
+		return -ENODEV;
+	}
+
+	dhd_set_art_tx_rate_mask(dhdp, ifidx, params->max_preamble);
 	return 0;
 }
 
@@ -2146,6 +2192,7 @@ dhd_wondertap_get_capabilities(void *vendor_handle, struct wondertap_capability 
 	capabilities->version = 0;
 	bzero(&capabilities->bits, sizeof(capabilities->bits));
 	capabilities->bits.amsdu_aggregation = 1;
+	capabilities->bits.rate_adaptation = 1;
 	return 0;
 }
 
@@ -2155,7 +2202,7 @@ static const struct wondertap_ops wondertap_ops = {
 	.set_freq = NULL,
 	.set_filter = dhd_wondertap_set_filter,
 	.set_fixed_tx_rate = NULL,
-	.set_tx_rate_mask = NULL,
+	.set_tx_rate_mask = dhd_wondertap_set_tx_rate_mask,
 	.get_capabilities = dhd_wondertap_get_capabilities,
 };
 

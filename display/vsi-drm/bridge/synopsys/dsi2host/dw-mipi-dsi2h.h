@@ -17,6 +17,7 @@
 #include <linux/spinlock.h>
 
 #include <drm/drm_mipi_dsi.h>
+#include <drm/drm_bridge.h>
 #include <linux/phy/phy.h>
 #include <gs_drm/gs_drm_connector.h>
 
@@ -170,6 +171,8 @@
 #define MIPI_FIFO_PLD_SIZE (104)
 #define MIPI_FIFO_HDR_SIZE_ALMOST_FULL (24) // MIPI_FIFO_HDR_SIZE * 0.75
 #define MIPI_FIFO_PLD_SIZE_ALMOST_FULL (75) // MIPI_FIFO_PLD_SIZE * 0.75
+
+struct sscd_funcs;
 
 enum pri_cal_request {
 	PHY_DESKEW_CAL,
@@ -333,6 +336,7 @@ struct dw_mipi_dsi2h {
 	struct drm_display_mode mode;
 
 	bool enabled;
+	bool suppress_dsi_errors;
 	enum dsi2h_host_state state;
 
 	/* should dsi be fully powered off during panel self refresh, otherwise only enter ulps */
@@ -347,6 +351,7 @@ struct dw_mipi_dsi2h {
 	struct device *vdev;
 	void __iomem *base;
 	u32 reg_size;
+	u64 phys_addr;
 	struct regmap *regs;
 	u32 hw_version;
 	u32 hw_core_id;
@@ -357,6 +362,9 @@ struct dw_mipi_dsi2h {
 
 	spinlock_t spinlock_dsi; /* lock to protect interrupts */
 	struct mutex dsi2h_lock; /* protect state and data */
+
+	/** @coredump_funcs: Sub-System Core Dump (SSCD) callback functions */
+	struct sscd_funcs *coredump_funcs;
 
 	const struct dw_mipi_dsi2h_plat_data *plat_data;
 	struct kthread_worker dsi2h_worker;

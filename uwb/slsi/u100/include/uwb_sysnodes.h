@@ -8,6 +8,8 @@
 #ifndef UWB_SYSNODES_H
 #define UWB_SYSNODES_H
 
+#include <linux/types.h>
+
 struct u100_ctx;
 
 struct uwb_sysnode {

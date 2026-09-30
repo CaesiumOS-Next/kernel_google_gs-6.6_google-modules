@@ -7,7 +7,9 @@
  * Authors: Jaegeuk Kim <jaegeuk@google.com>
  */
 
+#ifndef HAVE_UFSHCD_RPM_GET_SYNC
 #include <core/ufshcd-priv.h>
+#endif
 #include <linux/workqueue.h>
 #include <misc/sbbm.h>
 #include <ufs/ufs.h>

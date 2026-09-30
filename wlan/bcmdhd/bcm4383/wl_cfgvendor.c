@@ -13290,7 +13290,8 @@ static int wl_cfgvendor_get_usable_channels_handler(struct bcm_cfg80211 *cfg,
 	u32 chspec_band = 0;
 	struct wireless_dev *wdev;
 	wl_ap_oper_data_t ap_oper_data = {0};
-
+	unsigned long flags;
+	struct wl_profile *profile;
 #ifdef WL_NAN_INSTANT_MODE
 	bzero(nan_inst_mode_chspecs, sizeof(nan_inst_mode_chspecs));
 #endif /* WL_NAN_INSTANT_MODE */
@@ -13341,13 +13342,13 @@ static int wl_cfgvendor_get_usable_channels_handler(struct bcm_cfg80211 *cfg,
 	if (cfg->stas_associated == 1) {
 		WL_DBG(("STA CONNECTED case \n"));
 		/* protect netinfo parsing */
-		mutex_lock(&cfg->if_sync);
+		WL_CFG_NET_LIST_SYNC_LOCK(&cfg->net_list_sync, flags);
 		GCC_DIAGNOSTIC_PUSH_SUPPRESS_CAST();
 		for_each_ndev(cfg, iter, next) {
 			if (iter->ndev && IS_STA_IFACE(iter->ndev->ieee80211_ptr) &&
-					(wl_get_drv_status(cfg, CONNECTED, iter->ndev))) {
+					(_wl_get_drv_status(cfg, CONNECTED, iter->ndev))) {
 				wdev = iter->ndev->ieee80211_ptr;
-				netinfo = wl_get_netinfo_by_wdev(cfg, wdev);
+				netinfo = _wl_get_netinfo_by_wdev(cfg, wdev);
 				if (netinfo && netinfo->mlinfo.num_links) {
 					for (i = 0; i < netinfo->mlinfo.num_links; i++) {
 						sta_chanspec = netinfo->mlinfo.links[i].chspec;
@@ -13367,29 +13368,35 @@ static int wl_cfgvendor_get_usable_channels_handler(struct bcm_cfg80211 *cfg,
 								chan_array[sta_band].is_primary));
 					}
 				} else {
-					sta_chanspec = wl_cfg80211_get_sta_chanspec(cfg);
-					if (sta_chanspec == INVCHANSPEC ||
-							wf_chspec_malformed(sta_chanspec)) {
-						WL_ERR(("Failed to get sta chanspec\n"));
+					profile = _wl_get_profile_by_netdev(cfg, iter->ndev);
+					if (profile != NULL) {
+						sta_chanspec = (chanspec_t)profile->channel;
+						if (sta_chanspec == INVCHANSPEC ||
+								wf_chspec_malformed(sta_chanspec)) {
+							WL_ERR(("Failed to get sta chanspec\n"));
+							continue;
+						}
+						chspec_band = CHSPEC_BAND(sta_chanspec);
+						channel = wf_chspec_primary20_chan(sta_chanspec);
+						sta_assoc_freq = wl_channel_to_frequency(channel,
+								chspec_band);
+						sta_band = CHSPEC_TO_WLC_BAND(
+								CHSPEC_BAND(sta_chanspec));
+						chan_array[sta_band].chspec = sta_chanspec;
+						chan_array[sta_band].is_primary = sta_chanspec;
+						WL_INFORM_MEM(("sta_assoc_freq:%d, sta_chanspec:%x "
+							" sta chanspec band:%x\n",
+							sta_assoc_freq, sta_chanspec, chspec_band));
+					} else {
+						WL_ERR(("Failed to get profile data\n"));
 						continue;
 					}
-					chspec_band = CHSPEC_BAND(sta_chanspec);
-					channel = wf_chspec_primary20_chan(sta_chanspec);
-					sta_assoc_freq =
-						wl_channel_to_frequency(channel, chspec_band);
-
-					sta_band = CHSPEC_TO_WLC_BAND(CHSPEC_BAND(sta_chanspec));
-					chan_array[sta_band].chspec = sta_chanspec;
-					chan_array[sta_band].is_primary = sta_chanspec;
-					WL_INFORM_MEM(("sta_assoc_freq:%d, sta_chanspec:%x "
-						" sta chanspec band:%x\n",
-						sta_assoc_freq, sta_chanspec, chspec_band));
 				}
 			}
 		}
 		GCC_DIAGNOSTIC_POP();
 		/* populate overlapping channels */
-		mutex_unlock(&cfg->if_sync);
+		WL_CFG_NET_LIST_SYNC_UNLOCK(&cfg->net_list_sync, flags);
 		wl_cfgvif_get_ml_scc_channel_array(cfg, chan_array);
 	}
 

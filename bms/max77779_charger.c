@@ -4064,6 +4064,7 @@ int max77779_charger_init(struct max77779_chgr_data *data)
 				thm2_tz_name, PTR_ERR(data->chg_vs_thm2_tz));
 		} else {
 			thermal_zone_device_update(data->chg_vs_thm2_tz, THERMAL_DEVICE_UP);
+			thermal_zone_device_enable(data->chg_vs_thm2_tz);
 		}
 	}
 

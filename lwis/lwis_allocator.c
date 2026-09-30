@@ -250,12 +250,6 @@ void *lwis_allocator_allocate(struct lwis_device *lwis_dev, size_t size, gfp_t g
 	if (lwis_dev == NULL)
 		return NULL;
 
-	block_mgr = lwis_dev->block_mgr;
-	if (block_mgr == NULL) {
-		dev_err(lwis_dev->dev, "block_mgr is NULL\n");
-		return NULL;
-	}
-
 	/*
 	 * fls() has better performance profile, it's currently used to mimic the
 	 * behavior of kmalloc_index().
@@ -291,6 +285,14 @@ void *lwis_allocator_allocate(struct lwis_device *lwis_dev, size_t size, gfp_t g
 	if (idx < 12)
 		idx = 12;
 
+	spin_lock_irqsave(&lwis_dev->allocator_lock, flags);
+	block_mgr = lwis_dev->block_mgr;
+	if (block_mgr == NULL) {
+		spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
+		dev_err(lwis_dev->dev, "block_mgr is NULL\n");
+		return NULL;
+	}
+
 	/*
 	 * For the large size memory allocation, we usually use kvmalloc() to allocate
 	 * the memory, but kvmalloc() does not take advantage of slab. For this case,
@@ -300,6 +302,8 @@ void *lwis_allocator_allocate(struct lwis_device *lwis_dev, size_t size, gfp_t g
 	 * memory on hand.
 	 */
 	if (idx > 19) {
+		spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
+
 		block = kmalloc(sizeof(struct lwis_allocator_block), gfp_flags);
 		if (block == NULL)
 			return NULL;
@@ -312,7 +316,14 @@ void *lwis_allocator_allocate(struct lwis_device *lwis_dev, size_t size, gfp_t g
 			kfree(block);
 			return NULL;
 		}
+
 		spin_lock_irqsave(&lwis_dev->allocator_lock, flags);
+		if (lwis_dev->block_mgr != block_mgr) {
+			spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
+			kvfree(block->ptr);
+			kfree(block);
+			return NULL;
+		}
 		block_mgr->pool_large.in_use_count++;
 		hash_add(block_mgr->allocated_blocks, &block->node, (unsigned long long)block->ptr);
 		spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
@@ -320,15 +331,19 @@ void *lwis_allocator_allocate(struct lwis_device *lwis_dev, size_t size, gfp_t g
 	}
 
 	block_pool = allocator_get_block_pool(block_mgr, idx);
-	if (block_pool == NULL)
+	if (block_pool == NULL) {
+		spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
 		return NULL;
+	}
 
 	/* Try to get free block from recycling block pool */
-	spin_lock_irqsave(&lwis_dev->allocator_lock, flags);
 	block = allocator_free_block_get_locked(block_pool);
-	spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
-	if (block != NULL)
+	if (block != NULL) {
+		spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
 		return block->ptr;
+	}
+
+	spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
 
 	/* Allocate new block */
 	block = kmalloc(sizeof(struct lwis_allocator_block), gfp_flags);
@@ -346,6 +361,12 @@ void *lwis_allocator_allocate(struct lwis_device *lwis_dev, size_t size, gfp_t g
 	}
 
 	spin_lock_irqsave(&lwis_dev->allocator_lock, flags);
+	if (lwis_dev->block_mgr != block_mgr) {
+		spin_unlock_irqrestore(&lwis_dev->allocator_lock, flags);
+		kvfree(block->ptr);
+		kfree(block);
+		return NULL;
+	}
 	block->next = block_pool->in_use;
 	if (block->next != NULL)
 		block->next->prev = block;

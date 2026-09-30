@@ -43,6 +43,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #if defined(__linux__)
 #include <linux/stddef.h>
+#include <trace/hooks/systrace.h>
 #else
 #include <stddef.h>
 #endif
@@ -138,6 +139,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #include "vz_vmm_pvz.h"
 #include "rgx_heaps.h"
+
+#include "pixel/sysconfig.h"
 
 /*!
  ******************************************************************************
@@ -2338,18 +2341,6 @@ static PVRSRV_ERROR RGXSetupFwSysData(PVRSRV_DEVICE_NODE       *psDeviceNode,
 #endif
 
 #if defined(SUPPORT_PDVFS)
-	/* Core clock rate */
-	eError = RGXSetupFwAllocation(psDevInfo,
-	                              RGX_FWSHAREDMEM_CPU_RO_ALLOCFLAGS &
-	                              RGX_AUTOVZ_KEEP_FW_DATA_MASK(psDeviceNode->bAutoVzFwIsUp),
-	                              sizeof(IMG_UINT32),
-	                              "FwPDVFSCoreClkRate",
-	                              &psDevInfo->psRGXFWIFCoreClkRateMemDesc,
-	                              &psFwSysInitScratch->sCoreClockRate,
-	                              (void**) &psDevInfo->pui32RGXFWIFCoreClkRate,
-	                              RFW_FWADDR_NOREF_FLAG);
-	PVR_LOG_GOTO_IF_ERROR(eError, "PDVFS core clock rate memory setup", fail);
-
 	/* Utilisation */
 	eError = RGXSetupFwAllocation(psDevInfo,
 	                              RGX_FWSHAREDMEM_CPU_RO_ALLOCFLAGS &
@@ -3341,20 +3332,6 @@ static void RGXFreeFwSysData(PVRSRV_RGXDEV_INFO *psDevInfo)
 	{
 		DevmemFwUnmapAndFree(psDevInfo, psDevInfo->psRGXFWIfSecureBufMemDesc);
 		psDevInfo->psRGXFWIfSecureBufMemDesc = NULL;
-	}
-#endif
-
-#if defined(SUPPORT_PDVFS)
-	if (psDevInfo->psRGXFWIFCoreClkRateMemDesc)
-	{
-		if (psDevInfo->pui32RGXFWIFCoreClkRate != NULL)
-		{
-			DevmemReleaseCpuVirtAddr(psDevInfo->psRGXFWIFCoreClkRateMemDesc);
-			psDevInfo->pui32RGXFWIFCoreClkRate = NULL;
-		}
-
-		DevmemFwUnmapAndFree(psDevInfo, psDevInfo->psRGXFWIFCoreClkRateMemDesc);
-		psDevInfo->psRGXFWIFCoreClkRateMemDesc = NULL;
 	}
 #endif
 
@@ -5147,6 +5124,36 @@ void RGXCheckFirmwareCCB(PVRSRV_RGXDEV_INFO *psDevInfo)
 				                                      &ui32ErrorPid,
 				                                      psCmdContextResetNotification);
 
+				{
+					unsigned int lockup_count = 0;
+					unsigned int overrun_count = 0;
+
+					if (psDevInfo->psRGXFWIfHWRInfoBufCtl != NULL)
+					{
+						RGXFwSharedMemCacheOpPtr(psDevInfo->psRGXFWIfHWRInfoBufCtl, INVALIDATE);
+						if (psCmdContextResetNotification->eDM < RGXFWIF_DM_MAX)
+						{
+							lockup_count = psDevInfo->psRGXFWIfHWRInfoBufCtl->aui32HwrDmLockedUpCount[psCmdContextResetNotification->eDM];
+							overrun_count = psDevInfo->psRGXFWIfHWRInfoBufCtl->aui32HwrDmOverranCount[psCmdContextResetNotification->eDM];
+						}
+					}
+
+					if (lockup_count > 0)
+					{
+						char counter_name[64];
+						scnprintf(counter_name, sizeof(counter_name), "GPU Lockups - %s",
+							rgxfwif_dm_str(psCmdContextResetNotification->eDM));
+						__ATRACE_INT_PID(0, counter_name, lockup_count);
+					}
+					if (overrun_count > 0)
+					{
+						char counter_name[64];
+						scnprintf(counter_name, sizeof(counter_name), "GPU Overruns - %s",
+							rgxfwif_dm_str(psCmdContextResetNotification->eDM));
+						__ATRACE_INT_PID(0, counter_name, overrun_count);
+					}
+				}
+
 				/* Increment error counter (if appropriate) */
 				if (psCmdContextResetNotification->eResetReason == RGX_CONTEXT_RESET_REASON_WGP_CHECKSUM)
 				{
@@ -5202,6 +5209,12 @@ void RGXCheckFirmwareCCB(PVRSRV_RGXDEV_INFO *psDevInfo)
 								OSDeviceMemCopy(sErrorData.uErrData.sGuiltyLockupData.aui64MMUStatus,
 												psCmdContextResetNotification->aui64MMUStatus,
 												sizeof(sErrorData.uErrData.sGuiltyLockupData.aui64MMUStatus));
+								break;
+							}
+							case RGX_CONTEXT_RESET_REASON_GUILTY_OVERRUNING:
+							case RGX_CONTEXT_RESET_REASON_INNOCENT_OVERRUNING:
+							{
+								sErrorData.uErrData.sGuiltyLockupData.eDM = psCmdContextResetNotification->eDM;
 								break;
 							}
 							default:
@@ -5289,6 +5302,14 @@ void RGXCheckFirmwareCCB(PVRSRV_RGXDEV_INFO *psDevInfo)
 #endif
 				break;
 			}
+#if defined(SUPPORT_FW_CORE_CLK_RATE_CHANGE_NOTIFY)
+			case RGXFWIF_FWCCB_CMD_CORE_CLK_RATE_CHANGE:
+			{
+				RGX_PROCESS_CORE_CLK_RATE_CHANGE(psDevInfo,
+					psFwCCBCmd->uCmdData.sCmdCoreClkRateChange.ui32CoreClkRate);
+				break;
+			}
+#endif
 			case RGXFWIF_FWCCB_CMD_REQUEST_GPU_RESTART:
 			{
 				RGXFwSharedMemCacheOpPtr(psDevInfo->psRGXFWIfFwSysData, INVALIDATE);

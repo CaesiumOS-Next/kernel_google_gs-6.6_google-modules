@@ -137,11 +137,11 @@ static bool uv_downsample_check(const struct dc_hw *hw, u8 hw_id, const void *da
 static bool uv_downsample_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
 {
 	const struct drm_vs_ds_config *downsample = data;
-	const u32 ds_addr[HW_DISPLAY_5] = { DCREG_SH_PANEL0_UV_DOWN_SAMPLE_Address,
-					    DCREG_SH_PANEL1_UV_DOWN_SAMPLE_Address,
-					    DCREG_SH_PANEL2_UV_DOWN_SAMPLE_Address,
-					    DCREG_SH_PANEL3_UV_DOWN_SAMPLE_Address,
-					    DCREG_SH_BLD_WB_UV_DOWN_SAMPLE_Address };
+	const u32 ds_addr[HW_DISPLAY_NUM] = { DCREG_SH_PANEL0_UV_DOWN_SAMPLE_Address,
+					      DCREG_SH_PANEL1_UV_DOWN_SAMPLE_Address,
+					      DCREG_SH_PANEL2_UV_DOWN_SAMPLE_Address,
+					      DCREG_SH_PANEL3_UV_DOWN_SAMPLE_Address,
+					      DCREG_SH_BLD_WB_UV_DOWN_SAMPLE_Address };
 	u32 config = 0;
 
 	if (enable) {

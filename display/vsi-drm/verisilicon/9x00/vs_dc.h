@@ -165,12 +165,12 @@ int vs_get_feature_cap_ioctl(struct drm_device *dev, void *data, struct drm_file
 int vs_get_hw_cap_ioctl(struct drm_device *dev, void *data, struct drm_file *file_priv);
 int vs_get_hist_bins_query_ioctl(struct drm_device *dev, void *data, struct drm_file *file_priv);
 int vs_get_ltm_hist_ioctl(struct drm_device *dev, void *data, struct drm_file *file_priv);
-int vs_task_fence_ioctl(struct drm_device *dev, void *data, struct drm_file *file_priv);
 bool vs_dc_is_yuv_format(u32 format);
 void vs_dc_check_interrupts(struct device *dev);
 int vs_dc_power_get(struct device *dev, bool sync);
 int vs_dc_power_put(struct device *dev, bool sync);
 int vs_dc_coredump(struct vs_dc *dc, const char *reason);
 bool is_display_cmd_sw_trigger(struct dc_hw_display *display);
+int vs_dc_sw_reset(struct drm_device *drm_dev);
 
 #endif /* __VS_DC_H__ */

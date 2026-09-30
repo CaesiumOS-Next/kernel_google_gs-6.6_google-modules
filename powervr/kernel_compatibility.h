@@ -172,6 +172,12 @@ __pvr_access_ok_compat(int type, const void __user * addr, unsigned long size)
 #define mmap_read_lock(mm)    down_read(&mm->mmap_sem)
 #define mmap_read_unlock(mm)  up_read(&mm->mmap_sem)
 
+static inline void mmap_assert_locked(struct mm_struct *mm)
+{
+        lockdep_assert_held(&mm->mmap_sem);
+        VM_BUG_ON_MM(!rwsem_is_locked(&mm->mmap_sem), mm);
+}
+
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0) */
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0))

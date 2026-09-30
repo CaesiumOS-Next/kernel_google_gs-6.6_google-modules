@@ -67,29 +67,13 @@ static inline u32 map_to_mmu_flags(edgetpu_map_flag_t flags)
 	return (flags & EDGETPU_MAP_COHERENT) ? EDGETPU_MMU_COHERENT : 0;
 }
 
-/* To be compatible with Linux kernel without this flag. */
-#ifndef DMA_ATTR_PBHA_PROT
-#define DMA_ATTR_PBHA_PROT(x) 0
-#endif
-#ifndef IOMMU_PBHA_PROT
-#define IOMMU_PBHA_PROT(x) 0
-#endif
-/* fetch the value of PBHA in map flags */
-#define EDGEPTU_MAP_PBHA_VALUE(flags)                                          \
-	((flags >> EDGETPU_MAP_ATTR_PBHA_SHIFT) & EDGETPU_MAP_ATTR_PBHA_MASK)
-/*
- * Converts edgetpu map flag to DMA attr.
- *
- * Ignore EDGETPU_MAP_SKIP_CPU_SYNC if @map = true
- */
-static inline unsigned long map_to_dma_attr(edgetpu_map_flag_t flags, bool map)
+/* Converts edgetpu map flag to DMA attr. */
+static inline unsigned long map_to_dma_attr(edgetpu_map_flag_t flags)
 {
 	unsigned long attr = 0;
 
-	if (!map && flags & EDGETPU_MAP_SKIP_CPU_SYNC)
+	if (flags & EDGETPU_MAP_SKIP_CPU_SYNC)
 		attr = DMA_ATTR_SKIP_CPU_SYNC;
-	attr |= DMA_ATTR_PBHA_PROT(EDGEPTU_MAP_PBHA_VALUE(flags));
-
 	return attr;
 }
 
@@ -170,6 +154,9 @@ int edgetpu_mmu_attach_domain(struct edgetpu_dev *etdev,
 /* Detaches the domain from the MMU device. */
 void edgetpu_mmu_detach_domain(struct edgetpu_dev *etdev,
 			       struct edgetpu_iommu_domain *etdomain);
+
+/* Returns the maximum number of edgetpu_iommu_domains that can be simultaneously attached. */
+size_t edgetpu_mmu_get_max_attached_domains(struct edgetpu_dev *etdev);
 
 /* TODO(b/281459896) Make domain comparisons internal to edgetpu-mmu.h */
 bool edgetpu_mmu_is_domain_default_domain(struct edgetpu_dev *etdev,

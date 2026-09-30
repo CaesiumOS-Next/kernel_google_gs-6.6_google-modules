@@ -16,8 +16,8 @@
 #include "vs_dc_info.h"
 #include "vs_dc_property.h"
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-#include <linux/regmap.h>
+#if IS_ENABLED(CONFIG_VERISILICON_DC9400_0x32a)
+#include "info/sswrp_dpu_gpcsr_pg_9400_0x32a.h"
 #endif
 
 #define __vsFIELDSTART(reg_field) \
@@ -1008,21 +1008,67 @@ struct dc_hw;
 struct dc_hw_sub_funcs {
 	void (*display_gamma)(struct dc_hw *hw, u8 hw_id, struct dc_hw_gamma *degamma);
 	void (*display_wb_pos)(struct dc_hw *hw, u8 hw_id, struct dc_hw_display_wb *wb);
-	void (*wb_fb)(struct dc_hw *hw, u8 hw_id, struct dc_hw_fb *fb);
+	void (*wb_fb)(struct dc_hw *hw, u8 hw_id, struct dc_hw_wb *wb);
 	void (*wb_reg_switch)(struct dc_hw *hw, u8 hw_id, bool enable);
 	void (*wb_disable_irq)(struct dc_hw *hw, u8 hw_id);
 	/* TBD */
 };
 
+/**
+ * struct dc_hw_funcs - A collection of function pointers for hardware operations.
+ *
+ * This structure holds function pointers that abstract hardware-specific
+ * operations for the display controller. This allows for a common interface
+ * to be used across different hardware revisions.
+ */
 struct dc_hw_funcs {
-	/* TBD !
-	 * developer should modify this item according to
-	 * actual requirements during developing !
+	/**
+	 * @set_mode: Sets the display mode for a given hardware display.
+	 *
+	 * @hw: Pointer to the main hardware structure.
+	 * @hw_id: The hardware ID of the display to configure.
+	 * @output_id: The output interface ID.
+	 * @mode: A pointer to a &struct dc_hw_display_mode containing the timing
+	 *        and format information.
 	 */
 	void (*set_mode)(struct dc_hw *hw, u8 hw_id, u8 output_id, struct dc_hw_display_mode *mode);
-	void (*writeback)(struct dc_hw *hw, u8 display_id);
-	void (*plane)(struct dc_hw *hw, u8 display_id);
-	void (*display)(struct dc_hw *hw, u8 display_id);
+
+	/**
+	 * @wb_commit: Commits the writeback configuration for a given display.
+	 *
+	 * This function applies any pending changes to the writeback hardware
+	 * associated with a specific display pipeline.
+	 *
+	 * @hw: Pointer to the main hardware structure.
+	 * @display_id: The ID of the display whose writeback settings are to be
+	 *              committed.
+	 */
+	void (*wb_commit)(struct dc_hw *hw, u8 display_id);
+
+	/**
+	 * @plane_commit: Commits the plane configurations for a given display.
+	 *
+	 * @hw: Pointer to the main hardware structure.
+	 * @display_id: The ID of the display whose planes are to be committed.
+	 */
+	void (*plane_commit)(struct dc_hw *hw, u8 display_id);
+
+	/**
+	 * @plane_commit_non_shadow: Commits the non-shadow plane configurations for
+	 *                           a given display.
+	 *
+	 * @hw: Pointer to the main hardware structure.
+	 * @display_id: The ID of the display whose planes are to be committed.
+	 */
+	void (*plane_commit_non_shadow)(struct dc_hw *hw, u8 display_id);
+
+	/**
+	 * @display_commit: Commits a given display configuration.
+	 *
+	 * @hw: Pointer to the main hardware structure.
+	 * @display_id: The ID of the display whose planes are to be committed.
+	 */
+	void (*display_commit)(struct dc_hw *hw, u8 display_id);
 };
 
 struct dc_hw {
@@ -1037,6 +1083,8 @@ struct dc_hw {
 	u32 reg_size;
 	/** @reg_base_phys: phys addr of memory begin, for coredump metadata */
 	u64 reg_base_phys;
+	/** @gpcsr_reg_base: memory begin of sswrp_dpu_gpcsr_pg */
+	void *gpcsr_reg_base;
 	struct dc_hw_display display[DC_DISPLAY_NUM];
 	struct dc_hw_plane plane[DC_PLANE_NUM];
 	struct dc_hw_wb wb[DC_WB_NUM];
@@ -1059,11 +1107,6 @@ struct dc_hw {
 	/* Protect secured_layers_mask */
 	struct mutex secure_lock;
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-	struct regmap_config regmap_config;
-	struct regmap *regmap;
-#endif
-
 	/* histogram support */
 	spinlock_t histogram_slock;
 
@@ -1082,17 +1125,10 @@ void dc_write(struct dc_hw *hw, u32 reg, u32 value);
 u32 dc_read(struct dc_hw *hw, u32 reg);
 void dc_write_relaxed(struct dc_hw *hw, u32 reg, u32 value);
 u32 dc_read_relaxed(struct dc_hw *hw, u32 reg);
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-void dc_write_immediate(struct dc_hw *hw, u32 reg, u32 value);
-u32 dc_read_immediate(struct dc_hw *hw, u32 reg);
-#define dc_write_relaxed dc_write
-#define dc_read_relaxed dc_read
-#else
 #define dc_write_immediate dc_write
 #define dc_read_immediate dc_read
 void dc_write_relaxed(struct dc_hw *hw, u32 reg, u32 value);
 u32 dc_read_relaxed(struct dc_hw *hw, u32 reg);
-#endif
 
 inline bool vs_dc_display_is_wb(u32 hw_id);
 void dc_write_u32_blob(struct dc_hw *hw, u32 reg, const u32 *data, u32 size);
@@ -1135,7 +1171,7 @@ void dc_hw_update_wb_fb(struct dc_hw *hw, u8 id, struct dc_hw_fb *fb);
 void dc_hw_update_r2y(struct dc_hw *hw, u8 id, struct dc_hw_r2y *r2y_conf);
 void dc_hw_setup_wb(struct dc_hw *hw, u8 id);
 void dc_hw_enable_wb_irqs(struct dc_hw *hw, u8 wb_hw_id, bool enable);
-void dc_hw_set_wb_stall(struct dc_hw *hw, bool enable);
+bool dc_hw_writeback_is_active(struct dc_hw *hw);
 void dc_hw_get_crtc_scanout_position(struct dc_hw *hw, u8 display_id, u32 *position);
 u32 dc_hw_get_vblank_count(struct dc_hw *hw, u8 id);
 void dc_hw_config_plane_status(struct dc_hw *hw, u8 id, bool config);
@@ -1184,6 +1220,7 @@ void dc_hw_enable_underrun_interrupt(struct dc_hw *hw, u8 id, bool enable);
 void dc_hw_clear_underrun_interrupt(struct dc_hw *hw, u8 id);
 void dc_hw_commit(struct dc_hw *hw, u8 display_id);
 void dc_hw_plane_commit(struct dc_hw *hw, u8 display_id);
+void dc_hw_plane_commit_non_shadow(struct dc_hw *hw, u8 display_id);
 void dc_hw_disable_plane_features(struct dc_hw *hw, u8 display_id);
 void dc_hw_display_commit(struct dc_hw *hw, u8 display_id);
 void dc_hw_display_frame_done(struct dc_hw *hw, u8 display_id);
@@ -1194,7 +1231,7 @@ u32 vs_dc_get_panel_dither_table_offset(u32 hw_id);
 u32 vs_dc_get_wb_offset(u32 hw_id);
 const struct dc_hw_plane *vs_dc_hw_get_plane(const struct dc_hw *hw, u32 hw_id);
 const struct dc_hw_display *vs_dc_hw_get_display(const struct dc_hw *hw, u32 hw_id);
-const int vs_dc_hw_get_display_id(const struct dc_hw *hw, u32 hw_id);
+int vs_dc_hw_get_display_id(const struct dc_hw *hw, u32 hw_id);
 const struct dc_hw_wb *vs_dc_hw_get_wb(const struct dc_hw *hw, u32 hw_id);
 const void *vs_dc_hw_get_plane_property(const struct dc_hw *hw, u32 hw_id, const char *prop_name,
 					bool *out_enabled);
@@ -1216,5 +1253,6 @@ void dc_hw_save_status(struct dc_hw *hw);
 #endif
 
 void dc_hw_set_fe_qos(struct dc_hw *hw, u32 value);
+bool dc_hw_is_be_idle(struct dc_hw *hw);
 
 #endif /* __VS_DC_HW_H__ */

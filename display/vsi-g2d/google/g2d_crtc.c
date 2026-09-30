@@ -42,6 +42,24 @@ static void g2d_crtc_atomic_destroy_state(struct drm_crtc *crtc, struct drm_crtc
 	kfree(g2d_crtc_state);
 }
 
+static struct drm_crtc_state *g2d_crtc_atomic_duplicate_state(struct drm_crtc *crtc)
+{
+	struct g2d_crtc_state *g2d_crtc_state;
+
+	if (WARN_ON(!crtc->state))
+		return NULL;
+
+	g2d_crtc_state =
+		kmemdup(to_g2d_crtc_state(crtc->state), sizeof(*g2d_crtc_state), GFP_KERNEL);
+
+	if (!g2d_crtc_state)
+		return NULL;
+
+	__drm_atomic_helper_crtc_duplicate_state(crtc, &g2d_crtc_state->base);
+
+	return &g2d_crtc_state->base;
+}
+
 static void g2d_crtc_reset(struct drm_crtc *crtc)
 {
 	struct g2d_crtc_state *g2d_crtc_state;
@@ -155,9 +173,8 @@ static const struct drm_crtc_funcs g2d_crtc_funcs = {
 	.destroy = g2d_crtc_destroy,
 	.reset = g2d_crtc_reset,
 	.set_config = drm_atomic_helper_set_config,
-	.destroy = g2d_crtc_destroy,
 	.page_flip = drm_atomic_helper_page_flip,
-	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
+	.atomic_duplicate_state = g2d_crtc_atomic_duplicate_state,
 	.atomic_destroy_state = g2d_crtc_atomic_destroy_state,
 	.atomic_set_property = g2d_crtc_atomic_set_property,
 	.atomic_get_property = g2d_crtc_atomic_get_property,
@@ -183,7 +200,7 @@ int g2d_crtc_init(struct g2d_device *g2d_device)
 
 		g2d_crtc->commit_worker = kthread_create_worker(0, "g2d_kthread%d", i);
 		if (IS_ERR(g2d_crtc->commit_worker))
-			dev_err(g2d_crtc->dev, "failed to create g2d_kthread%d (%pe)\n", i,
+			pr_err("failed to create g2d_kthread%d (%pe)\n", i,
 				g2d_crtc->commit_worker);
 
 		if (ret) {

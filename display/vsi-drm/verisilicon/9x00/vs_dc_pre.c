@@ -11,13 +11,10 @@
 #include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-#include <linux/regmap.h>
-#endif
-
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_framebuffer.h>
+#include <drm/drm_plane.h>
 #include <drm/drm_of.h>
 #include <drm/vs_drm.h>
 
@@ -1621,6 +1618,35 @@ static int check_y2r_changed(struct drm_plane_state *plane_state)
 	return 0;
 }
 
+/**
+ * check_plane_swap() - Check if a plane is being swapped between CRTCs.
+ * @vs_plane_state: The plane state being checked.
+ * @crtc: The new CRTC for the plane.
+ * @crtc_state: The state of the new CRTC.
+ *
+ * This function detects if a plane is being moved from one CRTC to another.
+ * If a swap is detected, it updates the swapped_plane_mask of the new CRTC's
+ * state to ensure proper synchronization during the commit process.
+ *
+ * Return: 0 on success, or -EINVAL if any of the input parameters are NULL.
+ */
+static int check_plane_swap(struct vs_plane_state *vs_plane_state, struct drm_crtc *crtc,
+			    struct drm_crtc_state *crtc_state)
+{
+	struct vs_crtc_state *vs_crtc_state;
+
+	if (!vs_plane_state || !crtc || !crtc_state)
+		return -EINVAL;
+
+	vs_crtc_state = to_vs_crtc_state(crtc_state);
+	if (vs_plane_state->pre_swap_crtc && vs_plane_state->pre_swap_crtc != crtc)
+		vs_crtc_state->swapped_plane_mask |= drm_plane_mask(vs_plane_state->base.plane);
+
+	vs_plane_state->pre_swap_crtc = crtc;
+
+	return 0;
+}
+
 static int vs_dc_check_plane(struct device *dev, struct vs_plane *plane,
 			     struct drm_plane_state *state)
 {
@@ -1684,6 +1710,10 @@ static int vs_dc_check_plane(struct device *dev, struct vs_plane *plane,
 		return -EINVAL;
 
 	ret = check_plane_sram(dc->hw.info, hw_plane, vs_plane_state, plane_info);
+	if (ret)
+		return ret;
+
+	ret = check_plane_swap(vs_plane_state, crtc, crtc_state);
 	if (ret)
 		return ret;
 

@@ -51,14 +51,6 @@
 #define EDGETPU_HAS_PQ_FW_AUTH 0
 #endif
 
-/*
- * "Always on" can be enabled in a chip config.h file using this define; see comments for
- * field @always_on in edgetpu-pm.h. * The default is to not force "always on".
- */
-#ifndef EDGETPU_FEATURE_ALWAYS_ON
-#define EDGETPU_FEATURE_ALWAYS_ON 0
-#endif
-
 #ifndef EDGETPU_USE_LITEBUF_VII
 #define EDGETPU_USE_LITEBUF_VII 0
 #endif
@@ -79,11 +71,6 @@
 #define EDGETPU_NUM_VII_CREDITS_PER_CLIENT 8
 #endif
 
-#ifndef EDGETPU_IKV_QUEUE_SIZE
-/* Size of IKV queues (in unit number of elements). */
-#define EDGETPU_IKV_QUEUE_SIZE (EDGETPU_NUM_VII_CREDITS_PER_CLIENT * EDGETPU_NUM_VCIDS)
-#endif
-
 #ifndef EDGETPU_CPU_CACHE_LINE_SIZE
 #define EDGETPU_CPU_CACHE_LINE_SIZE 64
 #endif
@@ -99,6 +86,21 @@
 /* Whether the IOMMU granularity is same as PAGE_SIZE. */
 #ifndef EDGETPU_MMU_GRANULARITY_IS_PAGE
 #define EDGETPU_MMU_GRANULARITY_IS_PAGE 1
+#endif
+
+/* Whether to use the Common Mailbox Framework. */
+#ifndef EDGETPU_USE_CMF
+#define EDGETPU_USE_CMF 0
+#endif
+
+/* Whether to use the Coresight Remote Interface. */
+#ifndef EDGETPU_USE_CORESIGHT_REMOTE
+#define EDGETPU_USE_CORESIGHT_REMOTE 0
+#endif
+
+/* Offset of the telemetry buffer from the beginning of the shared data region. */
+#ifndef EDGETPU_TELEMETRY_BUFFERS_OFFSET
+#define EDGETPU_TELEMETRY_BUFFERS_OFFSET 0
 #endif
 
 #endif /* __EDGETPU_CONFIG_H__ */

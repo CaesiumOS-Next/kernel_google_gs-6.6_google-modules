@@ -124,10 +124,6 @@ typedef struct _PMR_DMA_BUF_GEM_OBJ {
 	PMR_DMA_BUF_WRAPPER *psPMRWrapper;
 } PMR_DMA_BUF_GEM_OBJ;
 
-#define IS_PMR_READABLE(ui64PMRFlags)  (PVRSRV_CHECK_CPU_READABLE(ui64PMRFlags) || \
-                                        PVRSRV_CHECK_GPU_READABLE(ui64PMRFlags))
-#define IS_PMR_WRITEABLE(ui64PMRFlags) (PVRSRV_CHECK_CPU_WRITEABLE(ui64PMRFlags) || \
-                                        PVRSRV_CHECK_GPU_WRITEABLE(ui64PMRFlags))
 
 #define TO_PMR_DMA_BUF_GEM_OBJ(psObj) IMG_CONTAINER_OF((psObj), PMR_DMA_BUF_GEM_OBJ, sBase)
 
@@ -1366,7 +1362,7 @@ static PVRSRV_ERROR PMRDevPhysAddrDmaBuf(PMR_IMPL_PRIVDATA pvPriv,
 					 IMG_DEV_PHYADDR *psDevPAddr)
 {
 	PMR_DMA_BUF_DATA *psPrivData = pvPriv;
-	IMG_UINT32 ui32PageIndex;
+	IMG_DEVMEM_OFFSET_T uiPageIndex;
 	IMG_UINT32 idx;
 
 #if defined(SUPPORT_STATIC_IPA)
@@ -1385,14 +1381,14 @@ static PVRSRV_ERROR PMRDevPhysAddrDmaBuf(PMR_IMPL_PRIVDATA pvPriv,
 		{
 			IMG_UINT32 ui32InPageOffset;
 
-			ui32PageIndex = puiOffset[idx] >> PAGE_SHIFT;
-			ui32InPageOffset = puiOffset[idx] - ((IMG_DEVMEM_OFFSET_T)ui32PageIndex << PAGE_SHIFT);
+			uiPageIndex = puiOffset[idx] >> PAGE_SHIFT;
+			ui32InPageOffset = puiOffset[idx] - (uiPageIndex << PAGE_SHIFT);
 
-			PVR_LOG_RETURN_IF_FALSE(ui32PageIndex < psPrivData->ui32VirtPageCount,
+			PVR_LOG_RETURN_IF_FALSE(uiPageIndex < (IMG_DEVMEM_OFFSET_T)psPrivData->ui32VirtPageCount,
 			                        "puiOffset out of range", PVRSRV_ERROR_OUT_OF_RANGE);
 
 			PVR_ASSERT(ui32InPageOffset < PAGE_SIZE);
-			psDevPAddr[idx].uiAddr = psPrivData->pasDevPhysAddr[ui32PageIndex].uiAddr + ui32InPageOffset;
+			psDevPAddr[idx].uiAddr = psPrivData->pasDevPhysAddr[uiPageIndex].uiAddr + ui32InPageOffset;
 #if defined(SUPPORT_STATIC_IPA)
 			/* Modify the physical address with the associated IPA values */
 			psDevPAddr[idx].uiAddr &= ~ui64IPAClearMask;
@@ -1965,41 +1961,6 @@ fail_create_pmr_wrapper:
 	return eError;
 }
 
-static PVRSRV_ERROR
-_CanPMRBeExported(PMR *psPMR)
-{
-	/* Exporting a PMR which was originally created from an imported DmaBuf
-	 * or EXTMEM is not supported.
-	 */
-	if (PMR_GetType(psPMR) ==  PMR_TYPE_DMABUF ||
-	    PMR_GetType(psPMR) ==  PMR_TYPE_EXTMEM)
-	{
-		PVR_DPF((PVR_DBG_ERROR, "%s: PMRs that wrap external memory cannot be exported."
-		         "psPMR->eFlavour = %d",
-		         __func__,
-		         PMR_GetType(psPMR)));
-		return PVRSRV_ERROR_PMR_WRONG_PMR_TYPE;
-	}
-
-#if !defined(PVR_ENABLE_DMABUF_UPSTREAM_COMPAT)
-	/* To avoid mismatches in usage expectations by third-party upstream
-	 * drivers, a PMR that is read-only or write-only should not be
-	 * exported as a GEM object or dma_buf.
-	 */
-	if (!(IS_PMR_READABLE(PMR_Flags(psPMR)) &&
-	      IS_PMR_WRITEABLE(PMR_Flags(psPMR))))
-	{
-		PVR_DPF((PVR_DBG_ERROR, "%s: Read-only or write-only PMR cannot be exported. "
-		         "ui64PMRFlags = 0x%" PVRSRV_MEMALLOCFLAGS_FMTSPEC,
-		         __func__,
-		         PMR_Flags(psPMR)));
-		return PVRSRV_ERROR_INVALID_FLAGS;
-	}
-#endif
-
-	return PVRSRV_OK;
-}
-
 PVRSRV_ERROR
 PhysmemExportDmaBuf(CONNECTION_DATA *psConnection,
                     PVRSRV_DEVICE_NODE *psDevNode,
@@ -2016,16 +1977,13 @@ PhysmemExportDmaBuf(CONNECTION_DATA *psConnection,
 	eError = PMR_IsExportable(psPMR);
 	PVR_LOG_RETURN_IF_ERROR(eError, "PMR_IsExportable");
 
-	eError = _CanPMRBeExported(psPMR);
-	PVR_LOG_RETURN_IF_ERROR(eError, "_CanPMRBeExported");
-
 	eError = PhysmemGetOrCreatePMRWrapper(psPMR, &psPMRWrapper);
 	PVR_LOG_GOTO_IF_ERROR(eError, "PhysmemExportDmaBuf", fail_get_pmr_wrapper);
 
 	eError = PMRRefPMR(psPMR);
 	PVR_LOG_GOTO_IF_ERROR(eError, "PMRRefPMR", fail_ref_pmr);
 
-	/* Since _CanPMRBeExported() has already validated the PMR flags,
+	/* Since PMR_IsExportable() has already validated the PMR flags,
 	 * the dma_buf flags are guaranteed to be O_RDWR.
 	 */
 	sDmaBufExportInfo.flags = O_RDWR;
@@ -2149,9 +2107,6 @@ PhysmemExportGemHandle(CONNECTION_DATA *psConnection,
 
 	eError = PMR_IsExportable(psPMR);
 	PVR_LOG_RETURN_IF_ERROR(eError, "PMR_IsExportable");
-
-	eError = _CanPMRBeExported(psPMR);
-	PVR_LOG_RETURN_IF_ERROR(eError, "_CanPMRBeExported");
 
 	eError = PhysmemGetOrCreatePMRWrapper(psPMR, &psPMRWrapper);
 	PVR_LOG_GOTO_IF_ERROR(eError, "PhysmemExportGemHandle", fail_get_pmr_wrapper);

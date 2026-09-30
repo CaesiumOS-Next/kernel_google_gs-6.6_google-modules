@@ -1654,7 +1654,7 @@ static void _PhysHeapCountUserModeHeaps(PPVRSRV_DEVICE_NODE psDevNode,
 	PVRSRV_PHYS_HEAP eHeap;
 
 	for (eHeap = PVRSRV_PHYS_HEAP_DEFAULT;
-		 eHeap <= PVRSRV_PHYS_HEAP_LAST;
+		 eHeap < PVRSRV_PHYS_HEAP_LAST;
 		 eHeap++)
 	{
 		if (BIT_ISSET(ui32UsageFlags, eHeap) &&

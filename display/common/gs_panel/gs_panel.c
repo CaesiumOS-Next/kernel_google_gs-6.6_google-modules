@@ -26,6 +26,7 @@
 #include <trace/panel_trace.h>
 
 #include "gs_drm/gs_drm_connector.h"
+#include "gs_drm/gs_fault_event.h"
 #include "gs_panel_internal.h"
 #include "gs_panel/gs_panel_funcs_defaults.h"
 
@@ -36,6 +37,8 @@ static const char ext_info_regs[] = { 0xDA, 0xDB, 0xDC, 0xA1 };
 #define EXT_INFO_SIZE ARRAY_SIZE(ext_info_regs)
 #define COMMON_WORK_DELAY_MS 30000
 #define FRAME_TX_US 6200
+#define REFRESH_CTRL_KTHREAD_SCHED_PRIORITY 19
+#define DETECT_FAULT_KTHREAD_SCHED_PRIORITY 2
 
 /* INTERNAL ACCESSORS */
 
@@ -56,6 +59,7 @@ static const char *gs_panel_get_gpio_name(enum gs_panel_gpio_names gpio)
 		[DISP_ENABLE_GPIO] = "enable",
 		[DISP_VDDD_GPIO] = "vddd",
 		[DISP_TOUT_GPIO] = "tout",
+		[DISP_ERR_FG_GPIO] = "err_fg",
 	};
 
 	if (gpio >= MAX_DISP_GPIO)
@@ -200,6 +204,15 @@ static int gs_panel_parse_gpios(struct gs_panel *ctx)
 		dev_err(dev, "failed to get tout-gpios %ld for te2\n",
 			PTR_ERR(gpio->gpiod[DISP_TOUT_GPIO]));
 	}
+
+	/* TODO (b/406039453): restructure with lookup table or macro */
+	gpio->gpiod[DISP_ERR_FG_GPIO] =
+		devm_gpiod_get_optional(dev, gs_panel_get_gpio_name(DISP_ERR_FG_GPIO), GPIOD_ASIS);
+	if (gpio->gpiod[DISP_ERR_FG_GPIO] == NULL)
+		dev_dbg(dev, "no err_fg gpio found\n");
+	else if (IS_ERR(gpio->gpiod[DISP_ERR_FG_GPIO]))
+		dev_err(dev, "failed to get err_fg-gpios %ld\n",
+			PTR_ERR(gpio->gpiod[DISP_ERR_FG_GPIO]));
 
 	dev_dbg(dev, "%s -\n", __func__);
 	return 0;
@@ -2078,24 +2091,22 @@ static void gs_panel_init_te2(struct gs_panel *ctx)
 	ctx->te2.option = TEX_OPT_CHANGEABLE;
 }
 
-static void gs_panel_init_refresh_ctrl(struct gs_panel *ctx)
+static void gs_panel_init_background_work(struct gs_panel *ctx,
+					  struct gs_panel_background_work_data *work_data,
+					  const char name[], int32_t priority,
+					  kthread_work_func_t func)
 {
-	struct device *dev = ctx->dev;
-	struct gs_panel_background_work_data *work_data = &ctx->refresh_ctrl_work_data;
-
-	ctx->refresh_ctrl |= GS_PANEL_REFRESH_CTRL_EARLY_EXIT;
 	kthread_init_worker(&work_data->worker);
-	work_data->thread =
-		kthread_run(kthread_worker_fn, &work_data->worker, "refresh_ctrl_kthread");
-	if (IS_ERR(work_data->thread))
-		dev_err(dev, "failed to start refresh_ctrl kthread (err=%ld)\n",
+	work_data->thread = kthread_run(kthread_worker_fn, &work_data->worker, name);
+	if (IS_ERR(work_data->thread)) {
+		dev_err(ctx->dev, "failed to start %s kthread (err=%ld)\n", name,
 			PTR_ERR(work_data->thread));
-	else {
+	} else {
 		struct sched_param param = {
-			.sched_priority = 2, // MAX_RT_PRIO - 1,
+			.sched_priority = priority,
 		};
 		sched_setscheduler_nocheck(work_data->thread, SCHED_FIFO, &param);
-		kthread_init_work(&work_data->work, gs_panel_refresh_ctrl_work);
+		kthread_init_work(&work_data->work, func);
 	}
 }
 
@@ -2176,12 +2187,121 @@ void gs_panel_refresh_ctrl(struct gs_panel *ctx, ktime_t frame_start_ts)
 	PANEL_ATRACE_END("gs_panel_refresh_ctrl");
 }
 
+void gs_panel_detect_fault_work(struct kthread_work *work)
+{
+	struct gs_panel *ctx = container_of(work, struct gs_panel, detect_fault_work_data.work);
+	struct device *dev = ctx->dev;
+	int bit;
+	ktime_t now;
+	s64 delta_ms;
+	u32 fault_detect_interval_ms = ctx->desc->fault_detect_interval_ms;
+
+	mutex_lock(&ctx->mode_lock);
+	if (!gs_is_panel_active(ctx)) {
+		dev_dbg(dev, "skip fault detection (panel is not active)\n");
+		goto exit;
+	}
+
+	/* If err_fg is supported, check fault only when it's high */
+	if (ctx->err_fg_irq >= 0) {
+		unsigned long flags = 0;
+		bool err_fg_state;
+
+		spin_lock_irqsave(&ctx->spinlock_err_fg, flags);
+		err_fg_state = ctx->err_fg_state;
+		spin_unlock_irqrestore(&ctx->spinlock_err_fg, flags);
+		if (!err_fg_state)
+			goto exit;
+	}
+
+	/* Check elapsed interval against minimum */
+	now = ktime_get();
+	delta_ms = ktime_ms_delta(now, ctx->timestamps.last_panel_fault_check_ts);
+	if (delta_ms < fault_detect_interval_ms && ctx->ddic_read_fail_cnt == 0) {
+		dev_dbg(dev, "skip fault detection (%lldms since last check, <%ums)\n", delta_ms,
+			fault_detect_interval_ms);
+		goto exit;
+	}
+
+	bitmap_zero(ctx->panel_errors, GS_PANEL_ERR_MAX);
+	/* Read fault registers */
+	ctx->detect_fault_work_ret = ctx->desc->gs_panel_func->detect_fault(ctx);
+
+	/* Count raw panel errors (unmasked) for statistics */
+	for_each_set_bit(bit, ctx->panel_errors, GS_PANEL_ERR_MAX) {
+		ctx->panel_errors_cnt[bit]++;
+	}
+
+	if (unlikely(GS_PANEL_ERR_MAX > 64)) {
+		dev_warn(ctx->dev, "panel_errors size (%u) > 64, skip mask\n", GS_PANEL_ERR_MAX);
+	} else {
+		DECLARE_BITMAP(mask, 64);
+
+		bitmap_from_u64(mask, ctx->desc->panel_errors_mask);
+		bitmap_and(ctx->panel_errors, ctx->panel_errors, mask, GS_PANEL_ERR_MAX);
+	}
+
+	trace_panel_errors(ctx->gs_connector->panel_index, ctx->panel_errors);
+	if (test_bit(GS_PANEL_ERR_GRAM_COLLISION, ctx->panel_errors)) {
+		trace_gram_collision(ctx->gs_connector->panel_index, ctx->gram_collision_count);
+		gs_fault_event_emit(ctx->dev, GS_FAULT_EVENT_TYPE_DDIC_UNDERRUN, 1);
+	}
+
+	if (!bitmap_empty(ctx->panel_errors, GS_PANEL_ERR_MAX))
+		gs_fault_event_emit(ctx->dev, GS_FAULT_EVENT_TYPE_PANEL_ERROR,
+				    ctx->panel_errors[0]);
+
+	/* Update last fault check timestamp */
+	ctx->timestamps.last_panel_fault_check_ts = now;
+
+exit:
+	mutex_unlock(&ctx->mode_lock);
+	ctx->detect_fault_work_scheduled = false;
+}
+
+static irqreturn_t gs_panel_err_fg_irq_handler(int irq, void *dev_data)
+{
+	struct gs_panel *ctx = dev_data;
+	unsigned long flags = 0;
+	int val;
+
+	if (!ctx)
+		return IRQ_HANDLED;
+
+	val = gpiod_get_raw_value(ctx->gpio.gpiod[DISP_ERR_FG_GPIO]);
+	if (val >= 0) {
+		PANEL_ATRACE_INT_PID("ERR_FG", val, ctx->trace_pid);
+		spin_lock_irqsave(&ctx->spinlock_err_fg, flags);
+		ctx->err_fg_state = val;
+		spin_unlock_irqrestore(&ctx->spinlock_err_fg, flags);
+	}
+
+	return IRQ_HANDLED;
+}
+
+static void gs_panel_init_gpio_irq_handlers(struct gs_panel *ctx)
+{
+	struct device *dev = ctx->dev;
+
+	/* err_fg irq for error reports from DDIC */
+	ctx->err_fg_irq = gpiod_to_irq(ctx->gpio.gpiod[DISP_ERR_FG_GPIO]);
+	if (ctx->err_fg_irq < 0)
+		dev_dbg(dev, "unable to get irq for err_fg-gpios (%d)\n", ctx->err_fg_irq);
+	else if (!devm_request_irq(dev, ctx->err_fg_irq, gs_panel_err_fg_irq_handler,
+				   IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING, "err_fg", ctx))
+		dev_info(dev, "err_fg irq is requested successfully\n");
+	else
+		dev_warn(dev, "failed to request irq for err_fg\n");
+}
+
 int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 {
 	struct device *dev = &dsi->dev;
 	int ret = 0;
 
 	dev_dbg(dev, "%s +\n", __func__);
+
+	spin_lock_init(&ctx->spinlock_err_fg);
 
 	/* Attach descriptive panel data to driver data structure */
 	mipi_dsi_set_drvdata(dsi, ctx);
@@ -2258,8 +2378,19 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 			return ret;
 	}
 
-	if (gs_panel_has_func(ctx, refresh_ctrl))
-		gs_panel_init_refresh_ctrl(ctx);
+	if (gs_panel_has_func(ctx, refresh_ctrl)) {
+		ctx->refresh_ctrl |= GS_PANEL_REFRESH_CTRL_EARLY_EXIT;
+		gs_panel_init_background_work(ctx, &ctx->refresh_ctrl_work_data,
+					      "refresh_ctrl_kthread",
+					      REFRESH_CTRL_KTHREAD_SCHED_PRIORITY,
+					      gs_panel_refresh_ctrl_work);
+	}
+
+	if (gs_panel_has_func(ctx, detect_fault))
+		gs_panel_init_background_work(ctx, &ctx->detect_fault_work_data,
+					      "detect_fault_kthread",
+					      DETECT_FAULT_KTHREAD_SCHED_PRIORITY,
+					      gs_panel_detect_fault_work);
 
 	/* Vrefresh */
 	if (ctx->desc->modes) {
@@ -2356,6 +2487,8 @@ int gs_dsi_panel_common_init(struct mipi_dsi_device *dsi, struct gs_panel *ctx)
 		goto err_panel;
 
 	ctx->trace_pid = current->tgid;
+
+	gs_panel_init_gpio_irq_handlers(ctx);
 
 	/* populate test module, ignoring return value */
 	of_platform_populate(dev->of_node, NULL, NULL, dev);

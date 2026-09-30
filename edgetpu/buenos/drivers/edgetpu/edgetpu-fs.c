@@ -33,6 +33,7 @@
 #include <linux/uaccess.h>
 #include <trace/events/edgetpu.h>
 
+#include <gcip/gcip-dma-fence.h>
 #include <gcip/gcip-fence-array.h>
 #include <gcip/gcip-memory.h>
 #include <iif/iif-dma-fence.h>
@@ -40,7 +41,6 @@
 
 #include "edgetpu-config.h"
 #include "edgetpu-device-group.h"
-#include "edgetpu-dma-fence.h"
 #include "edgetpu-dmabuf.h"
 #include "edgetpu-firmware.h"
 #include "edgetpu-iif.h"
@@ -72,7 +72,6 @@ static void log_event(struct edgetpu_dev *etdev, enum edgetpu_eventlog_eventcode
 	uint slot = atomic_fetch_inc(&etdev->eventlog.next_slot) % EDGETPU_EVENTLOG_SLOTS;
 
 	ktime_get_ts64(&etdev->eventlog.event[slot].timestamp);
-	etdev->eventlog.event[slot].pid = task_pid_nr(current);
 	etdev->eventlog.event[slot].code = code;
 	etdev->eventlog.event[slot].arg = arg;
 }
@@ -88,6 +87,9 @@ void edgetpu_eventlog_event(struct edgetpu_dev *etdev, enum edgetpu_eventlog_eve
 	case EVENTLOG_EVENT_WAKELOCK_ACQUIRE_START:
 	case EVENTLOG_EVENT_WAKELOCK_ACQUIRE_END:
 	case EVENTLOG_EVENT_WAKELOCK_RELEASE:
+	case EVENTLOG_EVENT_CLIENT_TRIM_DONE:
+	case EVENTLOG_EVENT_CLIENT_REMAP_DONE:
+	case EVENTLOG_EVENT_CLIENT_ACCESS_FAULT:
 		client = (struct edgetpu_client *)arg;
 		log_event(etdev, code, client->client_id);
 		break;
@@ -117,9 +119,8 @@ static ssize_t eventlog_show(struct device *dev, struct device_attribute *attr, 
 			continue;
 
 		evdelta = timespec64_sub(currtime, etdev->eventlog.event[slot].timestamp);
-		len += sysfs_emit_at(buf, len, "%lld.%ld %d %u %ld\n",
-				     evdelta.tv_sec, evdelta.tv_nsec / 1000,
-				     etdev->eventlog.event[slot].pid,
+		len += sysfs_emit_at(buf, len, "%lld.%ld %u %ld\n",
+				     evdelta.tv_sec, evdelta.tv_nsec / 1000000,
 				     etdev->eventlog.event[slot].code,
 				     etdev->eventlog.event[slot].arg);
 	}
@@ -136,7 +137,8 @@ static int debugfs_eventlog_show(struct seq_file *s, void *data)
 	int i;
 	static const char *const event_strings[] = {
 		"none", "client-init", "client-exit", "wake-acquire-start", "wake-acquire-end",
-		"wake-release", "power-start", "power-end", "power-wait", "rpm-done"};
+		"wake-release", "power-start", "power-end", "power-wait", "rpm-done", "trim-done",
+		"remap-done", "access-fault"};
 
 	ktime_get_ts64(&currtime);
 
@@ -160,6 +162,9 @@ static int debugfs_eventlog_show(struct seq_file *s, void *data)
 		case EVENTLOG_EVENT_WAKELOCK_ACQUIRE_START:
 		case EVENTLOG_EVENT_WAKELOCK_ACQUIRE_END:
 		case EVENTLOG_EVENT_WAKELOCK_RELEASE:
+		case EVENTLOG_EVENT_CLIENT_TRIM_DONE:
+		case EVENTLOG_EVENT_CLIENT_REMAP_DONE:
+		case EVENTLOG_EVENT_CLIENT_ACCESS_FAULT:
 			arg_tag = "client";
 			break;
 		case EVENTLOG_EVENT_POWER_STATE_START:
@@ -178,10 +183,9 @@ static int debugfs_eventlog_show(struct seq_file *s, void *data)
 		}
 
 		evdelta = timespec64_sub(currtime, etdev->eventlog.event[slot].timestamp);
-		seq_printf(s, "-%lld.%ld %d %s %s %ld\n",
+		seq_printf(s, "-%lld.%ld %s %s %ld\n",
 			   evdelta.tv_sec, evdelta.tv_nsec / NSEC_PER_USEC,
-			   etdev->eventlog.event[slot].pid, event_s, arg_tag,
-			   etdev->eventlog.event[slot].arg);
+			   event_s, arg_tag, etdev->eventlog.event[slot].arg);
 	}
 
 	return 0;
@@ -483,20 +487,31 @@ static int edgetpu_ioctl_sync_fence_create(
 	struct edgetpu_create_sync_fence_data __user *datap)
 {
 	struct edgetpu_create_sync_fence_data data;
-	int ret;
+	struct gcip_dma_fence *gfence;
+	int fd;
 
 	if (!client->group || edgetpu_device_group_is_disbanded(client->group)) {
 		etdev_err(client->etdev, "client creating sync fence without a valid device group");
 		return -EINVAL;
 	}
+
 	if (copy_from_user(&data, (void __user *)datap, sizeof(data)))
 		return -EFAULT;
-	ret = edgetpu_dma_fence_create(client->group, &data);
-	if (ret)
-		return ret;
+
+	gfence = gcip_dma_fence_create(client->group->gfence_mgr, data.seqno, data.timeline_name);
+	if (IS_ERR(gfence))
+		return PTR_ERR(gfence);
+
+	fd = gcip_dma_fence_install_fd(gfence);
+	gcip_dma_fence_put(gfence);
+	if (fd < 0)
+		return fd;
+
+	data.fence = fd;
 	if (copy_to_user((void __user *)datap, &data, sizeof(data)))
-		ret = -EFAULT;
-	return ret;
+		return -EFAULT;
+
+	return 0;
 }
 
 static int edgetpu_ioctl_sync_fence_signal(
@@ -506,7 +521,8 @@ static int edgetpu_ioctl_sync_fence_signal(
 
 	if (copy_from_user(&data, (void __user *)datap, sizeof(data)))
 		return -EFAULT;
-	return edgetpu_dma_fence_signal(&data);
+
+	return gcip_dma_fence_signal(data.fence, data.error, false);
 }
 
 static int edgetpu_ioctl_sync_fence_status(
@@ -517,7 +533,7 @@ static int edgetpu_ioctl_sync_fence_status(
 
 	if (copy_from_user(&data, (void __user *)datap, sizeof(data)))
 		return -EFAULT;
-	ret = edgetpu_dma_fence_status(&data);
+	ret = gcip_dma_fence_status(data.fence, &data.status);
 	if (ret)
 		return ret;
 	if (copy_to_user((void __user *)datap, &data, sizeof(data)))
@@ -680,8 +696,8 @@ edgetpu_ioctl_acquire_ext_mailbox(struct edgetpu_client *client,
 
 	ret = edgetpu_acquire_ext_mailbox(client, &ext_mailbox);
 	if (ret)
-		etdev_err(client->etdev, "client tgid %d failed to acquire ext mailbox",
-			  client->tgid);
+		etdev_err(client->etdev, "client %s failed to acquire ext mailbox: %d",
+			  client->name, ret);
 	return ret;
 }
 
@@ -1425,6 +1441,8 @@ static void show_client(struct edgetpu_client *client, struct seq_file *s)
 		seq_printf(s, "%s ", grp_status_str[group->status]);
 		if (group->status == EDGETPU_DEVICE_GROUP_ERRORED)
 			seq_printf(s, "%#x ", group->fatal_errors);
+		if (client->inactive_count)
+			seq_printf(s, "inactive %u ", client->inactive_count);
 
 		seq_printf(s, "vcid %u ", group->vcid);
 	}
@@ -1515,9 +1533,23 @@ static const struct file_operations mappings_ops = {
 	.release = single_release,
 };
 
+static int syncfences_show(struct seq_file *s, void *unused)
+{
+	struct edgetpu_dev *etdev = s->private;
+	struct edgetpu_list_group *list_entry;
+	struct edgetpu_device_group *group;
+
+	mutex_lock(&etdev->groups_lock);
+	etdev_for_each_group(etdev, list_entry, group)
+		gcip_dma_fence_manager_show(group->gfence_mgr, s);
+	mutex_unlock(&etdev->groups_lock);
+
+	return 0;
+}
+
 static int syncfences_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, edgetpu_dma_fence_debugfs_show, inode->i_private);
+	return single_open(file, syncfences_show, inode->i_private);
 }
 
 static const struct file_operations syncfences_ops = {

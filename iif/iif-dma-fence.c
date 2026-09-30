@@ -114,7 +114,7 @@ static void dma_iif_fence_signal_work(struct work_struct *work)
 		return;
 
 	if (iif_fence->signal_error)
-		dma_fence_set_error(dma_fence, iif_fence->signal_error);
+		dma_fence_set_error(dma_fence, iif_dma_fence->poll_cb.iif_cb.status.error);
 	dma_fence_signal(dma_fence);
 }
 

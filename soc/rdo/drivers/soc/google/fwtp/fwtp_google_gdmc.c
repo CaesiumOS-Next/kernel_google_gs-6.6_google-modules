@@ -177,7 +177,7 @@ static fwtp_error_code_t fwtp_google_gdmc_send_message(struct fwtp_if *fwtp_if,
 	       local_rx_msg_data_size);
 	*rx_msg_data_size = local_rx_msg_data_size;
 
-	return 0;
+	return kFwtpOk;
 }
 
 /**
@@ -208,13 +208,12 @@ static void fwtp_google_gdmc_host_cb(void *msg, void *priv_data)
  */
 static void fwtp_google_gdmc_handle_ring_notify(struct work_struct *work)
 {
-	struct fwtp_google_gdmc_dev *fwtp_google_gdmc_dev =
-		container_of(work, struct fwtp_google_gdmc_dev,
-			     ring_notify_work);
+	struct fwtp_google_gdmc_dev *fwtp_google_gdmc_dev = container_of(
+		work, struct fwtp_google_gdmc_dev, ring_notify_work);
 	struct fwtp_dev *fwtp_dev = &(fwtp_google_gdmc_dev->base);
 
 	fwtp_ipc_client_print_tracepoints(&(fwtp_dev->fwtp_ipc_client),
-					  &(fwtp_dev->printer_ctx));
+					  &(fwtp_dev->printer_ctx), false);
 }
 
 /*******************************************************************************
@@ -238,7 +237,7 @@ static int google_gdmc_tracepoint_debugfs_write_tracepoint_poll(void *data,
 	struct fwtp_dev *fwtp_dev = &(fwtp_google_gdmc_dev->base);
 
 	fwtp_ipc_client_print_tracepoints(&(fwtp_dev->fwtp_ipc_client),
-					  &(fwtp_dev->printer_ctx));
+					  &(fwtp_dev->printer_ctx), false);
 
 	return 0;
 }
@@ -265,19 +264,13 @@ static int google_gdmc_tracepoint_debugfs_write_tracepoint_subscribe(void *data,
 {
 	struct fwtp_google_gdmc_dev *fwtp_google_gdmc_dev = data;
 	struct fwtp_dev *fwtp_dev = &(fwtp_google_gdmc_dev->base);
-	struct fwtp_msg_ring_subscribe msg_subscribe;
-	uint16_t rx_msg_data_size;
 	fwtp_error_code_t err;
 
 	/* Subscribe or unsubscribe to GDMC tracepoints. */
-	msg_subscribe.base.type = kFwtpMsgTypeRingSubscribe;
-	msg_subscribe.ring_num = fwtp_dev->fwtp_ipc_client.ring_num;
-	msg_subscribe.start = (val != 0 ? 1 : 0);
-	msg_subscribe.notify_byte_count = FWTP_GOOGLE_GDMC_NOTIFY_BYTE_COUNT;
-	err = fwtp_dev->fwtp_ipc_client.fwtp_if
-		      .send_message(&(fwtp_dev->fwtp_ipc_client.fwtp_if),
-				    &msg_subscribe, sizeof(msg_subscribe),
-				    sizeof(msg_subscribe), &rx_msg_data_size);
+	err = fwtp_ipc_client_subscribe(&(fwtp_dev->fwtp_ipc_client), val != 0,
+					FWTP_GOOGLE_GDMC_NOTIFY_BYTE_COUNT);
+	if (err != kFwtpOk)
+		return -EIO;
 
 	return 0;
 }
@@ -304,6 +297,7 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 	struct fwtp_dev *fwtp_dev;
 	struct device_node *dma_reserved_mem_node = NULL;
 	struct reserved_mem *dma_reserved_mem;
+	struct dentry *dentry;
 	int ret = 0;
 
 	/* Log the start of probing. */
@@ -382,10 +376,9 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 		goto out;
 	}
 	fwtp_google_gdmc_dev->reserved_mem_initialized = true;
-	fwtp_google_gdmc_dev->dma_base =
-		dma_alloc_coherent(dev, fwtp_google_gdmc_dev->dma_size,
-				   &fwtp_google_gdmc_dev->dma_base_phys,
-				   GFP_KERNEL);
+	fwtp_google_gdmc_dev->dma_base = dma_alloc_coherent(
+		dev, fwtp_google_gdmc_dev->dma_size,
+		&fwtp_google_gdmc_dev->dma_base_phys, GFP_KERNEL);
 	if (!fwtp_google_gdmc_dev->dma_base) {
 		dev_err(dev, "Failed to allocate DMA memory.\n");
 		ret = -ENOMEM;
@@ -393,10 +386,10 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 	}
 	fwtp_google_gdmc_dev->debugfs_root =
 		debugfs_create_dir(dev_name(dev), NULL);
-	if (!fwtp_google_gdmc_dev->debugfs_root) {
+	if (IS_ERR(fwtp_google_gdmc_dev->debugfs_root)) {
 		dev_err(dev,
 			"Failed to create a debugfs directory for GDMC.\n");
-		ret = -ENOENT;
+		ret = PTR_ERR(fwtp_google_gdmc_dev->debugfs_root);
 		goto out;
 	}
 
@@ -405,6 +398,9 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 	fwtp_dev->dev = dev;
 	fwtp_dev->fwtp_ipc_client.fwtp_if.send_message =
 		fwtp_google_gdmc_send_message;
+	fwtp_dev->fwtp_ipc_client.client_ring_list[0].ring_num = 0;
+	fwtp_dev->fwtp_ipc_client.client_ring_list[1].ring_num = 1;
+	fwtp_dev->fwtp_ipc_client.client_ring_count = 2;
 	fwtp_dev->printer_ctx.name = "gdmc";
 	fwtp_dev->log_enabled = true;
 	fwtp_dev->ftrace_enabled = true;
@@ -417,14 +413,25 @@ static int fwtp_google_gdmc_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	debugfs_create_file("request_poll", 0220,
-			    fwtp_google_gdmc_dev->debugfs_root,
-			    fwtp_google_gdmc_dev,
-			    &google_gdmc_tracepoint_debugfs_fops_tracepoint_poll);
-	debugfs_create_file(
+	dentry = debugfs_create_file(
+		"request_poll", 0220, fwtp_google_gdmc_dev->debugfs_root,
+		fwtp_google_gdmc_dev,
+		&google_gdmc_tracepoint_debugfs_fops_tracepoint_poll);
+	if (IS_ERR(dentry)) {
+		dev_err(dev, "Failed to create request_poll debugfs file.\n");
+		ret = PTR_ERR(dentry);
+		goto out;
+	}
+	dentry = debugfs_create_file(
 		"request_subscribe", 0220, fwtp_google_gdmc_dev->debugfs_root,
 		fwtp_google_gdmc_dev,
 		&google_gdmc_tracepoint_debugfs_fops_tracepoint_subscribe);
+	if (IS_ERR(dentry)) {
+		dev_err(dev,
+			"Failed to create request_subscribe debugfs file.\n");
+		ret = PTR_ERR(dentry);
+		goto out;
+	}
 
 out:
 	/* Clean up. */

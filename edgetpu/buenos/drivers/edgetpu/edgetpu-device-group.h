@@ -124,11 +124,8 @@ struct edgetpu_device_group {
 	/* The DMA fence manager for this group. */
 	struct gcip_dma_fence_manager *gfence_mgr;
 
-	/*
-	 * Used to synchronize any mapping operations for this device group.
-	 * @lock must be held for reading or writing whenever @mapping_lock is held.
-	 */
-	struct mutex mapping_lock;
+	/* Used to serialize pin_user_pages. */
+	struct mutex pin_user_pages_lock;
 
 	/*
 	 * Used to synchronize any VII command sending or response fetching for this device group.
@@ -149,6 +146,8 @@ struct edgetpu_device_group {
 	struct edgetpu_mapping_root host_mappings;
 	/* TPU IOVA mapped to buffers backed by dma-buf */
 	struct edgetpu_mapping_root dmabuf_mappings;
+	/* If true at least one IOMMU fault has been reported for this group, for debugging. */
+	bool iommu_fault;
 	struct edgetpu_events events;
 	/* Mailbox attributes used to create this group */
 	struct edgetpu_mailbox_attr mbox_attr;

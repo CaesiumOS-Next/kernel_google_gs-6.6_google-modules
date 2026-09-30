@@ -8,6 +8,8 @@
 #ifndef __UWB_POWER_STATS__
 #define __UWB_POWER_STATS__
 
+#include <linux/types.h>
+
 #define U100_POWER_STATE_MAX 3
 
 enum u100_power_state {

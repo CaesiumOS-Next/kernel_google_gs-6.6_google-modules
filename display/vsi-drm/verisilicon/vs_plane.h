@@ -81,6 +81,13 @@ struct vs_plane_state {
 	u32 blend_id;
 	u32 dma_sram_size;
 	u32 scl_sram_size;
+
+	/**
+	 * @pre_swap_crtc: A pointer to the CRTC that this plane was attached to
+	 * when it was previously enabled. This is used to detect when a plane is
+	 * moved between CRTCs, which requires special synchronization.
+	 */
+	struct drm_crtc *pre_swap_crtc;
 };
 
 struct vs_plane {

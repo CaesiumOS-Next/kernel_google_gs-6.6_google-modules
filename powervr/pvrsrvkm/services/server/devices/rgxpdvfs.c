@@ -405,34 +405,6 @@ _ErrorUnlock:
 }
 
 /*************************************************************************/ /*!
-@Function       RGXPDVFSCheckCoreClkRateChange
-@Description    Checks if core clock rate has changed since the last snap-shot.
-@Input          psDevInfo    A pointer to PVRSRV_RGXDEV_INFO.
-@Return         None.
-*/ /**************************************************************************/
-void RGXPDVFSCheckCoreClkRateChange(PVRSRV_RGXDEV_INFO *psDevInfo)
-{
-	if (!psDevInfo->pui32RGXFWIFCoreClkRate)
-	{
-		return;
-	}
-
-	IMG_UINT32 ui32CoreClkRate = *psDevInfo->pui32RGXFWIFCoreClkRate;
-
-	if (!_PDVFSEnabled())
-	{
-		/* No log message to avoid excessive messages */
-		return;
-	}
-
-	if (ui32CoreClkRate != 0 && psDevInfo->ui32CoreClkRateSnapshot != ui32CoreClkRate)
-	{
-		psDevInfo->ui32CoreClkRateSnapshot = ui32CoreClkRate;
-		RGX_PROCESS_CORE_CLK_RATE_CHANGE(psDevInfo, ui32CoreClkRate);
-	}
-}
-
-/*************************************************************************/ /*!
 @Function       RGXPDVFSCheckUtilisationChange
 @Description    Checks if utilisation has changed since the last snap-shot.
 @Input          psDevInfo    A pointer to PVRSRV_RGXDEV_INFO.

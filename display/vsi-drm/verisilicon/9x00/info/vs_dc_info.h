@@ -55,7 +55,6 @@ struct regmap_access_table;
 
 enum dc_chip_rev {
 	DC_REV_0, /* For HW_9400 */
-	DC_REV_1, /* For HW_9500 */
 };
 
 enum dc_hw_plane_id {
@@ -107,9 +106,6 @@ enum dc_hw_display_id {
 	HW_DISPLAY_3,
 	HW_DISPLAY_4, /* Only valid for DC_REV_0,
 		       * corresponding to the blend wb path.
-		       */
-	HW_DISPLAY_5, /* Only valid for DC_REV_1,
-		       * corresponding to the layer corssbar path.
 		       */
 	HW_DISPLAY_NUM,
 };

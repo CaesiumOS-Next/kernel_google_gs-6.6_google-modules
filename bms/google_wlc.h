@@ -157,6 +157,9 @@
 #define GOOGLE_WLC_IOP_BPP_RAMP_DONE_CHECK_MS		(1 * 1000)
 #define GOOGLE_WLC_RAMP_DONE_ICL_MIN_UA			650000
 
+#define PRESENT_RATELIMIT_INTERVAL			(30 * 60 * HZ)
+#define PRESENT_RATELIMIT_BURST				20
+
 struct google_wlc_platform_data {
 	struct gpio_desc				*irq_gpio;
 	int						irq_int;

@@ -84,6 +84,8 @@ struct sugov_policy {
 	bool			limits_changed;
 	bool			need_freq_update;
 
+	bool			rtm_fix_enabled;
+
 	struct freq_qos_request	pmu_max_freq_req;
 	bool			under_pmu_throttle;
 	bool			relax_pmu_throttle;
@@ -255,6 +257,8 @@ out:
 static inline void sugov_update_response_time_mult(struct sugov_policy *sg_policy,
 						   bool reset_defaults)
 {
+	unsigned int freq_response_time_ms;
+	unsigned int response_time_ms;
 	unsigned long mult;
 	int cpu;
 
@@ -272,8 +276,19 @@ static inline void sugov_update_response_time_mult(struct sugov_policy *sg_polic
 		sg_policy->freq_response_time_ms = new_response_time_ms;
 	}
 
-	mult = sg_policy->freq_response_time_ms * SCHED_CAPACITY_SCALE;
-	mult /=	sg_policy->tunables->response_time_ms;
+	freq_response_time_ms = sg_policy->freq_response_time_ms;
+	response_time_ms = sg_policy->tunables->response_time_ms;
+
+	if (!static_branch_likely(&response_time_ms_fix_enable) ||
+	    response_time_ms >= freq_response_time_ms) {
+		mult = freq_response_time_ms * SCHED_CAPACITY_SCALE;
+		mult /=	response_time_ms;
+	} else {
+		unsigned int cpu_cap = capacity_orig_of(cpumask_any(sg_policy->policy->cpus));
+		unsigned int new_cap = approximate_util_avg(0, response_time_ms * USEC_PER_MSEC);
+		mult = cpu_cap * SCHED_CAPACITY_SCALE;
+		mult /= new_cap;
+	}
 
 	if (SCHED_WARN_ON(!mult))
 		mult = SCHED_CAPACITY_SCALE;
@@ -1237,6 +1252,21 @@ sugov_update_shared(struct update_util_data *hook, u64 time, unsigned int flags)
 
 		if (sugov_em_profile_changed(sg_cpu->sg_policy))
 			sugov_update_response_time_mult(sg_cpu->sg_policy, true);
+
+		/*
+		 * Force update response_time_ms_mult() if
+		 * response_time_ms_fix_enable changes
+		 */
+		if (!sg_cpu->sg_policy->rtm_fix_enabled &&
+		    static_branch_likely(&response_time_ms_fix_enable)) {
+			sg_cpu->sg_policy->rtm_fix_enabled = true;
+			sugov_update_response_time_mult(sg_cpu->sg_policy, false);
+		}
+		if (sg_cpu->sg_policy->rtm_fix_enabled &&
+		    !static_branch_likely(&response_time_ms_fix_enable)) {
+			sg_cpu->sg_policy->rtm_fix_enabled = false;
+			sugov_update_response_time_mult(sg_cpu->sg_policy, false);
+		}
 
 #if IS_ENABLED(CONFIG_PIXEL_EM_FREQUENCY_SCALING)
 		scaling_freq_update(sg_cpu->sg_policy);

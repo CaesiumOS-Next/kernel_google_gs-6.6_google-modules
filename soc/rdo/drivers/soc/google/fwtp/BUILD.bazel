@@ -26,7 +26,7 @@ ddk_module(
         "fwtp_platform.h",
         "fwtp_printer.h",
         "fwtp_protocol.h",
-        "tracepoint_ring.h",
+        "fwtp_ring.h",
     ],
     includes = ["."],
     kernel_build = "//private/devices/google/common:kernel",

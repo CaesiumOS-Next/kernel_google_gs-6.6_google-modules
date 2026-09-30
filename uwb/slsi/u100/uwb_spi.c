@@ -4,12 +4,15 @@
  *
  */
 
-#include <linux/module.h>
-#include <linux/moduleparam.h>
-#include <linux/mutex.h>
-#include <linux/spi/spi.h>
-#include <linux/ktime.h>
 #include <linux/atomic.h>
+#include <linux/kernel.h>
+#include <linux/ktime.h>
+#include <linux/math64.h>
+#include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/slab.h>
+#include <linux/spi/spi.h>
+#include <linux/string.h>
 
 #include "include/uwb_spi.h"
 

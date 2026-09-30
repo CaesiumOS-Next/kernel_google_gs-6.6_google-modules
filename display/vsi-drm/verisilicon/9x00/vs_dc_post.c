@@ -12,10 +12,6 @@
 #include <linux/pm_runtime.h>
 #include <uapi/linux/sched/types.h>
 
-#if IS_ENABLED(CONFIG_VERISILICON_REGMAP)
-#include <linux/regmap.h>
-#endif
-
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_framebuffer.h>
@@ -476,6 +472,7 @@ static void vs_dc_display_set_mode(struct device *dev, struct drm_crtc *crtc,
 	const struct vs_display_info *display_info;
 	const struct vs_dc_info *dc_info = dc->hw.info;
 
+	DPU_ATRACE_BEGIN("vs_dc_display_set_mode");
 	display.bus_format = crtc_state->output_fmt;
 	display.output_mode = crtc_state->output_mode;
 	display.te_usec = crtc_state->te_usec;
@@ -551,6 +548,7 @@ static void vs_dc_display_set_mode(struct device *dev, struct drm_crtc *crtc,
 	}
 
 	dc_hw_setup_display_mode(&dc->hw, vs_crtc->id, &display);
+	DPU_ATRACE_END("vs_dc_display_set_mode");
 }
 
 static void dc_freq_boost_kwork(struct kthread_work *work)
@@ -591,6 +589,7 @@ static void vs_dc_enable(struct device *dev, struct drm_crtc *crtc,
 	const struct drm_vs_r2y_config *r2y_config = NULL;
 	u8 display_id = to_vs_display_id(dc, crtc);
 	bool need_boost_freq;
+	unsigned long flags;
 
 	DPU_ATRACE_BEGIN(__func__);
 	/*
@@ -617,10 +616,13 @@ static void vs_dc_enable(struct device *dev, struct drm_crtc *crtc,
 	/* enable configuration programming flag */
 	dc_hw_config_display_status(&dc->hw, vs_crtc->id, true);
 
-	dc_hw_enable_frame_irqs(&dc->hw, vs_crtc->id, true);
 	dc_hw_enable_shadow_register(&dc->hw, display_id, false);
 
+	/* Serialize with vblank irq enable to prevent race condition */
+	spin_lock_irqsave(&vs_crtc->vblank_enable_lock, flags);
 	vs_dc_display_set_mode(dev, crtc, state);
+	spin_unlock_irqrestore(&vs_crtc->vblank_enable_lock, flags);
+	dc_hw_enable_frame_irqs(&dc->hw, vs_crtc->id, true);
 
 	vs_qos_set_qos_config(dev, crtc);
 
@@ -1570,6 +1572,54 @@ static void dc_wait_earliest_process_time(struct drm_crtc *crtc, struct drm_atom
 	}
 }
 
+/**
+ * dc_wait_for_prev_commit_done_on_plane_swap() - Waits for pending frames on plane swap.
+ * @dev: The device structure.
+ * @crtc: The DRM CRTC object.
+ * @state: The DRM atomic state.
+ *
+ * This function checks if a plane is being swapped to the given CRTC. If a
+ * plane swap is detected and there are frames pending on the CRTC, it waits
+ * for the pending frames to complete.
+ */
+static void dc_wait_for_prev_commit_done_on_plane_swap(struct device *dev, struct drm_crtc *crtc,
+							struct drm_atomic_state *state)
+{
+	int ret;
+	struct vs_dc *dc = dev_get_drvdata(dev);
+	u8 display_id = to_vs_display_id(dc, crtc);
+	struct vs_crtc *vs_crtc = to_vs_crtc(crtc);
+	const struct drm_crtc_state *old_crtc_state = drm_atomic_get_old_crtc_state(state, crtc);
+	const struct drm_crtc_state *new_crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+	const struct vs_crtc_state *vs_new_crtc_state = to_vs_crtc_state(new_crtc_state);
+
+	if (old_crtc_state && vs_new_crtc_state->swapped_plane_mask &&
+	    atomic_read(&vs_crtc->frames_pending) > 0) {
+		DPU_ATRACE_BEGIN(__func__);
+		trace_disp_commit_wait_begin(display_id, old_crtc_state->plane_mask,
+					     new_crtc_state->plane_mask,
+					     vs_new_crtc_state->swapped_plane_mask,
+					     atomic_read(&vs_crtc->frames_pending));
+		dev_dbg(dev,
+			"plane_swap: wait for pending frame on display-%d, plane_mask %#x %#x, swapped_plane_mask %#x, frames_pending %d\n",
+			display_id, old_crtc_state->plane_mask, new_crtc_state->plane_mask,
+			vs_new_crtc_state->swapped_plane_mask,
+			atomic_read(&vs_crtc->frames_pending));
+
+		ret = wait_event_timeout(vs_crtc->framedone_waitq,
+					 atomic_read(&vs_crtc->frames_pending) == 0,
+					 msecs_to_jiffies(100));
+		if (!ret)
+			dev_warn(dev, "plane_swap: display-%d timed out waiting for frame done\n",
+				 display_id);
+		trace_disp_commit_wait_done(display_id, old_crtc_state->plane_mask,
+					    new_crtc_state->plane_mask,
+					    vs_new_crtc_state->swapped_plane_mask,
+					    atomic_read(&vs_crtc->frames_pending));
+		DPU_ATRACE_END(__func__);
+	}
+}
+
 static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_atomic_state *state)
 {
 	struct vs_dc *dc = dev_get_drvdata(dev);
@@ -1587,11 +1637,14 @@ static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_a
 
 	dc_hw_enable_fe_interrupts(&dc->hw);
 
+	dc_hw_enable_shadow_register(&dc->hw, display_id, false);
 	if (vs_crtc_state->seamless_mode_change) {
 		dev_dbg(vs_crtc->dc_dev, "%s: [%s] seamless mode changed\n", __func__, crtc->name);
+		/* Serialize with vblank irq enable to prevent race condition */
+		spin_lock_irqsave(&vs_crtc->vblank_enable_lock, flags);
 		vs_dc_display_set_mode(dev, crtc, state);
+		spin_unlock_irqrestore(&vs_crtc->vblank_enable_lock, flags);
 	}
-
 	vs_qos_set_qos_config(dev, crtc);
 
 	need_boost_freq = (READ_ONCE(vs_crtc->fboost_state) == VS_FREQ_BOOST_PENDING);
@@ -1600,11 +1653,17 @@ static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_a
 		kthread_queue_work(vs_crtc->fboost_worker, &vs_crtc->fboost_work);
 	}
 
-	dc_hw_enable_shadow_register(&dc->hw, display_id, false);
+	/* Program shadow features */
 	dc_fbc_commit(dc, display_id);
 	dc_hw_plane_commit(&dc->hw, display_id);
 	dc_hw_display_commit(&dc->hw, display_id);
 	dc_hw_wb_commit(&dc->hw, display_id);
+
+	/* Program non-shadow features */
+	dc_wait_for_prev_commit_done_on_plane_swap(dev, crtc, state);
+	dc_hw_plane_commit_non_shadow(&dc->hw, display_id);
+
+	dc_hw_enable_shadow_register(&dc->hw, display_id, true);
 
 	if (need_boost_freq) {
 		WRITE_ONCE(vs_crtc->fboost_state, VS_FREQ_BOOST_RESTORE);
@@ -1619,7 +1678,6 @@ static void vs_dc_commit(struct device *dev, struct drm_crtc *crtc, struct drm_a
 		vs_crtc->event = crtc->state->event;
 		crtc->state->event = NULL;
 	}
-	dc_hw_enable_shadow_register(&dc->hw, display_id, true);
 
 	if (!atomic_add_unless(&vs_crtc->frames_pending, 1, MAX_FRAMES_PENDING_COUNT))
 		dev_warn(dev, "[%s] frames pending overflow\n", crtc->name);

@@ -20,7 +20,7 @@
 
 #include "edgetpu-config.h"
 #include "edgetpu-devfreq.h"
-#include "edgetpu-dma-fence.h"
+#include "edgetpu-coresight-remote.h"
 #include "edgetpu-dt-mailbox-adapter.h"
 #include "edgetpu-firmware.h"
 #include "edgetpu-ikv.h"
@@ -185,6 +185,10 @@ static int edgetpu_mobile_platform_probe(struct platform_device *pdev)
 	if (ret)
 		etdev_warn(etdev, "Failed to create devfreq interface: %d", ret);
 
+	ret = edgetpu_coresight_remote_init(etdev);
+	if (ret)
+		etdev_warn(etdev, "Failed to initialize coresight remote: %d", ret);
+
 	edgetpu_soc_post_power_on_init(etdev);
 
 	/* Turn the device off unless a client request is already received. */
@@ -223,6 +227,7 @@ static void edgetpu_mobile_platform_remove(struct platform_device *pdev)
 
 	edgetpu_fs_remove(etdev);
 	edgetpu_devfreq_destroy(etdev);
+	edgetpu_coresight_remote_exit(etdev);
 	edgetpu_thermal_destroy(etdev);
 	edgetpu_firmware_destroy(etdev);
 	edgetpu_device_remove(etdev);

@@ -242,6 +242,9 @@ static int release_client(struct lwis_client *lwis_client)
 	if (rc)
 		return rc;
 
+	/* Release the allocator and its cache */
+	lwis_allocator_release(lwis_dev);
+
 	/* Take this lwis_client off the list of active clients */
 	spin_lock_irqsave(&lwis_dev->lock, flags);
 	if (check_client_exists(lwis_dev, lwis_client)) {
@@ -281,9 +284,6 @@ static int lwis_release(struct inode *node, struct file *fp)
 	dev_info(lwis_dev->dev, "Closing instance %d\n", iminor(node));
 
 	rc = release_client(lwis_client);
-
-	/* Release the allocator and its cache */
-	lwis_allocator_release(lwis_dev);
 
 	mutex_lock(&lwis_dev->client_lock);
 	/* Release power if client closed without power down called */

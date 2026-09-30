@@ -22,6 +22,16 @@
 static const u32 hist_chan_flags = DC_HW_HISTOGRAM_WDMA;
 static const u32 hist_rgb_flags = DC_HW_HISTOGRAM_WDMA;
 
+bool vs_dc_hist_chan_is_wdma(void)
+{
+	return !!(hist_chan_flags & DC_HW_HISTOGRAM_WDMA);
+}
+
+bool vs_dc_hist_rgb_is_wdma(void)
+{
+	return !!(hist_rgb_flags & DC_HW_HISTOGRAM_WDMA);
+}
+
 /* offset between histogram idx channels */
 #define VS_HIST_IDX_OFFSET (DCREG_PANEL0_HIST1_CONTROL_Address - DCREG_PANEL0_HIST0_CONTROL_Address)
 
@@ -293,7 +303,8 @@ static void vs_dc_hist_chan_commit(struct dc_hw *hw, u8 display_id, struct dc_hw
 		hw_hist_chan->gem_node[VS_HIST_STAGE_CONFIG] = gem_node;
 		if (!gem_node) {
 			spin_unlock_irqrestore(&hw->histogram_slock, flags);
-			dev_err(hw->dev, "unable to get histogram gem_node\n");
+			dev_err(hw->dev, "%s: unable to get histogram gem_node for chan %d\n",
+				__func__, idx);
 			return;
 		}
 	} else {
@@ -358,7 +369,7 @@ static void vs_dc_hist_chan_commit(struct dc_hw *hw, u8 display_id, struct dc_hw
 		dc_write_relaxed(hw, DCREG_PANEL0_HIST0_READ_CONFIRM_Address + offset, rd_confirm);
 
 		/* WDMA configuration */
-		if (hist_chan_flags & DC_HW_HISTOGRAM_WDMA) {
+		if (vs_dc_hist_chan_is_wdma()) {
 			dc_write_relaxed(hw, DCREG_PANEL0_HIST0_WB_ADDRESS_Address + offset,
 				 lower_32_bits(gem_node->paddr));
 			dc_write_relaxed(hw, DCREG_PANEL0_HIST0_WB_HIGH_ADDRESS_Address + offset,
@@ -412,6 +423,65 @@ bool vs_dc_hist_chans_commit(struct dc_hw *hw, u8 display_id)
 	}
 
 	return true;
+}
+
+/*
+ * @brief Reset histogram channels by resetting stage gem node bindings
+ */
+void vs_dc_hist_chans_reset(struct dc_hw *hw, u8 display_id)
+{
+	struct dc_hw_display *display = &hw->display[display_id];
+	struct vs_dc *dc = dev_get_drvdata(hw->dev);
+	struct vs_crtc *vs_crtc = dc->crtc[display_id];
+	struct dc_hw_hist_chan *hw_hist_chan;
+	struct vs_gem_pool *gem_pool;
+	unsigned long flags;
+	int i;
+
+	/* don't process if unsupported */
+	if (!display->info || !display->info->histogram)
+		return;
+
+	spin_lock_irqsave(&hw->histogram_slock, flags);
+	for (i = VS_HIST_CHAN_IDX_0; i < VS_HIST_CHAN_IDX_COUNT; i++) {
+		hw_hist_chan = &display->hw_hist_chan[i];
+		gem_pool = &vs_crtc->hist_chan_gem_pool[i];
+
+		stage_gem_node_release_upto(gem_pool, hw_hist_chan->gem_node, VS_HIST_STAGE_COUNT);
+
+		/* Reset bookkeeping flags */
+		hw_hist_chan->enable = false;
+		hw_hist_chan->dirty = false;
+		hw_hist_chan->changed = false;
+	}
+	spin_unlock_irqrestore(&hw->histogram_slock, flags);
+}
+
+/*
+ * @brief Reset RGB histogram by resetting stage gem node bindings
+ */
+void vs_dc_hist_rgb_reset(struct dc_hw *hw, u8 display_id)
+{
+	struct dc_hw_display *display = &hw->display[display_id];
+	struct vs_dc *dc = dev_get_drvdata(hw->dev);
+	struct vs_crtc *vs_crtc = dc->crtc[display_id];
+	struct dc_hw_hist_rgb *hw_hist_rgb = &display->hw_hist_rgb;
+	struct vs_gem_pool *gem_pool = &vs_crtc->hist_rgb_gem_pool;
+	unsigned long flags;
+
+	/* don't process if unsupported */
+	if (!display->info || !display->info->rgb_hist)
+		return;
+
+	spin_lock_irqsave(&hw->histogram_slock, flags);
+
+	stage_gem_node_release_upto(gem_pool, hw_hist_rgb->gem_node, VS_HIST_STAGE_COUNT);
+
+	/* Reset bookkeeping flags */
+	hw_hist_rgb->enable = false;
+	hw_hist_rgb->dirty = false;
+
+	spin_unlock_irqrestore(&hw->histogram_slock, flags);
 }
 
 /*
@@ -521,7 +591,7 @@ static void vs_dc_hist_chan_collect(struct dc_hw *hw, u8 display_id,
 	/*
 	 * MEMIO: read data
 	 */
-	if (!(hist_chan_flags & DC_HW_HISTOGRAM_WDMA)) {
+	if (!vs_dc_hist_chan_is_wdma()) {
 		if (gem_node) {
 			spin_unlock_irqrestore(&hw->histogram_slock, flags);
 			/* read all bins */
@@ -553,9 +623,12 @@ static void vs_dc_hist_chan_collect(struct dc_hw *hw, u8 display_id,
 
 	spin_unlock_irqrestore(&hw->histogram_slock, flags);
 
-	if (gem_node) {
+	if (!gem_node) {
+		dev_err(hw->dev, "%s: unable to get histogram gem_node for chan %d\n", __func__,
+			idx);
+	} else {
 		/* WDMA: configure next frame */
-		if (hist_chan_flags & DC_HW_HISTOGRAM_WDMA) {
+		if (vs_dc_hist_chan_is_wdma()) {
 			dc_write(hw, DCREG_PANEL0_HIST0_WB_ADDRESS_Address + offset,
 				 lower_32_bits(gem_node->paddr));
 			dc_write(hw, DCREG_PANEL0_HIST0_WB_HIGH_ADDRESS_Address + offset,
@@ -646,7 +719,8 @@ static bool hist_rgb_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const vo
 		hw_hist_rgb->gem_node[VS_HIST_STAGE_CONFIG] = gem_node;
 		if (!gem_node) {
 			spin_unlock_irqrestore(&hw->histogram_slock, flags);
-			dev_err(hw->dev, "unable to get histogram gem_node\n");
+			dev_err(hw->dev, "%s: unable to get histogram gem_node for RGB\n",
+				__func__);
 			return false;
 		}
 	} else {
@@ -669,7 +743,7 @@ static bool hist_rgb_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const vo
 
 
 		/* WDMA configuration */
-		if (hist_rgb_flags & DC_HW_HISTOGRAM_WDMA) {
+		if (vs_dc_hist_rgb_is_wdma()) {
 			dc_write(hw, DCREG_PANEL0_HIST_RGB_WB_ADDRESS_Address,
 				 lower_32_bits(gem_node->paddr));
 			dc_write(hw, DCREG_PANEL0_HIST_RGB_WB_HIGH_ADDRESS_Address,
@@ -765,7 +839,7 @@ static void vs_dc_hist_rgb_collect(struct dc_hw *hw, u8 display_id,
 	/*
 	 * MEMIO: read data
 	 */
-	if (!(hist_rgb_flags & DC_HW_HISTOGRAM_WDMA)) {
+	if (!vs_dc_hist_rgb_is_wdma()) {
 		if (gem_node) {
 			spin_unlock_irqrestore(&hw->histogram_slock, flags);
 			u32 offset = DCREG_PANEL0_HIST_RED_BIN_RESULT_Address;
@@ -802,8 +876,10 @@ static void vs_dc_hist_rgb_collect(struct dc_hw *hw, u8 display_id,
 	spin_unlock_irqrestore(&hw->histogram_slock, flags);
 
 	/* WDMA: configure next frame */
-	if (gem_node) {
-		if (hist_rgb_flags & DC_HW_HISTOGRAM_WDMA) {
+	if (!gem_node) {
+		dev_err(hw->dev, "%s: unable to get histogram gem_node for RGB\n", __func__);
+	} else {
+		if (vs_dc_hist_rgb_is_wdma()) {
 			dc_write(hw, DCREG_PANEL0_HIST_RGB_WB_ADDRESS_Address,
 				 lower_32_bits(gem_node->paddr));
 			dc_write(hw, DCREG_PANEL0_HIST_RGB_WB_HIGH_ADDRESS_Address,

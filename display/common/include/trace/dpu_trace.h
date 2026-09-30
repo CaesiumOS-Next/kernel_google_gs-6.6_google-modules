@@ -138,7 +138,7 @@ TRACE_EVENT(tracing_mark_write,
 		__entry->type, __entry->pid, __get_str(name), __entry->value)
 );
 
-TRACE_EVENT(disp_dpu_underrun,
+DECLARE_EVENT_CLASS(dpu_underrun,
 	TP_PROTO(int id, int frames_pending, int vsync_count),
 	TP_ARGS(id, frames_pending, vsync_count),
 	TP_STRUCT__entry(
@@ -153,6 +153,18 @@ TRACE_EVENT(disp_dpu_underrun,
 	),
 	TP_printk("id: %d frames_pending: %d vsync_count: %d",
 		__entry->id, __entry->frames_pending, __entry->vsync_count)
+);
+
+/* frame-based underrun */
+DEFINE_EVENT(dpu_underrun, disp_dpu_underrun,
+	TP_PROTO(int id, int frames_pending, int vsync_count),
+	TP_ARGS(id, frames_pending, vsync_count)
+);
+
+/* scanline-based underrun */
+DEFINE_EVENT(dpu_underrun, disp_dpu_line_underrun,
+	TP_PROTO(int id, int frames_pending, int vsync_count),
+	TP_ARGS(id, frames_pending, vsync_count)
 );
 
 TRACE_EVENT(disp_vblank_irq_enable,

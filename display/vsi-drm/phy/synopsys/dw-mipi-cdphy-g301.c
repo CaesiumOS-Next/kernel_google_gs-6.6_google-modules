@@ -10,20 +10,28 @@
  */
 
 #include <linux/clk.h>
-#include <linux/module.h>
-#include <linux/platform_device.h>
-#include <linux/phy/phy.h>
-#include <linux/slab.h>
-#include <linux/iopoll.h>
 #include <linux/debugfs.h>
+#include <linux/iopoll.h>
+#include <linux/module.h>
+#include <linux/phy/phy.h>
+#include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
+
+#include <drm/drm_print.h>
 
 #include <gs_drm/gs_reg_dump.h>
+#include <gs_drm/gs_sscd.h>
 #include <trace/dpu_trace.h>
 
-#include "dw-mipi-cdphy-g301.h"
 #include <drm/phy/dw_mipi_cdphy_op.h>
+#include <drm/phy/dw_mipi_cdphy_sscd.h>
+#include <drm/sscd/gs_sscd_dpu.h>
+
+#include "dw-mipi-cdphy-g301.h"
 
 struct debugfs_entries {
 	const char		*name;
@@ -2942,6 +2950,7 @@ int cdphy_init_g301(struct dw_mipi_cdphy *cdphy)
 	}
 
 	cdphy_g301->tx_reg_size = resource_size(mem);
+	cdphy_g301->tx_phys_addr = mem->start;
 	cdphy_g301->base = devm_ioremap_resource(dev, mem);
 	if (IS_ERR(cdphy_g301->base)) {
 		pr_err("%s: Failed to remap the memory.\n", __func__);
@@ -2964,6 +2973,7 @@ int cdphy_init_g301(struct dw_mipi_cdphy *cdphy)
 	}
 
 	cdphy_g301->u0_apb_reg_size = resource_size(mem);
+	cdphy_g301->u0_apb_phys_addr = mem->start;
 	cdphy_g301->u0_apb_regbank = devm_ioremap_resource(dev, mem);
 	if (IS_ERR(cdphy_g301->u0_apb_regbank)) {
 		pr_err("%s: Failed to remap the memory.\n", __func__);
@@ -3020,3 +3030,145 @@ int cdphy_remove_g301(struct dw_mipi_cdphy *cdphy)
 
 	return 0;
 }
+
+static ssize_t _get_cdphy_sscd_regdump(const char *name, void __iomem *base, u32 size,
+				       const struct regmap_access_table *access_table, char *buffer,
+				       ssize_t count)
+{
+	struct drm_print_iterator iter;
+	struct drm_printer p;
+
+	iter.data = buffer;
+	iter.start = 0;
+	iter.remain = count;
+
+	p = drm_coredump_printer(&iter);
+
+	gs_reg_dump_with_skips(name, base, 0, size, &p, access_table);
+
+	return count - iter.remain;
+}
+
+static ssize_t get_cdphy_sscd_regdump(const char *name, void __iomem *base, u32 size,
+				      const struct regmap_access_table *access_table,
+				      char **regdump_buf)
+{
+	ssize_t count;
+
+	count = _get_cdphy_sscd_regdump(name, base, size, access_table, NULL, INT_MAX);
+	if (count <= 0) {
+		*regdump_buf = NULL;
+		return count;
+	}
+
+	*regdump_buf = vmalloc(count);
+	if (!*regdump_buf)
+		return -ENOMEM;
+
+	_get_cdphy_sscd_regdump(name, base, size, access_table, *regdump_buf, count);
+
+	return count;
+}
+
+static int cdphy_append_regdump_section(struct sscd_payload *payload, const char *name,
+					const char *dump_name, void __iomem *base, u32 size,
+					u64 phys_addr, const struct regmap_access_table *table)
+{
+	char *buf = NULL;
+	ssize_t dump_size;
+
+	dump_size = get_cdphy_sscd_regdump(name, base, size, table, &buf);
+	if (dump_size > 0) {
+		display_sscd_configure_phys_hexdump_section(&payload->cfgs[payload->num_cfgs++],
+							    dump_name, buf, phys_addr, dump_size);
+		return 0;
+	}
+
+	kvfree(buf);
+	return dump_size < 0 ? dump_size : 0;
+}
+
+int dw_mipi_cdphy_sscd_prepare(struct phy *phy, struct sscd_payload *payload)
+{
+	struct dw_mipi_cdphy *cdphy = phy_get_drvdata(phy);
+	struct dw_mipi_cdphy_g301 *cdphy_g301;
+	struct device *dev;
+	int ret = 0;
+	int i;
+
+	if (!cdphy || !payload)
+		return -EINVAL;
+
+	cdphy_g301 = cdphy->cdphy_priv_data;
+	if (!cdphy_g301)
+		return -ENODEV;
+
+	dev = &cdphy->pdev->dev;
+
+	ret = pm_runtime_get_if_in_use(dev);
+	if (ret < 0) {
+		dev_err(dev, "Failed to check power status for PHY SSCD, ret %d\n", ret);
+		goto out;
+	} else if (ret == 0) {
+		dev_dbg(dev, "Device is powered OFF, skipping PHY SSCD\n");
+		payload->cfgs = NULL;
+		payload->num_cfgs = 0;
+		goto out;
+	}
+
+	payload->cfgs = kcalloc(2, sizeof(*payload->cfgs), GFP_KERNEL);
+	if (!payload->cfgs) {
+		ret = -ENOMEM;
+		goto out_put;
+	}
+
+	ret = cdphy_append_regdump_section(payload, "CDPHY-TX", "CDPHY-TX reg dump",
+					   cdphy_g301->base, cdphy_g301->tx_reg_size,
+					   cdphy_g301->tx_phys_addr, &cdphy_dump_reg_access_table);
+	if (ret < 0)
+		goto out_free;
+
+	ret = cdphy_append_regdump_section(payload, "U0-APB", "U0-APB reg dump",
+					   cdphy_g301->u0_apb_regbank, cdphy_g301->u0_apb_reg_size,
+					   cdphy_g301->u0_apb_phys_addr,
+					   &apb_dump_reg_access_table);
+	if (ret < 0)
+		goto out_free;
+
+	if (payload->num_cfgs == 0) {
+		kfree(payload->cfgs);
+		payload->cfgs = NULL;
+	}
+
+	goto out_put;
+
+out_free:
+	for (i = 0; i < payload->num_cfgs; i++)
+		kvfree(payload->cfgs[i].virt_addr);
+	kfree(payload->cfgs);
+	payload->cfgs = NULL;
+	payload->num_cfgs = 0;
+out_put:
+	pm_runtime_put(dev);
+out:
+	return ret;
+}
+EXPORT_SYMBOL_GPL(dw_mipi_cdphy_sscd_prepare);
+
+int dw_mipi_cdphy_sscd_destroy(struct phy *phy, struct sscd_payload *payload)
+{
+	int i;
+
+	if (!payload || !payload->cfgs)
+		return 0;
+
+	for (i = 0; i < payload->num_cfgs; i++)
+		kvfree(payload->cfgs[i].virt_addr);
+
+	kfree(payload->cfgs);
+	payload->cfgs = NULL;
+	payload->num_cfgs = 0;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(dw_mipi_cdphy_sscd_destroy);

@@ -2,7 +2,7 @@
 /*
  * Compatibility layer to find mailboxes in the device tree and allocate edgetpu_mailboxes for them.
  *
- * Copyright (C) 2025 Google LLC
+ * Copyright (C) 2025-2026 Google LLC
  */
 
 #include <linux/of_platform.h>
@@ -10,6 +10,7 @@
 
 #include "edgetpu-config.h"
 #include "edgetpu-dt-mailbox-adapter.h"
+#include "edgetpu-firmware-metadata.h"
 #include "edgetpu-mailbox.h"
 
 /* Mailbox index for kernel control interface */
@@ -21,37 +22,44 @@
 /* Mailbox index for Inter-IP Fence signaling mailbox, if enabled */
 #define IIF_MAILBOX_INDEX 2
 
-static const char *const dt_phandle = "tpu-mailboxes";
 static const char *const dt_reg_names[] = { "kci_mailbox", "vii_mailbox", "iif_mailbox" };
 
 void edgetpu_dt_mailbox_adapter_init_regs_offset_from_top(struct edgetpu_dev *etdev)
 {
-	struct device_node *node = of_parse_phandle(etdev->dev->of_node, dt_phandle, 0);
+	struct platform_device *pdev = to_platform_device(etdev->dev);
+	struct resource *reg_resource =
+		platform_get_resource_byname(pdev, IORESOURCE_MEM, dt_reg_names[0]);
 
 	/*
 	 * If mailboxes are specified in the device-tree, etdev->regs starts at the first ext
 	 * mailbox instead of the start of TPU_TOP. CSR accesses will need to subtract the offset
 	 * of the first ext mailbox to get the address it's actually trying to reach.
 	 */
-	if (node)
+	if (reg_resource)
 		etdev->regs_offset_from_top =
 			edgetpu_mailbox_get_context_csr_base(EDGETPU_EXT_MAILBOX_START);
 	else
 		etdev->regs_offset_from_top = 0;
-
-	of_node_put(node);
 }
 
 /*
  * Helper function to allocate and initialize a specific mailbox based on its index.
  */
+#if EDGETPU_USE_CMF
+static struct edgetpu_mailbox *dedicated_mailbox(struct edgetpu_dev *etdev, uint idx)
+{
+	struct edgetpu_firmware_metadata *meta = edgetpu_firmware_metadata(etdev);
+
+	return edgetpu_mailbox_alloc(etdev, &meta->queue_metadata[idx], idx);
+}
+
+#else
 static struct edgetpu_mailbox *dedicated_mailbox(struct edgetpu_dev *etdev, uint idx)
 {
 	static void __iomem *csr_bases[] = { 0, 0, 0 };
 	static int irqs[] = { 0, 0, 0 };
-	struct device_node *node;
 	struct platform_device *pdev;
-	struct resource *r;
+	struct resource *reg_resource;
 	void __iomem *csr_base;
 	int irq;
 	int ret = 0;
@@ -62,27 +70,15 @@ static struct edgetpu_mailbox *dedicated_mailbox(struct edgetpu_dev *etdev, uint
 		goto alloc_mailbox;
 	}
 
-	node = of_parse_phandle(etdev->dev->of_node, dt_phandle, 0);
-	if (node) {
-		pdev = of_find_device_by_node(node);
-		if (!pdev) {
-			ret = -ENODEV;
-			etdev_err(etdev, "%s node was found but device was not", dt_phandle);
-			goto put_node;
-		}
+	pdev = to_platform_device(etdev->dev);
 
-		r = platform_get_resource_byname(pdev, IORESOURCE_MEM, dt_reg_names[idx]);
-		if (!r) {
-			ret = -ENODEV;
-			etdev_err(etdev, "failed to get regs for %s: %d", dt_reg_names[idx], ret);
-			goto put_device;
-		}
-
-		csr_base = devm_ioremap_resource(etdev->dev, r);
+	reg_resource = platform_get_resource_byname(pdev, IORESOURCE_MEM, dt_reg_names[idx]);
+	if (reg_resource) {
+		csr_base = devm_ioremap_resource(etdev->dev, reg_resource);
 		if (IS_ERR(csr_base)) {
 			ret = PTR_ERR(csr_base);
 			etdev_err(etdev, "failed to map %s: %d", dt_reg_names[idx], ret);
-			goto put_device;
+			return ERR_PTR(ret);
 		}
 
 		irq = platform_get_irq_byname(pdev, dt_reg_names[idx]);
@@ -95,21 +91,10 @@ static struct edgetpu_mailbox *dedicated_mailbox(struct edgetpu_dev *etdev, uint
 		 */
 		csr_bases[idx] = csr_base;
 		irqs[idx] = irq;
-
-put_device:
-		/*
-		 * References to the pdev/node are not needed.
-		 * The `regs` and `interrupts` properties will not change.
-		 */
-		put_device(&pdev->dev);
-put_node:
-		of_node_put(node);
-		if (ret)
-			return ERR_PTR(ret);
 	} else {
 		/*
-		 * If no device-tree node for the mailbox is found, assume the platform is still
-		 * including all mailboxes in the TPU regs entry.
+		 * If no reg entry for the mailbox is found, assume the platform is still including
+		 * all mailboxes in the TPU_TOP reg entry.
 		 */
 		csr_base = etdev->regs.mem + edgetpu_mailbox_get_context_csr_base(idx);
 		irq = platform_get_irq(to_platform_device(etdev->dev), idx);
@@ -123,6 +108,8 @@ put_node:
 alloc_mailbox:
 	return edgetpu_mailbox_alloc(etdev, csr_base, irq, idx);
 }
+
+#endif /* EDGETPU_USE_CMF */
 
 struct edgetpu_mailbox *edgetpu_mailbox_kci(struct edgetpu_dev *etdev)
 {
@@ -168,5 +155,5 @@ void __iomem *edgetpu_mailbox_get_ext_csr_base(struct edgetpu_dev *etdev, uint i
 	 * offset.
 	 */
 	return etdev->regs.mem - etdev->regs_offset_from_top +
-		edgetpu_mailbox_get_context_csr_base(idx);
+	       edgetpu_mailbox_get_context_csr_base(idx);
 }

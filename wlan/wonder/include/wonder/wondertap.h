@@ -12,6 +12,7 @@
 
 #include <linux/errno.h>
 #include <linux/if_ether.h>
+#include <linux/ieee80211.h>
 
 #define WONDERTAP_VHT_NSS_MAX   8
 #define WONDERTAP_HE_NSS_MAX    8
@@ -112,6 +113,68 @@ struct channel_schedule_request {
 	 * @brief List of channel parameters to visit.
 	 */
 	struct wondertap_channel_list_params *channel_list;
+};
+
+/**
+ * @brief Represents the status and statistics of a visited channel.
+ */
+struct wondertap_channel_status {
+	/**
+	 * @brief Target switch time TSF of this channel switch.
+	 */
+	u32 channel_switch_tsf;
+
+	/**
+	 * @brief Channel frequency in MHz.
+	 */
+	u32 freq;
+
+	/**
+	 * @brief TSF timestamp when the channel was actually switched to and started operating.
+	 */
+	u32 channel_start_tsf;
+
+	/**
+	 * @brief TSF timestamp when the channel operation ended.
+	 */
+	u32 channel_end_tsf;
+
+	/**
+	 * @brief A normalized value ranging from 0 to 100
+	 * that represents TX channel utilization during this channel slot.
+	 */
+	u16 tx_traffic_index;
+
+	/**
+	 * @brief A normalized value ranging from 0 to 100
+	 * that represents RX channel utilization during this channel slot.
+	 */
+	u16 rx_traffic_index;
+};
+
+/**
+ * @brief Parameters for channel status report.
+ */
+struct wondertap_channel_status_report {
+	/**
+	 * @brief TSF timestamp of the current channel hopping request.
+	 */
+	u32 current_channel_hopping_request_tsf;
+
+	/**
+	 * @brief Index of the current channel in the channel hopping list.
+	 */
+	u32 current_channel_index;
+
+	/**
+	 * @brief Number of elements in the status array.
+	 */
+	u32 channel_status_len;
+
+	/**
+	 * @brief Variable-length array of channel status entries.
+	 */
+	struct wondertap_channel_status status[];
 };
 
 /** @brief Defines the Guard Interval (GI). */
@@ -340,8 +403,15 @@ struct wondertap_capability {
 			u32 frame_type_filter: 1;
 			/* @brief Channel hopping is supported. */
 			u32 channel_hopping: 1;
+			/* @brief High Band Simultaneous is supported. */
+			u32 hbs_support: 1;
+			/*
+			 * @brief Maximum number of supported spatial streams (NSS).
+			 * 0: not support, 1: 1NSS, 2: 2NSS, etc.
+			 */
+			u32 nss: 4;
 			/* @brief Reserved for future use. Must be 0. */
-			u32 reserved: 18;
+			u32 reserved: 13;
 		} bits;
 	};
 
@@ -350,6 +420,65 @@ struct wondertap_capability {
 	 *	      jumping to the new channel lists.
 	 */
 	u32 maximum_channel_switch_time_us;
+};
+
+/**
+ * @brief Enumeration of station capabilities.
+ *
+ * Defines the supported PHY capabilities for a station, used to construct
+ * the capability_mask in wondertap_station_info.
+ */
+enum wondertap_station_capability {
+	/** High Throughput (802.11n) capability */
+	WONDERTAP_STATION_CAP_HT,
+	/** Very High Throughput (802.11ac) capability */
+	WONDERTAP_STATION_CAP_VHT,
+	/** High Efficiency (802.11ax) capability */
+	WONDERTAP_STATION_CAP_HE,
+	/** High Efficiency 6GHz capability */
+	WONDERTAP_STATION_CAP_HE_6G,
+	WONDERTAP_STATION_CAP_MAX
+};
+
+/**
+ * @brief Enumeration of actions for station management.
+ */
+enum wondertap_station_action {
+	/* Add a new station */
+	WONDERTAP_STATION_STATE_NEW,
+	/* Update an existing station */
+	WONDERTAP_STATION_STATE_UPDATE,
+	/* Delete a station */
+	WONDERTAP_STATION_STATE_DEL,
+	/* Query station information */
+	WONDERTAP_STATION_STATE_QUERY,
+	WONDERTAP_STATION_MAX
+};
+
+/**
+ * @brief Station information parameters.
+ *
+ * Contains the details of a station being added or updated in the vendor driver.
+ */
+struct wondertap_station_info {
+	/* Association ID (AID) of the station */
+	u16 aid;
+	/* The station's MAC address */
+	u8 mac[ETH_ALEN];
+	/* Bitmask of supported capabilities (from wondertap_station_capability) */
+	u32 capability_mask;
+	/* HT capabilities, if supported */
+	struct ieee80211_ht_cap ht_capa;
+	/* VHT capabilities, if supported */
+	struct ieee80211_vht_cap vht_capa;
+	/* HE capabilities, if supported */
+	struct ieee80211_he_cap_elem he_capa;
+	/* Length of the HE capabilities element */
+	u8 he_capa_len;
+	/* Pad to 4-byte alignment */
+	u8 reserved[3];
+	/* HE 6GHz capabilities, if supported */
+	struct ieee80211_he_6ghz_capa he_6ghz_capa;
 };
 
 /** @brief Initialization parameters passed from the core to the vendor driver. */
@@ -544,6 +673,25 @@ struct wondertap_ops {
 	 * Return: 0 on success, negative error code.
 	 */
 	int (*get_mac_tsf)(void *handle, u32 *mac_tsf);
+
+	/**
+	 * @brief Schedules a channel switch request.
+	 * @param handle The driver instance handle.
+	 * @param get A pointer to the channel status report.
+	 * @return 0 on success, negative error code.
+	 */
+	int (*get_channel_status_report)(void *handle,
+		struct wondertap_channel_status_report *report);
+
+	/**
+	 * @brief Adds, updates, or removes station information in the vendor driver.
+	 * @param handle The driver instance handle.
+	 * @param action The action to perform on the station (NEW, UPDATE, or DEL).
+	 * @param info A pointer to the station information structure.
+	 * @return 0 on success, negative error code on failure.
+	 */
+	int (*set_station_info)(void *handle, const enum wondertap_station_action action,
+		struct wondertap_station_info *info);
 };
 
 /**
@@ -562,6 +710,9 @@ enum wondertap_ver {
 	WONDER_VERSION_1_5_1,
 	WONDER_VERSION_1_6_1,
 	WONDER_VERSION_1_6_2 = WONDER_VERSION_1_6_1,
+	WONDER_VERSION_1_6_3 = WONDER_VERSION_1_6_1,
+	WONDER_VERSION_1_6_4,
+	WONDER_VERSION_1_6_5,
 	WONDER_VERSION_MAX,
 };
 

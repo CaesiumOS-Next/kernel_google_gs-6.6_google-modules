@@ -423,6 +423,9 @@ enum nan_pairing_bs_role {
 /* attr_hdr(3)+dialog_token(1)+type_status(1)+ reason_code(1)+method(2) */
 #define NAN_NPBA_ATTR_MIN_LEN           8u
 
+/* attr_hdr(3) */
+#define SDEA_INFO_LEN_FIELD_SIZE	3u
+
 #define NAN_PAIRING_FUP_TOKEN		190u
 
 enum nan_pairing_states {

@@ -19,12 +19,16 @@
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 
 #include <video/mipi_display.h>
 #include <video/videomode.h>
 
+/* internal */
 #include <drm/bridge/dw_mipi_dsi2h.h>
 #include <drm/phy/dw_mipi_cdphy_op.h>
+#include <drm/sscd/gs_sscd_dpu.h>
+/* kernel common */
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
@@ -38,9 +42,11 @@
 #include <gs_drm/gs_drm_connector.h>
 #include <gs_drm/gs_fault_event.h>
 #include <gs_drm/gs_reg_dump.h>
+#include <gs_drm/gs_sscd.h>
 #include <trace/dpu_trace.h>
 
 #include "dw-mipi-dsi2h.h"
+#include "dw-mipi-dsi2h-sscd.h"
 #include "gs_panel/dcs_helper.h"
 
 #define DSI2H_AUTOSUPEND_DELAY_MS 20
@@ -61,7 +67,17 @@
 #define DW_PRI_BTA_REQUEST		6
 #define DW_PRI_TRIGGERS_READ		7
 
-#define DW_DSI2H_CRI_DATA_AVAIL_INTERVAL_US 500
+#define DW_DSI2H_CRI_BUSY_INTERVAL_US 50
+#define DW_DSI2H_CRI_BUSY_TIMEOUT_US 25000
+#define DW_DSI2H_PRI_BUSY_INTERVAL_US 50
+#define DW_DSI2H_PRI_BUSY_TIMEOUT_US 25000
+#define DW_DSI2H_PRI_RECEIVE_INTERVAL_US 50
+#define DW_DSI2H_PRI_RECEIVE_TIMEOUT_US 1000
+#define DW_DSI2H_REQUESTED_MODE_INTERVAL_US 50
+#define DW_DSI2H_REQUESTED_MODE_TIMEOUT_US 1000
+#define DW_DSI2H_AUTO_CALC_INTERVAL_US 50
+#define DW_DSI2H_AUTO_CALC_TIMEOUT_US (500 * 1000)
+#define DW_DSI2H_CRI_DATA_AVAIL_INTERVAL_US 50
 #define DW_DSI2H_CRI_DATA_AVAIL_TIMEOUT_US 50000
 #define DW_DSI2H_CORE_STATUS_INTERVAL_US 500
 #define DW_DSI2H_CORE_STATUS_TIMEOUT_US 25000
@@ -402,8 +418,10 @@ static int dw_dsi2h_wait_core_idle(struct dw_mipi_dsi2h *dsi2h)
 {
 	u32 val = 0;
 
+	DPU_ATRACE_BEGIN("Polling Core Busy");
 	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val, !val,
 				 DW_DSI2H_CORE_STATUS_INTERVAL_US, DW_DSI2H_CORE_STATUS_TIMEOUT_US);
+	DPU_ATRACE_END("Polling Core Busy");
 
 	return val;
 }
@@ -414,8 +432,10 @@ static int dw_dsi2h_wait_pri_not_busy(struct dw_mipi_dsi2h *dsi2h)
 	u32 val = 0;
 	u32 is_busy;
 
-	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
-				 !(val & PRI_BUSY), 50, 25000);
+	DPU_ATRACE_BEGIN("Polling PRI Busy");
+	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val, !(val & PRI_BUSY),
+				 DW_DSI2H_PRI_BUSY_INTERVAL_US, DW_DSI2H_PRI_BUSY_TIMEOUT_US);
+	DPU_ATRACE_END("Polling PRI Busy");
 	is_busy = val & PRI_BUSY;
 	if (unlikely(is_busy && dsi2h->stat_data))
 		dsi2h->stat_data[ST_PRI_BUSY]++;
@@ -665,8 +685,10 @@ static int dw_dsi2h_pri_receive_triggers(struct dw_mipi_dsi2h *dsi2h)
 {
 	u32 val = 0;
 
-	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
-				(val & PRI_RX_DATA_AVAIL), 100, 1000);
+	DPU_ATRACE_BEGIN("Polling PRI Receive");
+	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val, (val & PRI_RX_DATA_AVAIL),
+				 DW_DSI2H_PRI_RECEIVE_INTERVAL_US, DW_DSI2H_PRI_RECEIVE_TIMEOUT_US);
+	DPU_ATRACE_END("Polling PRI Receive");
 
 	if (!(val & PRI_RX_DATA_AVAIL)) {
 		dev_err(dsi2h->dev, "PRI RX Data Available didn't assert!\n");
@@ -707,8 +729,10 @@ static int dw_dsi2h_wait_cri_not_busy(struct dw_mipi_dsi2h *dsi2h)
 	u32 val = 0;
 	u32 is_busy;
 
-	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
-				 !(val & CRI_BUSY), 400, 25000);
+	DPU_ATRACE_BEGIN("Polling CRI Busy");
+	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val, !(val & CRI_BUSY),
+				 DW_DSI2H_CRI_BUSY_INTERVAL_US, DW_DSI2H_CRI_BUSY_TIMEOUT_US);
+	DPU_ATRACE_END("Polling CRI Busy");
 	is_busy = val & CRI_BUSY;
 	if (unlikely(is_busy && dsi2h->stat_data))
 		dsi2h->stat_data[ST_CRI_BUSY]++;
@@ -731,12 +755,14 @@ static int dw_dsi2h_cri_rd_data_avail(struct dw_mipi_dsi2h *dsi2h)
 	int ret;
 	u32 val = 0;
 
+	DPU_ATRACE_BEGIN("Polling CRI read data");
 	ret = regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_CORE_STATUS, val,
 				       (val & CRI_RD_DATA_AVAIL),
 				       DW_DSI2H_CRI_DATA_AVAIL_INTERVAL_US,
 				       DW_DSI2H_CRI_DATA_AVAIL_TIMEOUT_US);
 	if (unlikely(ret))
 		dev_err(dsi2h->dev, "Polling CRI read data failed: %d\n", ret);
+	DPU_ATRACE_END("Polling CRI read data");
 
 	return val & CRI_RD_DATA_AVAIL;
 }
@@ -1095,6 +1121,18 @@ static ssize_t dw_mipi_dsi2h_host_transfer(struct mipi_dsi_host *host,
 	ret = _dw_mipi_dsi2h_host_transfer(dsi2h, msg);
 	if (ret < 0)
 		dev_err(dsi2h->dev, "DSI message transfer failed: %d\n", ret);
+
+	if (msg->rx_len > 0 && dsi2h->suppress_dsi_errors) {
+		unsigned long irq_flags;
+
+		spin_lock_irqsave(&dsi2h->spinlock_dsi, irq_flags);
+		if (dsi2h->suppress_dsi_errors) {
+			dev_dbg(dsi2h->dev,
+				"Terminated DSI error suppression window after first read\n");
+			dsi2h->suppress_dsi_errors = false;
+		}
+		spin_unlock_irqrestore(&dsi2h->spinlock_dsi, irq_flags);
+	}
 
 	if (dsi2h_pre_state == DSI2H_STATE_ULPS || dsi2h_pre_state == DSI2H_STATE_PENDING_ULPS ||
 	    dsi2h_pre_state == DSI2H_STATE_SUSPEND) {
@@ -1584,6 +1622,33 @@ static void dw_irq_status(struct dw_mipi_dsi2h *dsi2h)
 	}
 }
 
+/**
+ * dw_dsi2h_suppress_errors_workaround() - Suppress DSI errors after handoff.
+ * @dsi2h: DSI host structure.
+ *
+ * Clears errors detected immediately following bootloader handoff;
+ * specifically, the first instance of Peripheral Timeout error and
+ * DSI Protocol Violation errors that occur during the first dcs read.
+ *
+ * Reference: b/501228404
+ */
+static void dw_dsi2h_suppress_errors_workaround(struct dw_mipi_dsi2h *dsi2h)
+{
+	if (unlikely(dsi2h->suppress_dsi_errors)) {
+		if (!(dsi2h->int_cntrs.cntr_int_err_ack_rpt_5 ||
+		      dsi2h->int_cntrs.cntr_int_err_ack_rpt_15))
+			return;
+
+		dev_warn(dsi2h->dev,
+			 "Suppressing errs (Peripheral Timeout:%llu DSI Protocol Violation:%llu)\n",
+			 dsi2h->int_cntrs.cntr_int_err_ack_rpt_5,
+			 dsi2h->int_cntrs.cntr_int_err_ack_rpt_15);
+		dsi2h->int_cntrs.cntr_int_err_ack_rpt_5 = 0;
+		dsi2h->int_cntrs.cntr_int_err_ack_rpt_15 = 0;
+
+		dsi2h->suppress_dsi_errors = false;
+	}
+}
 static void update_int_cntrs(struct dw_mipi_dsi2h *dsi2h, struct drm_connector_state *conn_state)
 {
 	unsigned long flags = 0;
@@ -1617,6 +1682,7 @@ static irqreturn_t dw_irq_callback(int irq, void *data)
 
 	spin_lock_irqsave(&dsi2h->spinlock_dsi, flags);
 	dw_irq_status(dsi2h);
+	dw_dsi2h_suppress_errors_workaround(dsi2h);
 	spin_unlock_irqrestore(&dsi2h->spinlock_dsi, flags);
 
 	return IRQ_HANDLED;
@@ -1643,8 +1709,9 @@ static int dw_opt_mode_select(struct dw_mipi_dsi2h *dsi2h,
 	dw_dsi2h_write_field(dsi2h->field_mode_ctrl, mode);
 
 	/* Step 2 - Controller in requested mode? */
-	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_MODE_STATUS, val,
-				(val == mode), 100, 1000);
+	regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_MODE_STATUS, val, (val == mode),
+				 DW_DSI2H_REQUESTED_MODE_INTERVAL_US,
+				 DW_DSI2H_REQUESTED_MODE_TIMEOUT_US);
 	if (val != mode)
 		return -EAGAIN;
 
@@ -1663,10 +1730,13 @@ static int dw_opt_mode_select(struct dw_mipi_dsi2h *dsi2h,
 		ktime_t end;
 		s64 time_auto_calc_us;
 
+		DPU_ATRACE_BEGIN("mode select auto calculate");
 		start = ktime_get();
-		regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_MODE_STATUS, val,
-				(val == IDLE_MODE), 100, 500 * 1000 /* 500ms covers emulator */);
+		regmap_read_poll_timeout(dsi2h->regs, DW_DSI2H_MODE_STATUS, val, (val == IDLE_MODE),
+					 DW_DSI2H_AUTO_CALC_INTERVAL_US,
+					 DW_DSI2H_AUTO_CALC_TIMEOUT_US /* 500ms covers emulator */);
 		end = ktime_get();
+		DPU_ATRACE_END("mode select auto calculate");
 		time_auto_calc_us = ktime_us_delta(end, start);
 
 		if (val != IDLE_MODE)
@@ -2530,6 +2600,30 @@ static const struct file_operations dsi_errors_fops = {
 	.write = dsi_errors_store,
 };
 
+static ssize_t coredump_trigger_store(struct file *file, const char __user *user_buf, size_t count,
+				      loff_t *ppos)
+{
+	struct dw_mipi_dsi2h *dsi2h = file->private_data;
+	bool trigger;
+	int ret;
+
+	ret = kstrtobool_from_user(user_buf, count, &trigger);
+	if (ret)
+		return ret;
+
+	if (trigger && dsi2h->coredump_funcs && dsi2h->coredump_funcs->trigger_coredump) {
+		dsi2h->coredump_funcs->trigger_coredump(dsi2h->bridge.dev, dsi2h->vdev,
+							"Manual core dump");
+	}
+
+	return count;
+}
+
+static const struct file_operations coredump_trigger_fops = {
+	.open = simple_open,
+	.write = coredump_trigger_store,
+};
+
 static int dw_mipi_dsi2h_debugfs_init(struct dw_mipi_dsi2h *dsi2h)
 {
 	dsi2h->debugfs = debugfs_create_dir(dev_name(dsi2h->dev), NULL);
@@ -2542,6 +2636,8 @@ static int dw_mipi_dsi2h_debugfs_init(struct dw_mipi_dsi2h *dsi2h)
 	debugfs_create_bool("force_set_hs_clk", 0644, dsi2h->debugfs, &dsi2h->force_set_datarate);
 	debugfs_create_bool("disable_psr_ulps", 0644, dsi2h->debugfs, &dsi2h->disable_psr_ulps);
 	debugfs_create_file("dsi_errors", 0644, dsi2h->debugfs, dsi2h, &dsi_errors_fops);
+	debugfs_create_file("coredump_trigger", 0200, dsi2h->debugfs, dsi2h,
+			    &coredump_trigger_fops);
 
 	return 0;
 }
@@ -2994,6 +3090,7 @@ static struct dw_mipi_dsi2h *__dw_mipi_dsi2h_probe(struct platform_device *pdev,
 	}
 
 	dw_dsi2h->reg_size = resource_size(mem);
+	dw_dsi2h->phys_addr = mem->start;
 	dw_dsi2h->base = devm_ioremap_resource(dev, mem);
 	if (IS_ERR(dw_dsi2h->base)) {
 		dev_err(dev, "Failed to map io resources: %ld\n", PTR_ERR(dw_dsi2h->base));
@@ -3041,6 +3138,7 @@ static struct dw_mipi_dsi2h *__dw_mipi_dsi2h_probe(struct platform_device *pdev,
 	dw_dsi2h->mipi_fifo_hdr_used = 0;
 	dw_dsi2h->mipi_fifo_pld_used = 0;
 	dw_dsi2h->dynamic_hs_clk_en = pdata->dynamic_hs_clk_en;
+	dw_dsi2h->suppress_dsi_errors = true;
 
 	spin_lock_init(&dw_dsi2h->spinlock_dsi);
 	mutex_init(&dw_dsi2h->dsi2h_lock);
@@ -3166,9 +3264,15 @@ int dw_mipi_dsi2h_remove(void *handle)
 }
 EXPORT_SYMBOL_GPL(dw_mipi_dsi2h_remove);
 
-int dw_mipi_dsi2h_bind(void *handle, struct drm_encoder *encoder)
+int dw_mipi_dsi2h_bind(void *handle, struct drm_encoder *encoder, struct sscd_funcs *coredump_funcs)
 {
 	struct dw_mipi_dsi2h *dsi2h = handle;
+
+	if (coredump_funcs) {
+		coredump_funcs->sscd_payload_prepare = dsi_sscd_payload_prepare;
+		coredump_funcs->sscd_payload_destroy = dsi_sscd_payload_destroy;
+		dsi2h->coredump_funcs = coredump_funcs;
+	}
 
 	return drm_bridge_attach(encoder, &dsi2h->bridge, NULL, 0);
 }
@@ -3178,6 +3282,20 @@ void dw_mipi_dsi2h_unbind(void *handle)
 {
 }
 EXPORT_SYMBOL_GPL(dw_mipi_dsi2h_unbind);
+
+bool is_dw_mipi_dsi2h_bridge(struct drm_bridge *bridge)
+{
+	return bridge && bridge->funcs == &dw_mipi_dsi2h_bridge_funcs;
+}
+EXPORT_SYMBOL_GPL(is_dw_mipi_dsi2h_bridge);
+
+struct device *dw_mipi_dsi2h_get_device(struct drm_bridge *bridge)
+{
+	struct dw_mipi_dsi2h *dsi2h = bridge_to_dsi(bridge);
+
+	return dsi2h->vdev;
+}
+EXPORT_SYMBOL_GPL(dw_mipi_dsi2h_get_device);
 
 MODULE_DESCRIPTION("DW MIPI DSI2 Host Controller Driver");
 MODULE_LICENSE("GPL");

@@ -49,13 +49,6 @@ config VERISILICON_MIPI_DSI2H
 	  Choose this option to add support for MIPI DSI using Verisilicon
 	  display controller along with Synopsis MIPI DSI2 Host.
 
-config VERISILICON_REGMAP
-	bool "Adds support for VeriSilicon REGMAP"
-	depends on CONFIG_REGMAP
-	help
-	  Choose this option to add support bulk register read/write using
-	  VeriSilicon REGMAP for 9x00 series, otherwise, say N.
-
 config VERISILICON_DISPLAYPORT
 	bool "Enables DisplayPort encoder driver"
 	default y if DWC_DPTX

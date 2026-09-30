@@ -72,8 +72,10 @@ enum iif_ip_type {
 	IIF_IP_TPU,
 	IIF_IP_GPU,
 	IIF_IP_AP,
-	IIF_IP_IRIS,
+	IIF_IP_IRIS_CORE_0,
 	IIF_IP_AOC,
+	IIF_IP_IRIS_CORE_1,
+	IIF_IP_IRIS_CORE_2,
 	IIF_IP_NUM,
 
 	/* Reserve the number of IP type to expand the fence table easily in the future. */
@@ -91,6 +93,16 @@ enum iif_signal_table_flag_bits {
 	 * signals becomes 0.
 	 */
 	IIF_SIGNAL_TABLE_FLAG_ERROR_BIT,
+	/*
+	 * The fence behaves like it has infinite timeline by wrapping around. The fence will be
+	 * unblocked at every single signal (i.e., will be unblocked at every timelines).
+	 *
+	 * Note that if this flag is set, the fence won't have timeout and registering sync points
+	 * will be invalid.
+	 *
+	 * This flag is meaningful only if the fence is reusable.
+	 */
+	IIF_SIGNAL_TABLE_FLAG_CIRCULAR_REUSABLE_BIT,
 	/* We cannot define more than 8 flags. */
 	IIF_SIGNAL_TABLE_FLAG_MAX_BIT = 8,
 };

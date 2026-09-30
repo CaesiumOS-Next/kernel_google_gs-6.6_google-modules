@@ -49,6 +49,7 @@ void g2d_qos_init(struct device *dev, struct g2d_device *g2d_device)
 	g2d_device->icc_path = google_devm_of_icc_get(dev, "sswrp-g2d");
 	if (IS_ERR_OR_NULL(g2d_device->icc_path)) {
 		dev_err(dev, "failed to get icc path: %ld\n", PTR_ERR(g2d_device->icc_path));
+		g2d_device->icc_path = NULL;
 	} else {
 		of_property_read_u32(dev->of_node, "min-rd-avg-bw",
 				     &g2d_device->min_qos_config.rd_avg_bw_mbps);

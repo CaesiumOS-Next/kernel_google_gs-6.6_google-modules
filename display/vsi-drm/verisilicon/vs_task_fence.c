@@ -16,6 +16,7 @@
 #include <linux/sync_file.h>
 
 #include "uapi/drm/vs_drm.h"
+#include "vs_task_fence.h"
 
 /**
  * struct vs_task_fence - simple fence to assist user space task to sync with

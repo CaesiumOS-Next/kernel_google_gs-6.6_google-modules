@@ -9158,9 +9158,13 @@ init_dhd_timeouts(dhd_pub_t *pub)
 	} else {
 		DHD_INFO(("Initializing dhd_timeouts\n"));
 		pub->timeout_info->scan_timer_lock = osl_spin_lock_init(pub->osh);
+		OSL_LOCK_CLASS_SET(pub->timeout_info->scan_timer_lock);
 		pub->timeout_info->join_timer_lock = osl_spin_lock_init(pub->osh);
+		OSL_LOCK_CLASS_SET(pub->timeout_info->join_timer_lock);
 		pub->timeout_info->bus_timer_lock = osl_spin_lock_init(pub->osh);
+		OSL_LOCK_CLASS_SET(pub->timeout_info->bus_timer_lock);
 		pub->timeout_info->cmd_timer_lock = osl_spin_lock_init(pub->osh);
+		OSL_LOCK_CLASS_SET(pub->timeout_info->cmd_timer_lock);
 		pub->timeout_info->scan_timeout_val = SCAN_TIMEOUT_DEFAULT;
 		pub->timeout_info->join_timeout_val = JOIN_TIMEOUT_DEFAULT;
 		pub->timeout_info->cmd_timeout_val = CMD_TIMEOUT_DEFAULT;
@@ -10453,6 +10457,14 @@ dhd_tput_test(dhd_pub_t *dhd, tput_test_t *tput_data)
 		err_exit = BCME_BUSY;
 		goto exit_error;
 	}
+
+	if (tput_data->payload_size < TPUT_TEST_MIN_PAYLOAD_SIZE) {
+		DHD_ERROR(("%s: min payload size is %u !\n", __FUNCTION__,
+			TPUT_TEST_MIN_PAYLOAD_SIZE));
+		err_exit = BCME_BADOPTION;
+		goto exit_error;
+	}
+
 #ifdef PCIE_FULL_DONGLE
 	/*
 	 * 100 bytes to accommodate ether header and tput header. As of today

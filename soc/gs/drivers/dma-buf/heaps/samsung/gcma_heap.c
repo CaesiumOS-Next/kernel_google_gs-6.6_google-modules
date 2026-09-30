@@ -6,6 +6,7 @@
 
 #include <linux/device.h>
 #include <linux/dma-buf.h>
+#include <linux/kernel.h>
 #include <linux/dma-heap.h>
 #include <linux/err.h>
 #include <linux/genalloc.h>
@@ -17,12 +18,14 @@
 #include <linux/platform_device.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
+#include <linux/sizes.h>
 #include <linux/pfn.h>
 #include <soc/google/gcma.h>
 
 #include "samsung-dma-heap.h"
 #include "gcma_heap.h"
 #include "gcma_heap_sysfs.h"
+#include "gcma_arbitrator.h"
 
 #define BASE_GFP (GFP_HIGHUSER | __GFP_ZERO | __GFP_COMP)
 #define LIGHT_EFFORT_GFP  ((BASE_GFP | __GFP_NOWARN | __GFP_NORETRY) & ~__GFP_RECLAIM)
@@ -43,7 +46,98 @@
 
 static const unsigned int buddy_pages_orders[] = {
 	ORDER_2M, ORDER_1M, ORDER_64K, ORDER_FOR_PAGE_SIZE};
-static const unsigned int gcma_pages_orders[] = {ORDER_64K};
+static const gfp_t buddy_pages_flags[] = {
+	LIGHT_EFFORT_GFP, LIGHT_EFFORT_GFP, LIGHT_EFFORT_GFP, HARD_EFFORT_GFP};
+static const unsigned int gcma_pages_orders[] = {
+	ORDER_2M, ORDER_1M, ORDER_64K};
+
+static int param_set_min_gcma_dmabuf_kb(const char *val, const struct kernel_param *kp)
+{
+	unsigned long threshold_kb;
+	int ret;
+
+	ret = kstrtoul(val, 0, &threshold_kb);
+	if (ret)
+		return ret;
+
+	/* Validate input: limit threshold to 128MB (128 * 1024 KB) to prevent unreasonable settings. */
+	if (threshold_kb > 128 * SZ_1K)
+		return -EINVAL;
+
+	*(unsigned long *)kp->arg = threshold_kb * SZ_1K;
+	return 0;
+}
+
+static int param_get_min_gcma_dmabuf_kb(char *buffer, const struct kernel_param *kp)
+{
+	unsigned long bytes = *(unsigned long *)kp->arg;
+
+	return sysfs_emit(buffer, "%lu\n", bytes / SZ_1K);
+}
+
+static const struct kernel_param_ops min_gcma_dmabuf_kb_ops = {
+	.set = param_set_min_gcma_dmabuf_kb,
+	.get = param_get_min_gcma_dmabuf_kb,
+};
+
+static unsigned long min_gcma_dmabuf_bytes = 512 * SZ_1K;
+module_param_cb(min_gcma_dmabuf_kb, &min_gcma_dmabuf_kb_ops, &min_gcma_dmabuf_bytes, 0644);
+MODULE_PARM_DESC(min_gcma_dmabuf_kb, "Minimum size in KB to attempt GCMA allocation");
+
+#define MAX_SKIP_HEAPS 5
+#define MAX_HEAP_NAME_LEN 32
+static char skip_heaps[MAX_SKIP_HEAPS][MAX_HEAP_NAME_LEN];
+static int num_skip_heaps;
+
+static int param_set_skip_heaps(const char *val, const struct kernel_param *kp)
+{
+	char *str, *orig_str;
+	char *p;
+	int i = 0;
+
+	if (!val)
+		return -EINVAL;
+
+	orig_str = kstrdup(val, GFP_KERNEL);
+	if (!orig_str)
+		return -ENOMEM;
+
+	str = orig_str;
+	num_skip_heaps = 0;
+
+	while ((p = strsep(&str, ",")) != NULL && i < MAX_SKIP_HEAPS) {
+		if (*p == '\0')
+			continue;
+		strscpy(skip_heaps[i], p, sizeof(skip_heaps[i]));
+		i++;
+	}
+	num_skip_heaps = i;
+
+	kfree(orig_str);
+	return 0;
+}
+
+static int param_get_skip_heaps(char *buffer, const struct kernel_param *kp)
+{
+	char local_buf[256] = "";
+	int i;
+
+	for (i = 0; i < num_skip_heaps; i++) {
+		strcat(local_buf, skip_heaps[i]);
+		if (i < num_skip_heaps - 1)
+			strcat(local_buf, ",");
+	}
+
+	return sysfs_emit(buffer, "%s\n", local_buf);
+}
+
+static const struct kernel_param_ops gcma_skip_heaps_ops = {
+	.set = param_set_skip_heaps,
+	.get = param_get_skip_heaps,
+};
+
+module_param_cb(gcma_skip_heaps, &gcma_skip_heaps_ops, NULL, 0444);
+MODULE_PARM_DESC(gcma_skip_heaps, "Comma-separated list of heap names to skip probing (max 5)");
 
 struct heap_pages {
   struct list_head pages_list;
@@ -72,12 +166,11 @@ static inline bool page_is_gcma(struct page *page)
 
 struct page *gcma_alloc(struct gcma_heap *gcma_heap, unsigned long size)
 {
-	struct gen_pool *pool = gcma_heap->pool;
 	phys_addr_t paddr;
 	unsigned long pfn;
 	struct page *page = NULL;
 
-	paddr = gen_pool_alloc(pool, size);
+	paddr = gcma_arbitrator_alloc(gcma_heap->arb, size);
 	if (!paddr)
 		return NULL;
 
@@ -95,14 +188,14 @@ struct page *gcma_alloc(struct gcma_heap *gcma_heap, unsigned long size)
 	return page;
 }
 
-void gcma_free(struct gen_pool *pool, struct page *page)
+void gcma_free(struct gcma_heap *gcma_heap, struct page *page)
 {
 	unsigned long size, pfn;
 
 	size = gcma_get_size(page);
 	pfn = page_to_pfn(page);
 	gcma_free_range(pfn, pfn + (size >> PAGE_SHIFT) - 1);
-	gen_pool_free(pool, page_to_phys(page), size);
+	gcma_arbitrator_free(gcma_heap->arb, page_to_phys(page), size);
 }
 
 static void free_gcma_heap_page(struct gcma_heap *gcma_heap, struct page *page)
@@ -111,19 +204,19 @@ static void free_gcma_heap_page(struct gcma_heap *gcma_heap, struct page *page)
 		return;
 
 	if (page_is_gcma(page)) {
-		gcma_free(gcma_heap->pool, page);
+		gcma_free(gcma_heap, page);
 		dec_gcma_heap_stat(gcma_heap, USAGE, gcma_get_size(page));
 	} else {
 		unsigned int order = compound_order(page);
 		__free_pages(page, order);
 		dma_heap_dec_inuse(1 << order);
+		dec_gcma_heap_stat(gcma_heap, BUDDY, PAGE_SIZE << order);
 	}
 }
 
 /*
- * 1. Try all orders(higher to lower) with light effort
- * 2. Try GCMA allocation
- * 3. Try order-0 page with hard effort.
+ * 1. Try GCMA allocation
+ * 2. Try Buddy allocator (light effort for high orders, hard for order-0)
  */
 static struct page *alloc_largest_available(struct gcma_heap *gcma_heap,
 					    unsigned long size,
@@ -132,30 +225,38 @@ static struct page *alloc_largest_available(struct gcma_heap *gcma_heap,
 	struct page *page = NULL;
 	int i;
 
+	if (size >= min_gcma_dmabuf_bytes) {
+		for (i = 0; i < ARRAY_SIZE(gcma_pages_orders); i++) {
+			unsigned long gcma_size = PAGE_SIZE << gcma_pages_orders[i];
+
+			if (size < gcma_size)
+				continue;
+
+			page = gcma_alloc(gcma_heap, gcma_size);
+			if (page)
+				goto out;
+		}
+	}
+
 	for (i = 0; i < ARRAY_SIZE(buddy_pages_orders); i++) {
 		unsigned long buddy_size = PAGE_SIZE << buddy_pages_orders[i];
+		gfp_t flags = buddy_pages_flags[i];
+
 		if (size < buddy_size && i != ARRAY_SIZE(buddy_pages_orders) - 1)
 			continue;
 		if (max_order < buddy_pages_orders[i])
 			continue;
 
-		page = alloc_pages(LIGHT_EFFORT_GFP, buddy_pages_orders[i]);
-		if (page)
+		if (flags == HARD_EFFORT_GFP)
+			inc_gcma_heap_stat(gcma_heap, ALLOCSTALL,
+					   PAGE_SIZE << buddy_pages_orders[i]);
+
+		page = alloc_pages(flags, buddy_pages_orders[i]);
+		if (page) {
+			inc_gcma_heap_stat(gcma_heap, BUDDY, PAGE_SIZE << buddy_pages_orders[i]);
 			goto out;
+		}
 	}
-
-	for (i = 0; i < ARRAY_SIZE(gcma_pages_orders); i++) {
-		unsigned long gcma_size = PAGE_SIZE << gcma_pages_orders[i];
-		if (size < gcma_size && i != ARRAY_SIZE(gcma_pages_orders) - 1)
-			continue;
-
-		page = gcma_alloc(gcma_heap, gcma_size);
-		if (page)
-			goto out;
-	}
-
-	page = alloc_pages(HARD_EFFORT_GFP, 0);
-	inc_gcma_heap_stat(gcma_heap, ALLOCSTALL, PAGE_SIZE);
 out:
 	if (page && !page_is_gcma(page))
 		dma_heap_inc_inuse(1 << compound_order(page));
@@ -195,7 +296,8 @@ static int allocate_flexible_pages(struct gcma_heap *gcma_heap, unsigned long le
 			size_remaining = 0;
 		else
 			size_remaining -= allocated_size;
-		max_order = page_is_gcma(page) ? max_order : compound_order(page);
+		if (!page_is_gcma(page))
+			max_order = compound_order(page);
 		count++;
 	}
 	heap_pages->count = count;
@@ -340,38 +442,43 @@ static void gcma_heap_release(struct samsung_dma_buffer *buffer)
 static const struct dma_heap_ops gcma_heap_ops = {
 	.allocate = gcma_heap_allocate,
 };
+static void gcma_arbitrator_destroy_action(void *data)
+{
+	gcma_arbitrator_destroy(data);
+}
+
 
 static int gcma_heap_probe(struct platform_device *pdev)
 {
 	struct gcma_heap *gcma_heap;
-	struct reserved_mem *rmem;
-	struct device_node *rmem_np;
+	const char *heap_name;
 	bool is_secure_heap;
 	int ret;
+	int i;
 
-	rmem_np = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
-	if (!rmem_np)
-		return -ENODEV;
+	if (of_property_read_string(pdev->dev.of_node, "dma-heap,name", &heap_name))
+		heap_name = pdev->name;
 
-	rmem = of_reserved_mem_lookup(rmem_np);
-	if (!rmem) {
-		perrdev(&pdev->dev, "memory-region handle not found");
-		return -ENODEV;
+	for (i = 0; i < num_skip_heaps; i++) {
+		if (strcmp(heap_name, skip_heaps[i]) == 0 ||
+		    strcmp(pdev->name, skip_heaps[i]) == 0) {
+			dev_info(&pdev->dev, "Skipping heap %s as requested\n", heap_name);
+			return 0;
+		}
 	}
 
 	gcma_heap = devm_kzalloc(&pdev->dev, sizeof(*gcma_heap), GFP_KERNEL);
 	if (!gcma_heap)
 		return -ENOMEM;
 
-	ret = register_gcma_area(rmem->name, rmem->base, rmem->size);
-	if (ret)
-		return ret;
+	gcma_heap->dev = &pdev->dev;
+	gcma_heap->arb = gcma_arbitrator_create(gcma_heap);
+	if (IS_ERR(gcma_heap->arb)) {
+		perrdev(&pdev->dev, "Failed to create GCMA arbitrator\n");
+		return PTR_ERR(gcma_heap->arb);
+	}
 
-	gcma_heap->pool = devm_gen_pool_create(&pdev->dev, PAGE_SHIFT, -1, 0);
-	if (!gcma_heap->pool)
-		return -ENOMEM;
-
-	ret = gen_pool_add(gcma_heap->pool, rmem->base, rmem->size, -1);
+	ret = devm_add_action_or_reset(&pdev->dev, gcma_arbitrator_destroy_action, gcma_heap->arb);
 	if (ret)
 		return ret;
 

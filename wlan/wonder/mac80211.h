@@ -20,5 +20,7 @@ int wonder_debugfs_init(void *data);
 void wonder_debugfs_exit(void);
 int wonder_features_init(struct wonder_data *wonder);
 void wonder_features_exit(struct wonder_data *wonder);
+extern struct ieee80211_supported_band wonder_band_5ghz;
+extern struct ieee80211_supported_band wonder_band_2ghz;
 
 #endif /* __WONDER_MAC80211_H__ */

@@ -58,6 +58,7 @@ struct vs_writeback_connector *vs_writeback_create(const struct dc_hw_wb *hw_wb,
 void vs_writeback_handle_vblank(struct vs_writeback_connector *vs_wb_connector);
 
 struct drm_writeback_connector *find_wb_connector(struct drm_crtc *crtc);
+bool vs_writeback_is_active(const struct drm_device *dev);
 
 static inline struct vs_writeback_connector *
 to_vs_writeback_connector(struct drm_writeback_connector *wb_connector)

@@ -101,6 +101,12 @@ void pixelmd_client_enable_source(struct pixelmd_client *client, enum pixelmd_so
 }
 EXPORT_SYMBOL_GPL(pixelmd_client_enable_source);
 
+bool pixelmd_clients_source_is_enabled(enum pixelmd_source source)
+{
+	return atomic_read(&pixelmd_clients.source_enable_counts[source]) != 0;
+}
+EXPORT_SYMBOL_GPL(pixelmd_clients_source_is_enabled);
+
 static int device_fop_open(struct inode *inode, struct file *file)
 {
 	struct pixelmd_client *client;

@@ -2,7 +2,7 @@
 /*
  * GCIP Mailbox Ops for the in-kernel VII mailbox
  *
- * Copyright (C) 2024-2025 Google LLC
+ * Copyright (C) 2024-2026 Google LLC
  */
 
 #include <linux/atomic.h>
@@ -139,11 +139,6 @@ static u64 edgetpu_ikv_get_resp_elem_seq(struct gcip_mailbox *mailbox, void *res
 	return edgetpu_vii_response_get_seq_number(resp);
 }
 
-static void edgetpu_ikv_set_resp_elem_seq(struct gcip_mailbox *mailbox, void *resp, u64 seq)
-{
-	edgetpu_vii_response_set_seq_number(resp, seq);
-}
-
 static int edgetpu_ikv_wait_for_cmd_queue_not_full(struct gcip_mailbox *mailbox)
 {
 	struct edgetpu_ikv *ikv = gcip_mailbox_get_data(mailbox);
@@ -232,7 +227,7 @@ static int edgetpu_ikv_after_enqueue_cmd(struct gcip_mailbox *mailbox, void *cmd
 {
 	struct edgetpu_ikv *ikv = gcip_mailbox_get_data(mailbox);
 
-	EDGETPU_MAILBOX_CMD_QUEUE_WRITE_SYNC(ikv->mbx_hardware, doorbell_set, 1);
+	edgetpu_mailbox_trigger_cmd_queue_doorbell_sync(ikv->mbx_hardware);
 
 	return 0;
 }
@@ -246,7 +241,7 @@ static void edgetpu_ikv_after_fetch_resps(struct gcip_mailbox *mailbox, u32 num_
 	 * which might be waiting us to consume the response queue.
 	 */
 	if (num_resps >= size / 2)
-		EDGETPU_MAILBOX_CMD_QUEUE_WRITE(ikv->mbx_hardware, doorbell_set, 1);
+		edgetpu_mailbox_trigger_cmd_queue_doorbell(ikv->mbx_hardware);
 }
 
 const struct gcip_mailbox_ops ikv_mailbox_ops = {
@@ -263,7 +258,6 @@ const struct gcip_mailbox_ops ikv_mailbox_ops = {
 	.acquire_rx_queue_lock = edgetpu_ikv_acquire_resp_queue_lock,
 	.release_rx_queue_lock = edgetpu_ikv_release_resp_queue_lock,
 	.get_resp_elem_seq = edgetpu_ikv_get_resp_elem_seq,
-	.set_resp_elem_seq = edgetpu_ikv_set_resp_elem_seq,
 	.wait_for_tx_queue_not_full = edgetpu_ikv_wait_for_cmd_queue_not_full,
 	.before_enqueue_wait_list = edgetpu_ikv_before_enqueue_wait_list,
 	.after_enqueue_cmd = edgetpu_ikv_after_enqueue_cmd,

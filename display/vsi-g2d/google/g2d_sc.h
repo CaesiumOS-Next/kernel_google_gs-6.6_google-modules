@@ -17,7 +17,7 @@ struct g2d_sc {
 	struct g2d_writeback_connector *writeback[NUM_PIPELINES];
 	struct sc_hw hw;
 
-	unsigned int irq_num;
+	int irq_num;
 	int *irqs;
 	atomic_t frame_done[NUM_PIPELINES];
 	bool requires_reset;

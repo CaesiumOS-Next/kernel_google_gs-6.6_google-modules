@@ -64,3 +64,12 @@ properties:
       Overwrite power domain's resume_noirq callback, so when kernel resume flow
       is triggered and a device driver is being resumed its power domain is not
       automatically turned on, which is the default linux behaviour.
+
+  google,boot-stay-on:
+    description:
+      If present, the power domain will stay on during boot. All power off and
+      power on requests will be ignored (no-op) until the sync-state callback
+      is triggered, which clears this flag. It can cause the device to be
+      unnecessarily powered on after sync_state is called, until next request
+      resynchronizes HW and SW state of the domain.
+    type: boolean

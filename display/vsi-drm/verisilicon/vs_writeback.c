@@ -23,6 +23,7 @@
 #include "vs_dc_info.h"
 #include "vs_dc.h"
 #include "vs_writeback.h"
+#include "vs_drv.h"
 #include "vs_dc_drm_property.h"
 #include "vs_trace.h"
 #include "trace/dpu_trace.h"
@@ -173,7 +174,7 @@ static void wb_connector_atomic_destroy_state(struct drm_connector *connector,
 	kfree(vs_wb_state);
 }
 
-void wb_connector_destroy(struct drm_connector *connector)
+static void wb_connector_destroy(struct drm_connector *connector)
 {
 	struct drm_writeback_connector *drm_wb = drm_connector_to_writeback(connector);
 	struct vs_writeback_connector *vs_wb = to_vs_writeback_connector(drm_wb);
@@ -485,4 +486,24 @@ struct drm_writeback_connector *find_wb_connector(struct drm_crtc *crtc)
 		wb_connector = drm_connector_to_writeback(connector);
 
 	return wb_connector;
+}
+
+/**
+ * vs_writeback_is_active() - Check if writeback is active in hardware.
+ * @dev: The DRM device structure.
+ *
+ * This function scans all writeback connectors to check if any of them have
+ * frames currently in flight in the hardware.
+ *
+ * Return: true if writeback is active in hardware, false otherwise.
+ */
+bool vs_writeback_is_active(const struct drm_device *dev)
+{
+	struct vs_drm_private *priv = dev->dev_private;
+	struct vs_dc *dc = dev_get_drvdata(priv->dc_dev);
+
+	if (!dc)
+		return false;
+
+	return dc_hw_writeback_is_active(&dc->hw);
 }

@@ -1374,6 +1374,8 @@ void gbms_tier_stats_init(struct gbms_ce_tier_stats *stats, int8_t idx)
 	stats->vtier_idx = idx;
 	stats->temp_idx = -1;
 	stats->soc_in = -1;
+	stats->temp_min = GBMS_TIER_TEMP_MIN_DEFAULT;
+	stats->temp_max = GBMS_TIER_TEMP_MAX_DEFAULT;
 }
 EXPORT_SYMBOL_GPL(gbms_tier_stats_init);
 

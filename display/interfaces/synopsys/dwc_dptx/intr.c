@@ -12,7 +12,6 @@
 #include "clock_mng.h"
 #include "video_bridge.h"
 #include "api/api.h"
-#include "phy/phy_n621.h"
 #include "regmaps/ctrl_fields.h"
 #include "intr.h"
 
@@ -445,7 +444,7 @@ static int handle_test_link_audio_pattern(struct dptx *dptx)
 
 	dptx_audio_num_ch_change(dptx);
 	dptx_audio_samp_freq_config(dptx);
-	dptx_audio_infoframe_sdp_send(dptx);
+	dptx_audio_infoframe_sdp_en(dptx, 1);
 
 	return retval;
 }
@@ -1022,7 +1021,7 @@ out:
 	return crtc_active;
 }
 
-int handle_hotunplug_core(struct dptx *dptx)
+int handle_hotunplug_core(struct dptx *dptx, bool hpd_irq)
 {
 	int retval;
 	struct ctrl_regfields *ctrl_fields = dptx->ctrl_fields;
@@ -1030,6 +1029,8 @@ int handle_hotunplug_core(struct dptx *dptx)
 
 	if (!dptx->link.trained)
 		return 0;
+
+	dptx->hpd_irq_unplug_running = hpd_irq;
 
 	if (!dptx->link_test_mode) {
 		bool crtc_active;
@@ -1074,7 +1075,9 @@ int handle_hotunplug_core(struct dptx *dptx)
 	for (int i = 0; i < num_lanes; i++)
 		google_dpphy_pipe_tx_eq_set(dptx->dp_phy, i, 0, 0);
 	google_dpphy_eq_tune_ovrd_enable(dptx->dp_phy, num_lanes, false);
+
 	dptx->link.trained = false;
+	dptx->hpd_irq_unplug_running = false;
 
 	return 0;
 }
@@ -1084,7 +1087,7 @@ int handle_hotunplug(struct dptx *dptx)
 	int retval;
 	struct ctrl_regfields *ctrl_fields = dptx->ctrl_fields;
 
-	handle_hotunplug_core(dptx);
+	handle_hotunplug_core(dptx, false);
 
 	/* Move PHY to P3 state */
 	dptx_write_regfield(dptx, ctrl_fields->field_phy_powerdown, 3);
@@ -1188,11 +1191,33 @@ static const u8 dptx_fake_edid[EDID_LENGTH] = {
 	0x0, 0x8d
 };
 
+static int dptx_hfeeodb_block_count(const u8 *cta)
+{
+	// check CTA Extension Block's tag and revision
+	if (cta[0] != CEA_EXT || cta[1] < 3)
+		return 0;
+
+	/* check DTD offset
+	 * Byte 0 - 3: Tag, Revision, DTD offset and Flags
+	 * Byte 4 - 6: HF-EEODB data
+	 */
+	if (cta[2] < 7)
+		return 0;
+
+	// check HF-EEODB data
+	if ((cta[4] >> 5) != EDID_EEODB_TAG || (cta[4] & 0x1f) < 2 ||
+	    cta[5] != EDID_EEODB_EXT_TAG)
+		return 0;
+
+	return cta[6];
+}
+
 static int dptx_read_edid(struct dptx *dptx)
 {
 	int i;
 	int retval = 0;
 	unsigned int ext_blocks = 0;
+	int eeodb = 0;
 
 	dptx_dbg_link(dptx, "--- START EDID READ ---\n");
 	memset(dptx->edid, 0, DPTX_DEFAULT_EDID_BUFLEN);
@@ -1213,6 +1238,18 @@ static int dptx_read_edid(struct dptx *dptx)
 		dptx_dbg_link(dptx, "Extended EDID Blocks: %d\n", ext_blocks);
 	}
 
+	if (ext_blocks >= 1) {
+		retval = dptx_read_edid_block(dptx, 1);
+		if (retval)
+			goto fail;
+
+		eeodb = dptx_hfeeodb_block_count(&dptx->edid[1 * EDID_LENGTH]);
+		if (eeodb > 0 && eeodb <= 10) {
+			dptx_dbg(dptx, "eeodb = %d\n", eeodb);
+			ext_blocks = eeodb;
+		}
+	}
+
 	dptx->edid_size = (1 + ext_blocks) * EDID_LENGTH;
 
 	if (dptx->edid_size > DPTX_DEFAULT_EDID_BUFLEN) {
@@ -1222,12 +1259,12 @@ static int dptx_read_edid(struct dptx *dptx)
 			retval = -ENOMEM;
 			goto fail;
 		}
-		memcpy(new_edid, dptx->edid, EDID_LENGTH);
+		memcpy(new_edid, dptx->edid, 2 * EDID_LENGTH);
 		kfree(dptx->edid);
 		dptx->edid = new_edid;
 	}
 
-	for (i = 1; i <= ext_blocks; i++) {
+	for (i = 2; i <= ext_blocks; i++) {
 		dptx_dbg(dptx, "Read EDID Block %d\n", i);
 		retval = dptx_read_edid_block(dptx, i);
 		if (retval)
@@ -1994,24 +2031,39 @@ static void dptx_parse_edid_audio_data_block(struct dptx *dptx)
 	u8 tag, size;
 	u8 edid_block1[128];
 	int i, index;
+	u8 offset;
+
+	if (!dptx->edid_second)
+		return;
 
 	for (i = 0; i < 128; i++)
 		edid_block1[i] = dptx->edid_second[i];
 
-	byte = edid_block1[4];
-	index = 4;
-	tag = (byte & EDID_TAG_MASK) >> EDID_TAG_SHIFT;
-	size = (byte & EDID_SIZE_MASK) >> EDID_SIZE_SHIFT;
-
-	/* find the audio tag  containing byte */
-	while (tag != AUDIO_TAG) {
-		size = (byte & EDID_SIZE_MASK) >> EDID_SIZE_SHIFT;
-		index = index + size + 1;
-		byte = dptx->edid_second[index];
-		tag = (byte & EDID_TAG_MASK) >> EDID_TAG_SHIFT;
+	// check CTA Extension Block's tag
+	if (edid_block1[0] != CEA_EXT) {
+		dptx_dbg(dptx, "Not a CEA extension block\n");
+		return;
 	}
 
-	dptx_fill_audio_short_desc(dptx, index);
+	// check DTD offset
+	offset = edid_block1[2];
+	if (offset < 4 || offset > 127)
+		return;
+
+	// find the AUDIO_TAG before the DTD
+	index = 4;
+	while (index < offset) {
+		byte = edid_block1[index];
+		tag = (byte & EDID_TAG_MASK) >> EDID_TAG_SHIFT;
+		size = (byte & EDID_SIZE_MASK) >> EDID_SIZE_SHIFT;
+
+		if (tag == AUDIO_TAG) {
+			dptx_fill_audio_short_desc(dptx, index);
+			return;
+		}
+
+		index += size + 1;
+	}
 }
 
 static int dptx_config_audio_based_on_edid(struct dptx *dptx)
@@ -2136,7 +2188,7 @@ static int dptx_config_audio_based_on_edid(struct dptx *dptx)
 
 	dptx_audio_num_ch_change(dptx);
 	dptx_audio_samp_freq_config(dptx);
-	dptx_audio_infoframe_sdp_send(dptx);
+	dptx_audio_infoframe_sdp_en(dptx, 1);
 
 	return retval;
 }
@@ -2281,6 +2333,21 @@ int handle_hotplug(struct dptx *dptx)
 			dptx->stats.sink_count_invalid_failures++;
 			return -EINVAL;
 		}
+
+		/* Force MST capable branch device to SST mode */
+		retval = dptx_read_dpcd(dptx, DP_MSTM_CAP, &byte);
+		if (retval == 0) {
+			dptx_info(dptx, "DP Branch Device: MST_CAP = %d\n", byte);
+			if (byte & DP_MST_CAP) {
+				/* MST_EN = 0, UP_REQ_EN = 0, UPSTREAM_IS_SRC = 1 */
+				dptx_write_dpcd(dptx, DP_MSTM_CTRL, DP_UPSTREAM_IS_SRC);
+				/* Use HPD IRQs for upstream notifications */
+				dptx_write_dpcd(dptx, DP_BRANCH_DEVICE_CTRL,
+						DP_BRANCH_DEVICE_IRQ_HPD);
+			}
+		} else {
+			dptx_warn(dptx, "DP Branch Device: cannot read DP_MSTM_CAP\n");
+		}
 	} else {
 		dptx->branch_dev = false;
 		dptx->dfp_count = 0;
@@ -2360,6 +2427,22 @@ static bool dp_fec;
 module_param(dp_fec, bool, 0664);
 MODULE_PARM_DESC(dp_fec, "Enable/disable DP FEC");
 
+static bool dp_ssc = true;
+module_param(dp_ssc, bool, 0664);
+MODULE_PARM_DESC(dp_ssc, "Enable/disable DP SSC");
+
+static bool dp_link_test_mode;
+module_param(dp_link_test_mode, bool, 0664);
+MODULE_PARM_DESC(dp_link_test_mode, "Enable/disable DP link test mode");
+
+static bool dp_link_test_force_cr;
+module_param(dp_link_test_force_cr, bool, 0664);
+MODULE_PARM_DESC(dp_link_test_force_cr, "Force DP link training CR to pass");
+
+static bool dp_link_test_force_cheq;
+module_param(dp_link_test_force_cheq, bool, 0664);
+MODULE_PARM_DESC(dp_link_test_force_cheq, "Force DP link training CHEQ to pass");
+
 int handle_hotplug_core(struct dptx *dptx)
 {
 	u8 byte;
@@ -2371,6 +2454,17 @@ int handle_hotplug_core(struct dptx *dptx)
 
 	dptx->dptx_max_res_store.hdisplay = 0;
 	dptx->dptx_max_res_store.vdisplay = 0;
+
+	// Read I2C speed DPCD register
+	retval = dptx_read_dpcd(dptx, DP_I2C_SPEED_CAP, &byte);
+	if (retval == -ETIMEDOUT) {
+		dptx_warn(dptx, "I2C speed: AUX read timeout\n");
+		return retval;
+	} else if (retval) {
+		dptx_warn(dptx, "I2C speed: AUX read retval=%d\n", retval);
+	} else {
+		dptx_info(dptx, "I2C speed = 0x%02x\n", byte);
+	}
 
 	// Read EDID of the sink using I2C over AUX, and parse the EDID data
 	retval = dptx_read_edid(dptx);
@@ -2424,6 +2518,14 @@ int handle_hotplug_core(struct dptx *dptx)
 	/* Initialize fec_en */
 	dptx->fec_en = dp_fec;
 
+	/* Initialize ssc_en */
+	dptx->ssc_en = dp_ssc;
+
+	/* Initialize link_test_mode */
+	dptx->link_test_mode = dp_link_test_mode;
+	dptx->link_test_force_cr = dp_link_test_force_cr;
+	dptx->link_test_force_cheq = dp_link_test_force_cheq;
+
 	/*
 	 * When the host is limited in software to HBR and the sink supports
 	 * only max 2 lanes, it leads to best-case link of HBR + 2 lanes.
@@ -2466,11 +2568,10 @@ int handle_hotplug_core(struct dptx *dptx)
 
 	dptx_write_regfield(dptx, ctrl_fields->field_default_fast_link_train_en, 0);
 
-	if (dptx->rx_caps[MAX_DOWNSPREAD] & NO_AUX_TRANSACTION_LINK_TRAINING) {
-		retval = dptx_fast_link_training(dptx);
-	} else {
-		retval = dptx_link_training(dptx);
-	}
+	if (dptx->rx_caps[MAX_DOWNSPREAD] & NO_AUX_TRANSACTION_LINK_TRAINING)
+		dptx_info(dptx, "Sink supports fast link training\n");
+
+	retval = dptx_link_training(dptx);
 
 	if (retval)
 		goto done;

@@ -91,7 +91,7 @@ static int g2d_sc_init(struct platform_device *pdev, struct g2d_device *g2d_devi
 	sc = devm_kzalloc(dev, sizeof(struct g2d_sc), GFP_KERNEL);
 	if (!sc) {
 		dev_err(dev, "sc struct allocation failed!");
-		return PTR_ERR(sc);
+		return -ENOMEM;
 	}
 
 	g2d_device->sc = sc;
@@ -109,7 +109,7 @@ static int g2d_kms_init(struct platform_device *pdev, struct g2d_device *g2d_dev
 	int ret = 0;
 	uint32_t possible_crtcs = 0;
 	/* TODO(b/355089225): create planes according to the # of pipelines. */
-	struct g2d_plane *layer0_plane = NULL;
+	struct g2d_plane *layer0_plane;
 	struct device *dev = g2d_device->drm.dev;
 	struct g2d_sc *sc = g2d_device->sc;
 
@@ -123,7 +123,7 @@ static int g2d_kms_init(struct platform_device *pdev, struct g2d_device *g2d_dev
 
 	layer0_plane = g2d_plane_init(g2d_device, possible_crtcs, 0 /* layer index */);
 
-	if (IS_ERR_OR_NULL(layer0_plane)) {
+	if (IS_ERR(layer0_plane)) {
 		dev_err(dev, "Plane init failed!");
 		return PTR_ERR(layer0_plane);
 	}

@@ -538,7 +538,7 @@ static int parse_tfa_node(struct device *dev, struct device_node *tfa_node,
 		return ret;
 	}
 
-	region->start_addr = devm_memremap(dev, raw_reg_addr, reg_size, MEMREMAP_WB);
+	region->start_addr = devm_memremap(dev, raw_reg_addr, reg_size, MEMREMAP_WC);
 	if (!region->start_addr) {
 		dev_err(dev, "Failed to iomap %s stats region property\n",
 			tfa_node->name);
@@ -823,7 +823,7 @@ struct platform_driver google_cap_sysfs_driver = {
 module_platform_driver(google_cap_sysfs_driver);
 
 int read_cpu_pd_latency_stats(u32 power_state,
-		struct timestamps_buffer *ts_buff)
+		struct timestamps_buffer *ts_buff, enum stats_type s_type)
 {
 	struct stats_region *region;
 	int i;
@@ -831,7 +831,7 @@ int read_cpu_pd_latency_stats(u32 power_state,
 
 	list_for_each_entry(region, &stats_region_list, list) {
 		for (i = 0; i < region->number; ++i) {
-			if (region->ids[i] == power_state) {
+			if (region->ids[i] == power_state && region->stats_type == s_type) {
 				state_stats_addr = region->start_addr + i * region->idx_size;
 				break;
 			}

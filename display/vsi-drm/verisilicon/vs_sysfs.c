@@ -22,7 +22,14 @@ CRTC_ATOMIC_ERROR_ATTR_RO(frame_start_timeout);
 CRTC_ATOMIC_ERROR_ATTR_RO(frame_start_missing);
 CRTC_ATOMIC_ERROR_ATTR_RO(frame_done_timeout);
 CRTC_ATOMIC_ERROR_ATTR_RO(frame_done_missing);
-CRTC_ATOMIC_ERROR_ATTR_RO(underrun_count);
+
+static ssize_t underrun_count_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct vs_crtc *vs_crtc = dev_get_drvdata(dev);
+
+	return sysfs_emit(buf, "%d\n", atomic_read(&vs_crtc->frame_underrun_count));
+}
+DEVICE_ATTR_RO(underrun_count);
 
 static struct attribute *dpu_error_count_attrs[] = {
 	&dev_attr_frame_start_timeout.attr,

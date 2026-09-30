@@ -13,8 +13,6 @@
 #include "video_bridge.h"
 #include "clock_mng.h"
 #include "rst_mng.h"
-#include "phy/phy_n621.h"
-#include "debugfs/phy_n621.h"
 #include "debugfs/audio_bridge.h"
 #include "debugfs/clock_mng.h"
 #include "debugfs/video_bridge.h"
@@ -42,13 +40,6 @@ static int aux_size;
  * DOC: DEBUGFS Interface
  *
  * Top level:
- *
- * max_lane_count [rw] - The maximum lane count supported. Write to
- * this to set the max lane count.
- *
- * max_rate [rw] - The maximum rate supported. Write to this to set
- * the maximum rate.
- *
  *
  * pixel_mode_sel [rw] - Pixel mode selection. Write to this to set pixel mode.
  *
@@ -369,6 +360,9 @@ static ssize_t dptx_aux_read(struct file *file,
 	struct seq_file *s = file->private_data;
 	struct dptx *dptx = s->private;
 
+	if (aux_size <= 0)
+		return -EINVAL;
+
 	mutex_lock(&dptx->mutex);
 	aux_buf = kmalloc(aux_size, GFP_KERNEL);
 
@@ -448,6 +442,7 @@ static ssize_t dptx_audio_sdp_write(struct file *file,
 
 	mutex_lock(&dptx->mutex);
 	memset(buf, 0, sizeof(buf));
+	memset(&sdp_full_data, 0, sizeof(sdp_full_data));
 
 	if (copy_from_user(buf, ubuf, min_t(size_t, sizeof(buf) - 1, count))) {
 		retval = -EFAULT;
@@ -1918,15 +1913,7 @@ void dptx_debugfs_init(struct dptx *dptx)
 		dev_dbg(dptx->dev, "Can't create debugfs global reset\n");
 
 	/* Core driver */
-	debugfs_create_u8("max_rate", 0644, root,
-			  &dptx->max_rate);
-	debugfs_create_u8("max_lane_count", 0644, root,
-			  &dptx->max_lanes);
-	debugfs_create_u8("pixel_mode_sel", 0644, root,
-			  &dptx->multipixel);
-	debugfs_create_bool("ssc_en", 0644, root, &dptx->ssc_en);
-	debugfs_create_bool("fec_en", 0644, root, &dptx->fec_en);
-	debugfs_create_bool("link_test_mode", 0644, root, &dptx->link_test_mode);
+	debugfs_create_u8("pixel_mode_sel", 0644, root, &dptx->multipixel);
 	debugfs_create_bool("aux_debug_en", 0644, root, &dptx->aux_debug_en);
 	debugfs_create_bool("ycbcr_420_en", 0644, root, &dptx->ycbcr_420_en);
 
@@ -2185,13 +2172,6 @@ void dptx_debugfs_init(struct dptx *dptx)
 			   &dptx_vg_vblank_fops);
 	if (!file)
 		dev_dbg(dptx->dev, "Can't create debugfs Video Gen VBlank\n");
-
-	/* PHY */
-	file = debugfs_create_file("Power_Up", 0644, phy, dptx,
-			   &phy_powerup_fops);
-
-	file = debugfs_create_file("jtag_write", 0644, phy, dptx,
-			   &phy_jtag_write_fops);
 
 	dptx->root = root;
 }

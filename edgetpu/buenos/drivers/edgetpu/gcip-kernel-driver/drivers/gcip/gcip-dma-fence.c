@@ -22,6 +22,9 @@
 
 #include <gcip/gcip-dma-fence.h>
 
+/* Disable the macro magic in the header file. */
+#undef gcip_dma_fence_manager_create
+
 #define to_gfence(fence) container_of(fence, struct gcip_dma_fence, fence)
 
 int gcip_signal_dma_fence_with_status(struct dma_fence *fence, int error, bool ignore_signaled)
@@ -50,7 +53,9 @@ int gcip_signal_dma_fence_with_status(struct dma_fence *fence, int error, bool i
 			goto cont_unlock;
 		if (error)
 			dma_fence_set_error(cur, error);
-		ret = dma_fence_signal_locked(cur);
+		dma_fence_signal_locked(cur);
+		/* Success as long as at least one fence was not signaled. */
+		ret = 0;
 cont_unlock:
 		spin_unlock_irqrestore(cur->lock, flags);
 	}
@@ -67,8 +72,8 @@ static const char *sync_status_str(int status)
 	return "active";
 }
 
-struct gcip_dma_fence_manager *gcip_dma_fence_manager_create(struct device *dev, char *driver_name,
-							     const char *name)
+struct gcip_dma_fence_manager *
+gcip_dma_fence_manager_create(struct device *dev, const char *driver_name, const char *name)
 {
 	struct gcip_dma_fence_manager *mgr = kzalloc(sizeof(*mgr), GFP_KERNEL);
 
@@ -77,7 +82,7 @@ struct gcip_dma_fence_manager *gcip_dma_fence_manager_create(struct device *dev,
 
 	INIT_LIST_HEAD(&mgr->fence_list);
 	spin_lock_init(&mgr->fence_list_lock);
-	strscpy(mgr->driver_name, driver_name, GCIP_DMA_FENCE_NAME_LENGTH);
+	mgr->driver_name = driver_name;
 	strscpy(mgr->name, name, GCIP_DMA_FENCE_NAME_LENGTH);
 	mgr->dev = dev;
 
@@ -168,8 +173,16 @@ void gcip_dma_fence_manager_show(struct gcip_dma_fence_manager *mgr, struct seq_
 static const char *gcip_dma_fence_get_driver_name(struct dma_fence *fence)
 {
 	struct gcip_dma_fence *gfence = to_gfence(fence);
+	struct gcip_dma_fence_manager *mgr;
+	const char *driver_name = "";
 
-	return gfence->mgr->driver_name;
+	rcu_read_lock();
+	mgr = rcu_dereference(gfence->mgr);
+	if (mgr)
+		driver_name = mgr->driver_name;
+	rcu_read_unlock();
+
+	return driver_name;
 }
 
 static const char *gcip_dma_fence_get_timeline_name(struct dma_fence *fence)
@@ -207,7 +220,6 @@ static void gcip_dma_fence_exit(struct gcip_dma_fence *gfence)
  * @fence: The DMA fence to release.
  *
  * This function is called when the reference count of the DMA fence is 0.
- * If the release function is not set, kfree_rcu() will be called to release the memory.
  */
 static void gcip_dma_fence_release(struct dma_fence *fence)
 {
@@ -215,10 +227,7 @@ static void gcip_dma_fence_release(struct dma_fence *fence)
 
 	gcip_dma_fence_exit(gfence);
 
-	if (gfence->release)
-		gfence->release(gfence);
-	else
-		kfree_rcu(gfence, fence.rcu);
+	kfree_rcu(gfence, fence.rcu);
 }
 
 const struct dma_fence_ops gcip_dma_fence_ops = {
@@ -228,53 +237,65 @@ const struct dma_fence_ops gcip_dma_fence_ops = {
 	.release = gcip_dma_fence_release,
 };
 
-int gcip_dma_fence_init(struct gcip_dma_fence_manager *mgr, struct gcip_dma_fence *gfence,
-			struct gcip_dma_fence_data *data)
+int gcip_dma_fence_install_fd(struct gcip_dma_fence *gfence)
 {
-	int fd;
 	struct sync_file *sync_file;
+	int fd;
 	int ret;
 
-	strscpy(gfence->timeline_name, data->timeline_name, GCIP_DMA_FENCE_NAME_LENGTH);
-
-	spin_lock_init(&gfence->lock);
-	INIT_LIST_HEAD(&gfence->list_node);
-	gfence->mgr = mgr;
-	gfence->release = data->release;
-
-	dma_fence_init(&gfence->fence, &gcip_dma_fence_ops, &gfence->lock,
-		       dma_fence_context_alloc(1), data->seqno);
-
-	gcip_dma_fence_manager_add_fence(mgr, gfence);
-
 	fd = get_unused_fd_flags(O_CLOEXEC);
-	if (fd < 0) {
-		ret = fd;
-		dev_err(mgr->dev, "Failed to get FD: %d", ret);
-		goto err_manager_del_fence;
-	}
+	if (fd < 0)
+		return fd;
 
 	sync_file = sync_file_create(&gfence->fence);
 	if (!sync_file) {
-		dev_err(mgr->dev, "Failed to create sync file");
 		ret = -ENOMEM;
 		goto err_put_fd;
 	}
 
-	/* sync_file holds the reference to fence, so we can drop our reference. */
-	dma_fence_put(&gfence->fence);
-
 	fd_install(fd, sync_file->file);
-	data->fence = fd;
 
-	return 0;
+	return fd;
 
 err_put_fd:
 	put_unused_fd(fd);
-err_manager_del_fence:
-	gcip_dma_fence_manager_del_fence(gfence->mgr, gfence);
 
 	return ret;
+}
+
+struct gcip_dma_fence *gcip_dma_fence_create(struct gcip_dma_fence_manager *mgr, u64 seqno,
+					     const char *timeline_name)
+{
+	struct gcip_dma_fence *gfence;
+	u64 context = dma_fence_context_alloc(1);
+
+	gfence = kzalloc(sizeof(*gfence), GFP_KERNEL);
+	if (!gfence)
+		return ERR_PTR(-ENOMEM);
+
+	strscpy(gfence->timeline_name, timeline_name, GCIP_DMA_FENCE_NAME_LENGTH);
+	spin_lock_init(&gfence->lock);
+	INIT_LIST_HEAD(&gfence->list_node);
+	dma_fence_init(&gfence->fence, &gcip_dma_fence_ops, &gfence->lock, context, seqno);
+
+	if (mgr) {
+		rcu_assign_pointer(gfence->mgr, mgr);
+		gcip_dma_fence_manager_add_fence(mgr, gfence);
+	}
+
+	return gfence;
+}
+
+struct gcip_dma_fence *gcip_dma_fence_get(struct gcip_dma_fence *gfence)
+{
+	dma_fence_get(&gfence->fence);
+
+	return gfence;
+}
+
+void gcip_dma_fence_put(struct gcip_dma_fence *gfence)
+{
+	dma_fence_put(&gfence->fence);
 }
 
 int gcip_dma_fence_status(int fence, int *status)
@@ -342,7 +363,7 @@ int gcip_dma_fence_scnprintf(char *buf, size_t size, struct gcip_dma_fence *gfen
 
 	rcu_read_lock();
 	mgr = rcu_dereference(gfence->mgr);
-	if (mgr) {
+	if (mgr && strlen(mgr->name)) {
 		written = scnprintf(buf, size, " %s", mgr->name);
 		total += written;
 	}

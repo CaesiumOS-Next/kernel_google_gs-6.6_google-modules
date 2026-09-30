@@ -45,7 +45,6 @@ struct edgetpu_iommu {
 	 * The implementation will fall back to dynamically allocated domains otherwise.
 	 */
 	struct gcip_domain_pool domain_pool;
-
 };
 
 bool edgetpu_mmu_is_domain_default_domain(struct edgetpu_dev *etdev,
@@ -120,19 +119,10 @@ static int edgetpu_iommu_dev_fault_handler(struct iommu_fault *fault, void *toke
 	return -EAGAIN;
 }
 
-static int edgetpu_register_iommu_device_fault_handler(struct edgetpu_dev *etdev)
-{
-	return iommu_register_device_fault_handler(etdev->dev, edgetpu_iommu_dev_fault_handler,
-						   etdev);
-}
-
-static int edgetpu_unregister_iommu_device_fault_handler(struct edgetpu_dev *etdev)
-{
-	return iommu_unregister_device_fault_handler(etdev->dev);
-}
-
-static int edgetpu_iommu_fault_handler(struct iommu_domain *domain, struct device *dev,
-				       unsigned long iova, int flags, void *token)
+/* TODO(b/515432249): remove "__maybe_unused" when restored for all targets. */
+static int __maybe_unused edgetpu_iommu_fault_handler(struct iommu_domain *domain,
+						      struct device *dev, unsigned long iova,
+						      int flags, void *token)
 {
 	struct edgetpu_iommu_domain *etdomain = token;
 	struct edgetpu_dev *etdev = etdomain->etdev;
@@ -149,12 +139,10 @@ static int edgetpu_iommu_fault_handler(struct iommu_domain *domain, struct devic
 static void edgetpu_init_etdomain(struct edgetpu_iommu_domain *etdomain, struct edgetpu_dev *etdev,
 				  struct gcip_iommu_domain *gdomain, uint pasid)
 {
-	struct iommu_domain *domain = gdomain->domain;
-
 	etdomain->etdev = etdev;
 	etdomain->gdomain = gdomain;
 	etdomain->pasid = pasid;
-	iommu_set_fault_handler(domain, edgetpu_iommu_fault_handler, etdomain);
+	iommu_set_fault_handler(gdomain->domain, edgetpu_iommu_fault_handler, etdomain);
 }
 
 /*
@@ -221,7 +209,8 @@ int edgetpu_mmu_attach(struct edgetpu_dev *etdev)
 	if (ret)
 		goto err_destroy_pool;
 
-	ret = edgetpu_register_iommu_device_fault_handler(etdev);
+	ret = iommu_register_device_fault_handler(etdev->dev, edgetpu_iommu_dev_fault_handler,
+						  etdev);
 	if (ret)
 		etdev_warn(etdev, "Failed to register fault handler! (%d)\n",
 			   ret);
@@ -241,12 +230,13 @@ void edgetpu_mmu_detach(struct edgetpu_dev *etdev)
 {
 	struct edgetpu_iommu *etiommu = etdev->mmu_cookie;
 	struct gcip_iommu_domain *gdomain;
-	int i, ret;
+	int i;
+	int ret;
 
 	if (!etiommu)
 		return;
 
-	ret = edgetpu_unregister_iommu_device_fault_handler(etdev);
+	ret = iommu_unregister_device_fault_handler(etdev->dev);
 	if (ret)
 		etdev_warn(etdev,
 			   "Failed to unregister device fault handler (%d)\n",
@@ -421,6 +411,13 @@ void edgetpu_mmu_detach_domain(struct edgetpu_dev *etdev,
 	edgetpu_firmware_shared_mappings_context_unmap(etdev, etdomain);
 	etdomain->pasid = IOMMU_PASID_INVALID;
 	gcip_domain_pool_detach(&etiommu->domain_pool, etdomain->gdomain);
+}
+
+size_t edgetpu_mmu_get_max_attached_domains(struct edgetpu_dev *etdev)
+{
+	struct edgetpu_iommu *etiommu = etdev->mmu_cookie;
+
+	return etiommu->domain_pool.max_pasid - etiommu->domain_pool.min_pasid + 1;
 }
 
 struct edgetpu_iommu_domain *edgetpu_mmu_domain_for_pasid(struct edgetpu_dev *etdev, uint pasid)

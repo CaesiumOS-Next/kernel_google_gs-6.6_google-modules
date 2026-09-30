@@ -69,17 +69,17 @@ enum vimon_trigger_source {
 
 struct vimon_client_callbacks {
 	/* on_sample_ready: required */
-	void (*on_sample_ready)(void *private, const enum vimon_trigger_source reason,
+	void (*on_sample_ready)(void *private_data, const enum vimon_trigger_source reason,
 				const u16 *data, const size_t len);
 
 	/* on_unregistered: required */
-	void (*on_removed)(void *private);
+	void (*on_removed)(void *private_data);
 
 	/* extra_trigger: optional */
-	bool (*extra_trigger)(void *private, const u16 *data, const size_t len);
+	bool (*extra_trigger)(void *private_data, const u16 *data, const size_t len);
 };
 
-int vimon_register_callback(struct device *dev, const u16 mask, const int count, void *private,
+int vimon_register_callback(struct device *dev, const u16 mask, const int count, void *private_data,
 			    struct vimon_client_callbacks *cb);
 void vimon_unregister_callback(struct device *dev, struct vimon_client_callbacks *cb);
 
@@ -98,7 +98,6 @@ struct max77779_vimon_data {
 	bool run_in_offmode;
 
 	struct mutex vimon_lock;
-	struct mutex vimon_cb_lock;
 	unsigned max_cnt;
 	unsigned max_triggers;
 	enum max77779_vimon_state state;

@@ -24,6 +24,7 @@ struct platform_device;
 struct mipi_dsi_host;
 struct mipi_dsi_msg;
 struct drm_bridge;
+struct sscd_funcs;
 
 #define MIPI_DSI_SCRAMBLING_MODE_COMMAND		0x27
 #define MIPI_DSI_SERVICE_EXTENSIONS_PACKET		0x25
@@ -131,8 +132,22 @@ struct dw_mipi_dsi2h_debug_ops *dw_mipi_dsi2h_get_debug_ops(void);
 void *dw_mipi_dsi2h_probe(struct platform_device *pdev,
 			  const struct dw_mipi_dsi2h_plat_data *plat_data);
 int dw_mipi_dsi2h_remove(void *dsi2h);
-int dw_mipi_dsi2h_bind(void *dsi2h, struct drm_encoder *encoder);
+int dw_mipi_dsi2h_bind(void *dsi2h, struct drm_encoder *encoder, struct sscd_funcs *coredump_funcs);
 void dw_mipi_dsi2h_unbind(void *dsi2h);
+/**
+ * is_dw_mipi_dsi2h_bridge - Check if the bridge is a dw_mipi_dsi2h bridge
+ * @bridge: Pointer to the drm_bridge structure
+ *
+ * Return: true if the bridge is a dw_mipi_dsi2h bridge, false otherwise.
+ */
+bool is_dw_mipi_dsi2h_bridge(struct drm_bridge *bridge);
+/**
+ * dw_mipi_dsi2h_get_device - Get the device associated with the bridge
+ * @bridge: Pointer to the drm_bridge structure
+ *
+ * Return: A pointer to the device structure associated with the dsi2h bridge
+ */
+struct device *dw_mipi_dsi2h_get_device(struct drm_bridge *bridge);
 int dw_mipi_dsi2h_suspend(void *dsi2h);
 int dw_mipi_dsi2h_resume(void *dsi2h);
 

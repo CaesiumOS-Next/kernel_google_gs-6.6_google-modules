@@ -129,6 +129,7 @@ struct vendor_task_struct {
 	u64 last_dequeue;
 	unsigned long util_enqueued;
 	unsigned long util_dequeued;
+	unsigned long util_dequeued_candidate;
 	unsigned long prev_util_dequeued;
 	unsigned long prev_util;
 	bool ignore_util_est_update;

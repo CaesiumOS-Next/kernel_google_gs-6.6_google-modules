@@ -104,38 +104,126 @@ void dptx_audio_timestamp_sdp_en(struct dptx *dptx, int enabled)
 	dptx_write_regfield(dptx, ctrl_fields->field_en_audio_timestamp_sdp_horizontal_ctrl, value);
 }
 
-void dptx_audio_infoframe_sdp_send(struct dptx *dptx)
+void dptx_audio_infoframe_sdp_en(struct dptx *dptx, int enabled)
 {
-	struct ctrl_regfields *ctrl_fields = dptx->ctrl_fields;
-	u32 audio_infoframe_header = AUDIO_INFOFRAME_HEADER;
-	u32 audio_infoframe_data[2] = {0x0, 0x0};
+	struct sdp_full_data audio_infoframe;
 	u32 byte;
+
+	memset(&audio_infoframe, 0, sizeof(audio_infoframe));
+	audio_infoframe.en = !!enabled;
+	audio_infoframe.payload[0] = AUDIO_INFOFRAME_HEADER;
 
 	/* DP audio stream is always: PCM, 2 channels, 48 kHz, 16-bit */
 
 	/* data byte 1: PCM type + 2 channels */
 	byte = (HDMI_AUDIO_CODING_TYPE_PCM << 4) | 0x1;
-	audio_infoframe_data[0] = byte;
+	audio_infoframe.payload[1] = (byte << 24);
 
 	/* data byte 2: 48 kHz + 16-bit */
 	byte = (HDMI_AUDIO_SAMPLE_FREQUENCY_48000 << 2) | HDMI_AUDIO_SAMPLE_SIZE_16;
-	audio_infoframe_data[0] |= (byte << 8);
+	audio_infoframe.payload[1] |= (byte << 16);
 
-	dptx->sdp_list[0].payload[0] = audio_infoframe_header;
-	dptx_write_reg(dptx, dptx->regs[DPTX], SDP_REGISTER_BANK_0, audio_infoframe_header);
-	dptx_write_reg(dptx, dptx->regs[DPTX], SDP_REGISTER_BANK_1, audio_infoframe_data[0]);
-	dptx_write_reg(dptx, dptx->regs[DPTX], SDP_REGISTER_BANK_2, audio_infoframe_data[1]);
-
-	dptx_write_regfield(dptx, ctrl_fields->field_en_vertical_sdp_n, 1);
+	dptx_fill_sdp(dptx, &audio_infoframe);
 }
 
-static void dptx_disable_sdp(struct dptx *dptx, u32 *payload)
+void dptx_spd_sdp_en(struct dptx *dptx, int enabled)
+{
+	struct sdp_full_data spd;
+
+	memset(&spd, 0, sizeof(spd));
+	spd.en = !!enabled;
+	spd.payload[0] = SPD_SDP_HEADER;
+
+	/* Data byte 1: CTA header byte 1: infoframe version number */
+	spd.payload[1] = 1 << 24;
+
+	/* Data byte 2: CTA header byte 2: length of infoframe */
+	spd.payload[1] |= 25 << 16;
+
+	/* Data bytes 3-10: payload bytes 1-8: vendor name */
+	spd.payload[1] |= 0x0000476F;  // Go
+	spd.payload[2] = 0x6F676C65;   // ogle
+
+	/* Data bytes 11-26: payload bytes 9-24: product description */
+	spd.payload[3] = 0x00005069;  // Pi
+	spd.payload[4] = 0x78656C00;  // xel
+
+	dptx_fill_sdp(dptx, &spd);
+}
+
+void dptx_vsc_sdp_en(struct dptx *dptx, int enabled)
+{
+	struct sdp_full_data vsc;
+	u8 pixelformat = DP_PIXELFORMAT_RGB;
+	u8 colorimetry = DP_COLORIMETRY_DEFAULT;
+	u8 bpc = dptx->link.bpc;
+	u8 dynamic_range = DP_DYNAMIC_RANGE_VESA;
+	u8 content_type = DP_CONTENT_TYPE_NOT_DEFINED;
+	u32 byte;
+
+	memset(&vsc, 0, sizeof(vsc));
+	vsc.en = !!enabled;
+	vsc.payload[0] = VSC_SDP_HEADER;
+
+	byte = (pixelformat & 0xf) << 4;
+	byte |= colorimetry & 0xf;
+	vsc.payload[5] = byte << 24;
+
+	switch (bpc) {
+	case 6:
+		byte = 0x0;
+		break;
+	case 8:
+		byte = 0x1;
+		break;
+	case 10:
+	default:
+		byte = 0x2;
+		break;
+	}
+
+	if (dynamic_range == DP_DYNAMIC_RANGE_CTA)
+		byte |= 0x80;
+
+	vsc.payload[5] |= byte << 16;
+
+	byte = content_type & 0x7;
+	vsc.payload[5] |= byte << 8;
+
+	dptx_fill_sdp(dptx, &vsc);
+}
+
+static void dptx_disable_sdp(struct dptx *dptx, struct sdp_full_data *data)
 {
 	int i;
+	u32 reg;
+	int reg_num;
+	u32 header;
+	int sdp_offset;
 
-	for (i = 0; i < DPTX_SDP_NUM; i++)
-		if (!memcmp(dptx->sdp_list[i].payload, payload, sizeof(u32) * 9))
-			memset(dptx->sdp_list[i].payload, 0, sizeof(u32) * 9);
+	header = cpu_to_be32(data->payload[0]);
+
+	for (i = 0; i < DPTX_SDP_NUM; i++) {
+		if (dptx->sdp_list[i].payload[0] == header) {
+			reg = dptx_read_reg(dptx, dptx->regs[DPTX], SDP_VERTICAL_CTRL);
+			reg &= ~(1 << (2 + i));
+			dptx_write_reg(dptx, dptx->regs[DPTX], SDP_VERTICAL_CTRL, reg);
+
+			reg = dptx_read_reg(dptx, dptx->regs[DPTX], SDP_HORIZONTAL_CTRL);
+			reg &= ~(1 << (2 + i));
+			dptx_write_reg(dptx, dptx->regs[DPTX], SDP_HORIZONTAL_CTRL, reg);
+
+			sdp_offset = i * DPTX_SDP_SIZE;
+			reg_num = 0;
+			while (reg_num < DPTX_SDP_LEN) {
+				dptx_write_reg(dptx, dptx->regs[DPTX],
+					       SDP_REGISTER_BANK_0 + sdp_offset + reg_num * 4, 0);
+				reg_num++;
+			}
+
+			dptx->sdp_list[i].payload[0] = 0;
+		}
+	}
 }
 
 static void dptx_enable_sdp(struct dptx *dptx, struct sdp_full_data *data)
@@ -146,16 +234,17 @@ static void dptx_enable_sdp(struct dptx *dptx, struct sdp_full_data *data)
 	u32 header;
 	int sdp_offset;
 
-	reg_num = 0;
 	header = cpu_to_be32(data->payload[0]);
-	for (i = 0; i < DPTX_SDP_NUM; i++)
+
+	for (i = 0; i < DPTX_SDP_NUM; i++) {
 		if (dptx->sdp_list[i].payload[0] == 0) {
 			dptx->sdp_list[i].payload[0] = header;
 			sdp_offset = i * DPTX_SDP_SIZE;
 			reg_num = 0;
 			while (reg_num < DPTX_SDP_LEN) {
-				dptx_write_reg(dptx, dptx->regs[DPTX], SDP_REGISTER_BANK_0 + sdp_offset
-					    + reg_num * 4, cpu_to_be32(data->payload[reg_num]));
+				dptx_write_reg(dptx, dptx->regs[DPTX],
+					       SDP_REGISTER_BANK_0 + sdp_offset + reg_num * 4,
+					       cpu_to_be32(data->payload[reg_num]));
 				reg_num++;
 			}
 			switch (data->blanking) {
@@ -180,6 +269,7 @@ static void dptx_enable_sdp(struct dptx *dptx, struct sdp_full_data *data)
 			}
 			break;
 		}
+	}
 }
 
 void dptx_fill_sdp(struct dptx *dptx, struct sdp_full_data *data)
@@ -187,7 +277,7 @@ void dptx_fill_sdp(struct dptx *dptx, struct sdp_full_data *data)
 	if (data->en == 1)
 		dptx_enable_sdp(dptx, data);
 	else
-		dptx_disable_sdp(dptx, data->payload);
+		dptx_disable_sdp(dptx, data);
 }
 
 void dptx_vsd_ycbcr420_send(struct dptx *dptx, u8 enable)
@@ -331,8 +421,14 @@ void dptx_audio_config(struct dptx *dptx)
 	dptx_audio_core_config(dptx);
 	dptx_audio_sdp_en(dptx, 1);
 	dptx_audio_timestamp_sdp_en(dptx, 1);
+	dptx_audio_infoframe_sdp_en(dptx, 1);
+}
 
-	dptx_audio_infoframe_sdp_send(dptx);
+void dptx_audio_deconfig(struct dptx *dptx)
+{
+	dptx_audio_sdp_en(dptx, 0);
+	dptx_audio_timestamp_sdp_en(dptx, 0);
+	dptx_audio_infoframe_sdp_en(dptx, 0);
 }
 
 void dptx_audio_core_config(struct dptx *dptx)
@@ -824,6 +920,9 @@ int dptx_video_ts_calculate(struct dptx *dptx, int lane_num, int rate,
 	u32 T1;
 	u32 T2;
 	u32 T3;
+
+	if (lane_num <= 0)
+		return -EINVAL;
 
 	vparams = &dptx->vparams;
 	mdtd = &vparams->mdtd;

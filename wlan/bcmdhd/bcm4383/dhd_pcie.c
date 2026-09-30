@@ -835,6 +835,7 @@ dhd_init_pwr_req_lock(dhd_bus_t *bus)
 {
 	if (!bus->pwr_req_lock) {
 		bus->pwr_req_lock = osl_spin_lock_init(bus->osh);
+		OSL_LOCK_CLASS_SET(bus->pwr_req_lock);
 	}
 }
 
@@ -864,6 +865,7 @@ dhd_init_dongle_ds_lock(dhd_bus_t *bus)
 {
 	if (!bus->dongle_ds_lock) {
 		bus->dongle_ds_lock = osl_spin_lock_init(bus->osh);
+		OSL_LOCK_CLASS_SET(bus->dongle_ds_lock);
 	}
 }
 
@@ -3469,6 +3471,7 @@ dhd_init_bus_lp_state_lock(dhd_bus_t *bus)
 {
 	if (!bus->bus_lp_state_lock) {
 		bus->bus_lp_state_lock = osl_spin_lock_init(bus->osh);
+		OSL_LOCK_CLASS_SET(bus->bus_lp_state_lock);
 	}
 }
 
@@ -3486,6 +3489,7 @@ dhd_init_backplane_access_lock(dhd_bus_t *bus)
 {
 	if (!bus->backplane_access_lock) {
 		bus->backplane_access_lock = osl_spin_lock_init(bus->osh);
+		OSL_LOCK_CLASS_SET(bus->backplane_access_lock);
 	}
 }
 
@@ -6973,6 +6977,7 @@ dhd_init_bar1_switch_lock(dhd_bus_t *bus)
 {
 	if (bus->bar1_switch_enab && !bus->bar1_switch_lock) {
 		bus->bar1_switch_lock = osl_spin_lock_init(bus->osh);
+		OSL_LOCK_CLASS_SET(bus->bar1_switch_lock);
 	}
 }
 
@@ -6990,6 +6995,7 @@ dhd_init_bar2_switch_lock(dhd_bus_t *bus)
 {
 	if (!bus->bar2_switch_lock) {
 		bus->bar2_switch_lock = osl_spin_lock_init(bus->osh);
+		OSL_LOCK_CLASS_SET(bus->bar2_switch_lock);
 	}
 }
 
@@ -9670,6 +9676,13 @@ dhdpcie_bus_doiovar(dhd_bus_t *bus, const bcm_iovar_t *vi, uint32 actionid, cons
 
 	case IOV_SVAL(IOV_RX_METADATALEN):
 #if !(defined(BCM_ROUTER_DHD))
+		/* Reject negative values */
+		if (int_val < 0) {
+			bcmerror = BCME_BADARG;
+			break;
+		}
+
+		/* Enforce upper bound */
 		if (int_val > 64) {
 			bcmerror = BCME_BUFTOOLONG;
 			break;
@@ -9711,6 +9724,13 @@ dhdpcie_bus_doiovar(dhd_bus_t *bus, const bcm_iovar_t *vi, uint32 actionid, cons
 
 	case IOV_SVAL(IOV_TX_METADATALEN):
 #if !(defined(BCM_ROUTER_DHD))
+		/* Reject negative values */
+		if (int_val < 0) {
+			bcmerror = BCME_BADARG;
+			break;
+		}
+
+		/* Enforce upper bound */
 		if (int_val > 64) {
 			bcmerror = BCME_BUFTOOLONG;
 			break;
@@ -16315,6 +16335,7 @@ int dhd_bus_init(dhd_pub_t *dhdp, bool enforce_mutex)
 	/* Initialize the lock to serialize Device Wake Inband activities */
 	if (!bus->inb_lock) {
 		bus->inb_lock = osl_spin_lock_init(bus->dhd->osh);
+		OSL_LOCK_CLASS_SET(bus->inb_lock);
 	}
 #endif
 

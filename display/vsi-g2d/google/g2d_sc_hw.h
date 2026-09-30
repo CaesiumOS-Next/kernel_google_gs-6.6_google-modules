@@ -25,7 +25,7 @@
 #define __vsFIELDALIGN(data, reg_field) (((u32)(data)) << __vsFIELDSTART(reg_field))
 
 #define __vsFIELDMASK(reg_field) \
-	((u32)((__vsFIELDSIZE(reg_field) == 32) ? ~0 : (~(~0 << __vsFIELDSIZE(reg_field)))))
+	((u32)((__vsFIELDSIZE(reg_field) == 32) ? ~0U : (~(~0U << __vsFIELDSIZE(reg_field)))))
 
 /**************************************************************************
  **

@@ -10,6 +10,7 @@
 enum stat_type {
 	USAGE,
 	ALLOCSTALL,
+	BUDDY,
 };
 
 struct gcma_heap_stat;

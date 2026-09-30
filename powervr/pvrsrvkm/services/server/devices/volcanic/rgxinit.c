@@ -577,7 +577,6 @@ static void RGX_MISRHandler_Main (void *pvData)
 	PVRSRVNotifyCommandCompletion(psDeviceNode);
 
 #if defined(SUPPORT_PDVFS)
-	RGXPDVFSCheckCoreClkRateChange(psDeviceNode->pvDevice);
 	RGXPDVFSCheckUtilisationChange(psDeviceNode->pvDevice);
 #endif
 

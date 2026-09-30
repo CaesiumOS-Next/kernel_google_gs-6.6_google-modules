@@ -928,10 +928,12 @@ struct dw_mipi_cdphy_g301 {
 	void __iomem *base;
 	struct regmap *base_regs;
 	u32 tx_reg_size;
+	u64 tx_phys_addr;
 
 	void __iomem *u0_apb_regbank;
 	struct regmap *u0_apb_regbank_regs;
 	u32 u0_apb_reg_size;
+	u64 u0_apb_phys_addr;
 
 	struct dw_cdphy_hs_configuration hs_config;
 	struct list_head preset_list;

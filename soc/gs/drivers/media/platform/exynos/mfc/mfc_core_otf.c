@@ -104,8 +104,8 @@ static int __mfc_core_otf_map_buf(struct mfc_ctx *ctx)
 			buf_addr->otf_buf_attach[i] = 0;
 			return -EINVAL;
 		}
-		buf_addr->sgt[i] = dma_buf_map_attachment(buf_addr->otf_buf_attach[i],
-				DMA_BIDIRECTIONAL);
+		buf_addr->sgt[i] = dma_buf_map_attachment_unlocked(buf_addr->otf_buf_attach[i],
+								   DMA_BIDIRECTIONAL);
 		if (IS_ERR(buf_addr->sgt[i])) {
 			mfc_ctx_err("[OTF] Failed to map attach (err %ld)", PTR_ERR(buf_addr->sgt[i]));
 			return -EINVAL;
@@ -145,8 +145,8 @@ static void __mfc_core_otf_unmap_buf(struct mfc_ctx *ctx)
 
 	for (i = 0; i < buf_info->buffer_count; i++) {
 		if (buf_addr->sgt[i]) {
-			dma_buf_unmap_attachment(buf_addr->otf_buf_attach[i],
-					buf_addr->sgt[i], DMA_BIDIRECTIONAL);
+			dma_buf_unmap_attachment_unlocked(buf_addr->otf_buf_attach[i],
+							  buf_addr->sgt[i], DMA_BIDIRECTIONAL);
 			buf_addr->otf_daddr[i][0] = 0;
 		}
 		if (buf_addr->otf_buf_attach[i]) {

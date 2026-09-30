@@ -140,7 +140,7 @@ void dptx_core_init_phy(struct dptx *dptx)
  */
 bool dptx_sink_enabled_ssc(struct dptx *dptx)
 {
-	u8 byte;
+	u8 byte = 0;
 
 	dptx_read_dpcd(dptx, DP_MAX_DOWNSPREAD, &byte);
 

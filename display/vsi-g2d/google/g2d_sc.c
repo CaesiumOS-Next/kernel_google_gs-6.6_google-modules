@@ -568,6 +568,10 @@ static int check_alignment(struct device *dev, const struct drm_framebuffer *fb,
 		struct g2d_bo *g2d_obj;
 
 		format_info = drm_format_info(drm_format);
+		if (!format_info) {
+			dev_err(dev, "[Reject] Invalid format info attached to framebuffer\n");
+			return -EINVAL;
+		}
 
 		for (i = 0; i < format_info->num_planes; i++) {
 			g2d_obj = to_g2d_buffer_object(fb->obj[i]);
@@ -830,13 +834,31 @@ static int check_plane_scale(struct drm_plane_state *plane_state)
 	u8 hw_format = drm_format_to_hw_layer_format(drm_format);
 	int max_scale_width = g2d_get_max_scaling_width(hw_format);
 
-	if (dst_w == src_w)
-		return 0;
+	int effective_src_w = src_w;
+	int effective_src_h = src_h;
+	int scaler_dst_w = dst_w;
 
 	if (rotate_mask & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270)) {
-		if (dst_h >= max_scale_width && dst_h < src_h)
-			goto invalid_plane;
-	} else if (dst_w >= max_scale_width && dst_w < src_w)
+		effective_src_w = src_h;
+		effective_src_h = src_w;
+		scaler_dst_w = dst_h;
+	}
+
+	if (dst_w == effective_src_w && dst_h == effective_src_h)
+		return 0;
+
+	/* Enforce min destination size of 2 when scaling to avoid division by zero */
+	if (dst_w != effective_src_w && dst_w < 2) {
+		dev_dbg(dev, "%s: Cannot scale to width < 2 (dst_w:%d)", __func__, dst_w);
+		return -EINVAL;
+	}
+
+	if (dst_h != effective_src_h && dst_h < 2) {
+		dev_dbg(dev, "%s: Cannot scale to height < 2 (dst_h:%d)", __func__, dst_h);
+		return -EINVAL;
+	}
+
+	if (scaler_dst_w >= max_scale_width && scaler_dst_w < effective_src_w)
 		goto invalid_plane;
 
 	return 0;
@@ -1044,7 +1066,6 @@ int sc_irq_init(struct platform_device *pdev)
 	struct g2d_device *g2d_device;
 	struct g2d_sc *sc;
 
-	dev = &pdev->dev;
 	drm = dev_get_drvdata(dev);
 	g2d_device = to_g2d_device(drm);
 	sc = g2d_device->sc;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Implements methods common to the family of EdgeTPUs for mobile devices to retrieve host side
  * debug dump segments and report them to SSCD.
@@ -11,6 +11,7 @@
 #include <linux/completion.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
+#include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/fs.h>
 #include <linux/ktime.h>

@@ -21,6 +21,17 @@
 #include <vs_dc.h>
 #include <vs_dc_hw.h>
 
+/**
+ * dc_init_trace() - Initializes the display controller's trace events.
+ * @dev: Pointer to the device structure.
+ *
+ * This function retrieves the trace array for the display controller and enables
+ * all the trace events defined in the dc_trace_events array.
+ *
+ * Return: 0 on success, or a negative error code on failure.
+ */
+int dc_init_trace(struct device *dev);
+
 #ifndef __9x00_VS_HW_TRACE_API_DEF__
 #define __9x00_VS_HW_TRACE_API_DEF__
 
@@ -192,8 +203,8 @@ TRACE_EVENT(disp_trusty_protect_ip,
 		       sizeof(__entry->secured_layers_mask));
 	),
 	TP_printk(
-		"[Layer%d] sid:%d secured_layers_mask:%*phN secure:%d",
-		__entry->hw_id, __entry->plane_sid, (int)BITS_TO_LONGS(HW_PLANE_NUM),
+		"[Layer%d] sid:%d secured_layers_mask:0x%*pb secure:%d",
+		__entry->hw_id, __entry->plane_sid, HW_PLANE_NUM,
 		__entry->secured_layers_mask, __entry->secure)
 );
 
@@ -470,6 +481,18 @@ DEFINE_EVENT(disp_dc_power, disp_dc_power_get,
 DEFINE_EVENT(disp_dc_power, disp_dc_power_put,
 	TP_PROTO(struct device *dev, bool sync, int ret),
 	TP_ARGS(dev, sync, ret)
+);
+
+TRACE_EVENT(disp_be_idle_timeout,
+	TP_PROTO(u32 config),
+	TP_ARGS(config),
+	TP_STRUCT__entry(
+		__field(u32, config)
+	),
+	TP_fast_assign(
+		__entry->config = config;
+	),
+	TP_printk("Backend idle check timed out! Status: 0x%x", __entry->config)
 );
 #endif /* _VS_TRACE_9x00_H_ */
 

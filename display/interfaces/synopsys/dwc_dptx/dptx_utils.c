@@ -152,29 +152,6 @@ int ag_read(struct dptx *dptx, u32 offset)
 	return bus_read(dptx, AG, offset);
 }
 
-int phyif_write(struct dptx *dptx, u32 offset, u32 data)
-{
-	return bus_write(dptx, PHYIF, offset, data);
-}
-
-void phyif_write_mask(struct dptx *dptx, u32 addr, u32 mask, u32 data)
-{
-	u32 temp;
-
-	temp = set(phyif_read(dptx, addr), mask, data);
-	phyif_write(dptx, addr, temp);
-}
-
-int phyif_read(struct dptx *dptx, u32 offset)
-{
-	return bus_read(dptx, PHYIF, offset);
-}
-
-u32 phyif_read_mask(struct dptx *dptx, u32 addr, u32 mask)
-{
-	return get(phyif_read(dptx, addr), mask);
-}
-
 bool freq_is_equal(u32 a, u32 b)
 {
 	return (a == b);

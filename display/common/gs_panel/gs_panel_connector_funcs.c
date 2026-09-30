@@ -17,7 +17,6 @@
 #include <drm/drm_property.h>
 #include <drm/drm_vblank.h>
 
-#include "gs_drm/gs_fault_event.h"
 #include "gs_panel/gs_panel.h"
 #include "trace/panel_trace.h"
 
@@ -726,59 +725,6 @@ int gs_panel_set_panel_power_state(struct gs_panel *ctx, enum gs_panel_power_sta
 	return 0;
 }
 
-static int gs_panel_run_detect_fault(struct gs_panel *ctx)
-{
-	struct device *dev = ctx->dev;
-	int bit, ret;
-	ktime_t now;
-	s64 delta_ms;
-	u32 fault_detect_interval_ms = ctx->desc->fault_detect_interval_ms;
-
-	if (!fault_detect_interval_ms)
-		return 0;
-
-	if (!gs_is_panel_active(ctx)) {
-		dev_dbg(dev, "skip fault detection (panel is not active)\n");
-		return 0;
-	}
-
-	/* Check elapsed interval against minimum */
-	now = ktime_get();
-	delta_ms = ktime_ms_delta(now, ctx->timestamps.last_panel_fault_check_ts);
-	if (delta_ms < fault_detect_interval_ms && ctx->ddic_read_fail_cnt == 0) {
-		dev_dbg(dev, "skip fault detection (%lldms since last check, <%ums)\n", delta_ms,
-			fault_detect_interval_ms);
-		return 0;
-	}
-
-	/* Read fault registers */
-	ret = ctx->desc->gs_panel_func->detect_fault(ctx);
-
-	/* Count raw panel errors (unmasked) for statistics */
-	for_each_set_bit(bit, ctx->panel_errors, GS_PANEL_ERR_MAX) {
-		ctx->panel_errors_cnt[bit]++;
-	}
-
-	if (unlikely(GS_PANEL_ERR_MAX > 64)) {
-		dev_warn(ctx->dev, "panel_errors size (%u) > 64, skip mask\n", GS_PANEL_ERR_MAX);
-	} else {
-		DECLARE_BITMAP(mask, 64);
-
-		bitmap_from_u64(mask, ctx->desc->panel_errors_mask);
-		bitmap_and(ctx->panel_errors, ctx->panel_errors, mask, GS_PANEL_ERR_MAX);
-	}
-	trace_panel_errors(ctx->gs_connector->panel_index, ctx->panel_errors);
-
-	if (!bitmap_empty(ctx->panel_errors, GS_PANEL_ERR_MAX))
-		gs_fault_event_emit(ctx->dev, GS_FAULT_EVENT_TYPE_PANEL_ERROR,
-				    ctx->panel_errors[0]);
-
-	/* Update last fault check timestamp */
-	ctx->timestamps.last_panel_fault_check_ts = now;
-
-	return ret;
-}
-
 static void gs_panel_commit_properties(struct gs_panel *ctx,
 					   struct gs_drm_connector_state *conn_state)
 {
@@ -966,9 +912,13 @@ static void gs_panel_connector_atomic_commit(struct gs_drm_connector *gs_connect
 	mutex_lock(&ctx->mode_lock);
 	if (gs_panel_has_func(ctx, commit_done))
 		ctx->desc->gs_panel_func->commit_done(ctx);
-	/* TODO(b/461659134): add panel specific coredump for panel errors */
-	if (gs_panel_has_func(ctx, detect_fault))
-		gs_panel_run_detect_fault(ctx);
+	if (gs_panel_has_func(ctx, detect_fault) && ctx->desc->fault_detect_interval_ms &&
+	    !ctx->detect_fault_work_scheduled) {
+		struct gs_panel_background_work_data *work_data = &ctx->detect_fault_work_data;
+
+		ctx->detect_fault_work_scheduled = true;
+		kthread_queue_work(&(work_data->worker), &(work_data->work));
+	}
 
 	ctx->mode_in_progress = MODE_DONE;
 	/*TODO(b/267170999): MODE*/

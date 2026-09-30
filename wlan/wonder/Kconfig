@@ -14,11 +14,6 @@ config WONDER_SUPPORT
 		for testing, development, or specific Wonder-based applications.
 		It allows for simulation and control of WiFi operations.
 
-config WONDER_SYNA_SUPPORT
-	tristate "Wonder Vendor Support - SYNA"
-	default n
-	help
-		Wonder Vendor Support - SYNA
 
 config WONDER_TX_DEBUG
 	tristate "Wonder TX Debug Message Support"

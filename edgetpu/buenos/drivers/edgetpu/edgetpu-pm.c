@@ -216,10 +216,8 @@ static int try_force_power_domain_reboot(struct edgetpu_dev *etdev)
 	}
 
 	ret = pm_runtime_put_sync(etdev->dev);
-	if (ret) {
-		etdev_err(etdev, "pm_runtime_put failed for forced reboot %d", ret);
-		return ret;
-	}
+	if (ret)
+		etdev_warn(etdev, "forced reboot pm_runtime_put_sync returned %d", ret);
 
 	do {
 		if (edgetpu_poll_block_off(etdev))
@@ -357,6 +355,9 @@ out:
 		/* Only send limits to FW if at least one has been set. */
 		if (etdev->pm->min_freq || etdev->pm->max_freq)
 			mobile_pwr_update_freq_limits_locked(etdev);
+		/* Restore Coresight remote tracing state if enabled. */
+		if (!IS_ERR_OR_NULL(etdev->coresight_remote))
+			gcip_coresight_remote_restore_state(etdev->coresight_remote);
 		mutex_unlock(&etdev->pm->freq_limits_lock);
 	}
 
@@ -376,9 +377,11 @@ static int mobile_power_up(void *data)
 
 static void mobile_firmware_down(struct edgetpu_dev *etdev)
 {
-	int ret;
+	int ret = 0;
 
-	ret = edgetpu_kci_shutdown(etdev->etkci);
+	if (!edgetpu_pm_always_on(etdev))
+		ret = edgetpu_kci_shutdown(etdev->etkci);
+
 	if (!ret)
 		return;
 
@@ -440,10 +443,8 @@ static int do_power_down(struct edgetpu_dev *etdev)
 	res = pm_runtime_put_sync(etdev->dev);
 	edgetpu_eventlog_event(etdev, EVENTLOG_EVENT_POWER_RPMDONE,
 			       (void *)edgetpu_soc_pm_is_block_off(etdev));
-	if (res) {
-		etdev_err(etdev, "pm_runtime_put_sync returned %d\n", res);
-		return res;
-	}
+	if (res)
+		etdev_warn(etdev, "power down: pm_runtime_put_sync returned %d\n", res);
 
 	edgetpu_soc_pm_power_down(etdev);
 
@@ -552,8 +553,8 @@ int edgetpu_pm_create(struct edgetpu_dev *etdev)
 
 	mutex_init(&etdev->pm->policy_lock);
 	etdev->pm->curr_policy = etdev->max_active_state;
-	/* Set always_on if enabled by chip headers and for unit tests. */
-	if (EDGETPU_FEATURE_ALWAYS_ON || IS_ENABLED(CONFIG_EDGETPU_TEST))
+	/* Set always_on for unit tests. */
+	if (IS_ENABLED(CONFIG_EDGETPU_TEST))
 		etdev->pm->always_on = true;
 	etdev->pm->gpm = gcip_pm_create(&args);
 	if (IS_ERR(etdev->pm->gpm)) {

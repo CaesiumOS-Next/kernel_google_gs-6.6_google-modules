@@ -10377,6 +10377,14 @@ dhd_tput_test(dhd_pub_t *dhd, tput_test_t *tput_data)
 		err_exit = BCME_BUSY;
 		goto exit_error;
 	}
+
+	if (tput_data->payload_size < TPUT_TEST_MIN_PAYLOAD_SIZE) {
+		DHD_ERROR(("%s: min payload size is %u !\n", __FUNCTION__,
+			TPUT_TEST_MIN_PAYLOAD_SIZE));
+		err_exit = BCME_BADOPTION;
+		goto exit_error;
+	}
+
 #ifdef PCIE_FULL_DONGLE
 	/*
 	 * 100 bytes to accommodate ether header and tput header. As of today

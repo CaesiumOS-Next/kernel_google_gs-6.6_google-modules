@@ -93,7 +93,7 @@ void pixelmd_write_event(enum pixelmd_source source, unsigned long event_code, c
 	struct pixelmd_event_header header;
 
 	// Don't do anything if there are no clients that have the source enabled.
-	if (atomic_read(&pixelmd_clients.source_enable_counts[source]) == 0)
+	if (!pixelmd_clients_source_is_enabled(source))
 		return;
 
 	if (!init_header(&header, event_code, payload_size))

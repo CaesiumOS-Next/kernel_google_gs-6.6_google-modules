@@ -9,7 +9,10 @@
 #include <linux/vmalloc.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_bridge.h>
+#include <drm/drm_connector.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_encoder.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_debugfs.h>
 #include <drm/drm_drv.h>
@@ -32,8 +35,11 @@
 #include "vs_drm_atomic.h"
 #include "vs_drm_state_record.h"
 #include "vs_drv.h"
+#include "vs_sscd.h"
 #include "vs_gem.h"
 #include "vs_simple_enc.h"
+#include "vs_task_fence.h"
+#include "vs_trace.h"
 
 #define DRV_NAME "vs-drm"
 #define DRV_DESC "VeriSilicon DRM driver"
@@ -66,15 +72,23 @@ static const struct drm_ioctl_desc vs_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(VS_TASK_FENCE, vs_task_fence_ioctl, DRM_MASTER),
 };
 
-static void vs_drm_lastclose(struct drm_device *dev)
+static void vs_drm_postclose(struct drm_device *drm_dev, struct drm_file *file_priv)
 {
-	drm_atomic_helper_shutdown(dev);
-	drm_mode_config_reset(dev);
+	/*
+	 * postclose is called each time a driver fd is released. If open_count
+	 * is 1, it means this was the last file open on the device, and we
+	 * should perform a full shutdown. Multiple applications (e.g.,
+	 * modetest), not just the single master, can have the DRM device open.
+	 */
+	if (atomic_read(&drm_dev->open_count) == 1) {
+		drm_atomic_helper_shutdown(drm_dev);
+		vs_dc_sw_reset(drm_dev);
+	}
 }
 
 static struct drm_driver vs_drm_driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_GEM,
-	.lastclose = vs_drm_lastclose,
+	.postclose = vs_drm_postclose,
 	.gem_prime_import = vs_gem_prime_import,
 	.gem_prime_import_sg_table = vs_gem_prime_import_sg_table,
 	.dumb_create = vs_gem_dumb_create,
@@ -274,6 +288,21 @@ static int drm_debugfs_add_custom_entries(struct drm_device *drm_dev)
 
 #endif /* CONFIG_DEBUG_FS */
 
+static void vs_drm_update_wb_connectors_mask(struct drm_device *drm_dev)
+{
+	struct vs_drm_private *priv = drm_dev->dev_private;
+	struct drm_connector *connector;
+	struct drm_connector_list_iter conn_iter;
+
+	priv->wb_connectors_mask = 0;
+	drm_connector_list_iter_begin(drm_dev, &conn_iter);
+	drm_for_each_connector_iter(connector, &conn_iter) {
+		if (connector->connector_type == DRM_MODE_CONNECTOR_WRITEBACK)
+			priv->wb_connectors_mask |= drm_connector_mask(connector);
+	}
+	drm_connector_list_iter_end(&conn_iter);
+}
+
 /* platfrom driver */
 static int vs_drm_bind(struct device *dev)
 {
@@ -296,8 +325,13 @@ static int vs_drm_bind(struct device *dev)
 	priv->pitch_alignment = 64;
 	priv->addr_alignment = 128;
 	priv->dma_dev = drm_dev->dev;
+	priv->dsi_coredump_funcs.trigger_coredump = trigger_coredump;
 
 	drm_dev->dev_private = priv;
+
+	ret = vs_init_trace(dev);
+	if (ret)
+		dev_err(dev, "failed to enable traces\n");
 
 	drm_mode_config_init(drm_dev);
 
@@ -305,6 +339,8 @@ static int vs_drm_bind(struct device *dev)
 	ret = component_bind_all(dev, drm_dev);
 	if (ret)
 		goto err_mode;
+
+	vs_drm_update_wb_connectors_mask(drm_dev);
 
 	vs_mode_config_init(drm_dev);
 

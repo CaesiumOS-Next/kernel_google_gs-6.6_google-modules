@@ -1100,6 +1100,7 @@ typedef enum
 	                                                                                          \n Command data: None */
 	RGXFWIF_FWCCB_CMD_UPDATE_STATS                  = 107U | RGX_CMD_MAGIC_DWORD_SHIFTED,   /*!< Requests an on-demand update on process stats
 	                                                                                          \n Command data: RGXFWIF_FWCCB_CMD_UPDATE_STATS_DATA */
+	RGXFWIF_FWCCB_CMD_CORE_CLK_RATE_CHANGE          = 108U | RGX_CMD_MAGIC_DWORD_SHIFTED,
 	RGXFWIF_FWCCB_CMD_REQUEST_GPU_RESTART           = 109U | RGX_CMD_MAGIC_DWORD_SHIFTED,   /*!< Requests GPU restart
 	                                                                                          \n Command data: None */
 	RGXFWIF_FWCCB_CMD_CONTEXT_FW_PF_NOTIFICATION    = 112U | RGX_CMD_MAGIC_DWORD_SHIFTED,   /*!< Notifies host of a FW pagefault
@@ -1133,6 +1134,12 @@ typedef struct
 	IMG_INT32								i32AdjustmentValue;			/*!< Adjustment to be made to the statistic */
 } RGXFWIF_FWCCB_CMD_UPDATE_STATS_DATA;
 
+typedef struct
+{
+	IMG_UINT32 ui32CoreClkRate;
+} UNCACHED_ALIGN RGXFWIF_FWCCB_CMD_CORE_CLK_RATE_CHANGE_DATA;
+
+
 /*!
  ******************************************************************************
  * @Brief Firmware CCB command structure
@@ -1149,6 +1156,7 @@ typedef struct
 		RGXFWIF_FWCCB_CMD_FREELISTS_RECONSTRUCTION_DATA		sCmdFreeListsReconstruction;	/*!< Data for freelists reconstruction */
 		RGXFWIF_FWCCB_CMD_CONTEXT_RESET_DATA				sCmdContextResetNotification;	/*!< Data for context reset notification */
 		RGXFWIF_FWCCB_CMD_UPDATE_STATS_DATA					sCmdUpdateStatsData;			/*!< Data for updating process stats */
+		RGXFWIF_FWCCB_CMD_CORE_CLK_RATE_CHANGE_DATA			sCmdCoreClkRateChange;
 		RGXFWIF_FWCCB_CMD_FW_PAGEFAULT_DATA					sCmdFWPagefault;				/*!< Data for context reset notification */
 	} RGXFW_ALIGN uCmdData;
 } RGXFW_ALIGN RGXFWIF_FWCCB_CMD;
@@ -1725,13 +1733,7 @@ typedef struct
 
 #if defined(SUPPORT_FW_OPP_TABLE) && !defined(SUPPORT_OPEN_SOURCE_DRIVER_FIRMWARE)
 	RGXFWIF_OPP_INFO        RGXFW_ALIGN sOPPInfo;
-
-	/**
-	 * FW Pointer to memory containing core clock rate in Hz.
-	 * Firmware (PDVFS) updates the memory when running on non primary FW thread
-	 * to communicate to host driver.
-	 */
-	PRGXFWIF_CORE_CLK_RATE  RGXFW_ALIGN sCoreClockRate;
+	PRGXFWIF_CORE_CLK_RATE  RGXFW_ALIGN sReserved;
 #endif
 
 #if defined(SUPPORT_PDVFS)

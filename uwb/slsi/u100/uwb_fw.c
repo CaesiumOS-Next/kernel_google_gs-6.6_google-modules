@@ -4,11 +4,14 @@
  *
  */
 
-#include <linux/kthread.h>
 #include <linux/crc32.h>
 #include <linux/delay.h>
-#include <linux/module.h>
+#include <linux/kernel.h>
 #include <linux/ktime.h>
+#include <linux/module.h>
+#include <linux/overflow.h>
+#include <linux/slab.h>
+#include <linux/string.h>
 
 #include "include/uwb.h"
 #include "include/uwb_fw.h"

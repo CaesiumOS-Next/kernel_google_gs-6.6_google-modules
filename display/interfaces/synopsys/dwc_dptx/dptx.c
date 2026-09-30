@@ -14,7 +14,6 @@
 #include "hdcp.h"
 #endif // CONFIG_DWC_DPTX_HDCP
 #include "rst_mng.h"
-#include "phy/phy_n621.h"
 #include "regmaps/ctrl_fields.h"
 #include "regmaps/regfields.h"
 #include "intr.h"
@@ -32,16 +31,16 @@ struct dptx *dptx_get_handle(void)
 
 struct dptx_clock {
 	const char *id;
-	const u64 init_rate;
-	const u64 deinit_rate;
+	const unsigned long init_rate;
+	const unsigned long deinit_rate;
 };
 
 static struct dptx_clock dptx_pixel_clks[DPTX_NUM_PIXEL_CLKS] = {
-	{"hsion_pll_dp_clk", 38400000, 38400000},
-	{"hsion_pix_clk0", 2, 38400000},
-	{"hsion_pix_clk1", 2, 38400000},
-	{"dpu_pix_clk0", 2, 38400000},
-	{"dpu_pix_clk1", 2, 38400000},
+	[GPCM_PLLDP] = {"gpcm_pll_dp_clk", 38400000, 38400000},
+	[HSION_PIX0] = {"hsion_pix_clk0", 2, 38400000},
+	[DPU_PIX0]   = {"dpu_pix_clk0", 2, 38400000},
+	[HSION_PIX1] = {"hsion_pix_clk1", 2, 38400000},
+	[DPU_PIX1]   = {"dpu_pix_clk1", 2, 38400000},
 };
 
 static int dptx_parse_clocks(struct dptx *dptx)
@@ -227,13 +226,20 @@ static void dptx_work_hpd(struct dptx *dptx, enum hotplug_state state)
 		/* Enable HSIO_N DP clocks */
 		ret = clk_bulk_prepare_enable(DPTX_NUM_PIXEL_CLKS, dptx->pixel_clks);
 		if (ret) {
-			dptx_err(dptx, "clk prepare enable failed\n");
+			dptx_err(dptx, "[HPD_PLUG] clk_prepare_enable failed (%d)\n", ret);
 			goto hpd_plug_fail_clk;
 		}
 
 		/* Set initial clock rates */
-		for (i = 0; i < DPTX_NUM_PIXEL_CLKS; i++)
-			clk_set_rate(dptx->pixel_clks[i].clk, dptx_pixel_clks[i].init_rate);
+		for (i = 0; i < DPTX_NUM_PIXEL_CLKS; i++) {
+			ret = clk_set_rate(dptx->pixel_clks[i].clk, dptx_pixel_clks[i].init_rate);
+			if (ret) {
+				dptx_err(dptx, "[HPD_PLUG] clk_set_rate(%s, %lu) failed (%d)\n",
+					 dptx->pixel_clks[i].id, dptx_pixel_clks[i].init_rate,
+					 ret);
+				goto hpd_plug_fail_clk_rate;
+			}
+		}
 
 		/*
 		 * Enable DP_TOP power domain
@@ -318,6 +324,15 @@ static void dptx_work_hpd(struct dptx *dptx, enum hotplug_state state)
 		if (ret)
 			dptx_err(dptx, "[HPD_UNPLUG] DPU_PD: PM put failed (%d)\n", ret);
 
+		/* Set deinit clock rates, so that next hotplug will force clock rate change */
+		for (i = 0; i < DPTX_NUM_PIXEL_CLKS; i++) {
+			ret = clk_set_rate(dptx->pixel_clks[i].clk, dptx_pixel_clks[i].deinit_rate);
+			if (ret)
+				dptx_err(dptx, "[HPD_UNPLUG] clk_set_rate(%s, %lu) failed (%d)\n",
+					 dptx->pixel_clks[i].id, dptx_pixel_clks[i].deinit_rate,
+					 ret);
+		}
+
 		/*
 		 * Disable DP_TOP power domain
 		 * See CPM function: hsio_n_psm5_p0_p1_trans()
@@ -325,10 +340,6 @@ static void dptx_work_hpd(struct dptx *dptx, enum hotplug_state state)
 		ret = pm_runtime_put_sync(dptx->pd_dev[HSION_DP_PD]);
 		if (ret)
 			dptx_err(dptx, "[HPD_UNPLUG] HSION: PM put failed (%d)\n", ret);
-
-		/* Set deinit clock rates, so that next hotplug will force clock rate change */
-		for (i = 0; i < DPTX_NUM_PIXEL_CLKS; i++)
-			clk_set_rate(dptx->pixel_clks[i].clk, dptx_pixel_clks[i].deinit_rate);
 
 		/* Disable HSIO_N DP clocks */
 		clk_bulk_disable_unprepare(DPTX_NUM_PIXEL_CLKS, dptx->pixel_clks);
@@ -368,6 +379,7 @@ hpd_plug_fail_pm_dpu_dp:
 hpd_plug_fail_pm:
 	for (i = 0; i < DPTX_NUM_PIXEL_CLKS; i++)
 		clk_set_rate(dptx->pixel_clks[i].clk, dptx_pixel_clks[i].deinit_rate);
+hpd_plug_fail_clk_rate:
 	clk_bulk_disable_unprepare(DPTX_NUM_PIXEL_CLKS, dptx->pixel_clks);
 hpd_plug_fail_clk:
 	ret = pm_runtime_put_sync(dptx->pd_dev[SSWRP_DPU_PD]);
@@ -518,11 +530,16 @@ static int dptx_bridge_atomic_check(struct drm_bridge *br, struct drm_bridge_sta
 	 * If HPD_UNPLUG is pending/running or DP link is down,
 	 * do not enable video or allow mode changes.
 	 */
-	if (cr_s->active && drm_atomic_crtc_needs_modeset(cr_s) &&
-	    (dptx_get_hpd_state(dptx) == HPD_UNPLUG || dptx->hpd_unplug_running ||
-	     !dptx->link.trained)) {
-		dptx_dbg_bridge(dptx, "ATOMIC CHECK: HPD_UNPLUG pending/running or DP link down\n");
-		return -ENOTCONN;
+	if (cr_s->active && drm_atomic_crtc_needs_modeset(cr_s)) {
+		if (dptx->hpd_unplug_running || dptx->hpd_irq_unplug_running) {
+			dptx_dbg_bridge(dptx, "ATOMIC CHECK: HPD_UNPLUG or HPD_IRQ running\n");
+			return -ENOTCONN;
+		}
+
+		if (dptx_get_hpd_state(dptx) == HPD_UNPLUG || !dptx->link.trained) {
+			dptx_dbg_bridge(dptx, "ATOMIC CHECK: HPD_UNPLUG state or DP link down\n");
+			return -ENOTCONN;
+		}
 	}
 
 	return 0;
@@ -533,10 +550,14 @@ void dptx_video_disable(struct dptx *dptx)
 	/* Disable DP audio */
 	dptx_audio_notify(dptx, DPTX_AUDIO_DISCONNECT);
 
-#if IS_ENABLED(CONFIG_DWC_DPTX_HDCP)
 	/* Disable HDCP */
+#if IS_ENABLED(CONFIG_DWC_DPTX_HDCP)
 	dptx_hdcp_disconnect(dptx);
 #endif // CONFIG_DWC_DPTX_HDCP
+
+	/* Disable SDPs */
+	dptx_spd_sdp_en(dptx, 0);
+	dptx_vsc_sdp_en(dptx, 0);
 
 	/* Disable video */
 	dptx_disable_default_video_stream(dptx, 0);
@@ -569,6 +590,8 @@ static void dptx_bridge_atomic_enable(struct drm_bridge *br, struct drm_bridge_s
 	struct drm_crtc *crtc = drm_atomic_get_new_crtc_for_encoder(old_s, br->encoder);
 	struct drm_crtc_state *crtc_s = drm_atomic_get_new_crtc_state(old_s, crtc);
 	struct drm_display_mode *adj_m = &crtc_s->adjusted_mode;
+	struct clk_bulk_data *clk;
+	int ret;
 
 	mutex_lock(&dptx->mutex);
 
@@ -599,29 +622,36 @@ static void dptx_bridge_atomic_enable(struct drm_bridge *br, struct drm_bridge_s
 	 * Support for 1/2 of pixel clock rate must be present in CPM and DT.
 	 * dptx_bridge_mode_valid() ensures that non-supported modes are filtered out.
 	 */
-	clk_set_rate(dptx->pixel_clks[0].clk, dptx->current_mode.clock * 1000 / 2);
-	dptx_dbg_bridge(dptx, "%s: %s rate = %lu\n", __func__, dptx->pixel_clks[0].id,
-			clk_get_rate(dptx->pixel_clks[0].clk));
+	clk = &dptx->pixel_clks[GPCM_PLLDP];
+	ret = clk_set_rate(clk->clk, dptx->current_mode.clock * 1000 / 2);
+	dptx_dbg_bridge(dptx, "%s: %s = %lu (%d)\n", __func__,
+			clk->id, clk_get_rate(clk->clk), ret);
 
 	/*
 	 * Adjust HSIO_N DP0 pixel clock to use divisor 2 to get 1/4 of pixel clock rate
 	 */
-	clk_set_rate(dptx->pixel_clks[1].clk, 2);
-	dptx_dbg_bridge(dptx, "%s: %s rate = %lu\n", __func__, dptx->pixel_clks[1].id,
-			clk_get_rate(dptx->pixel_clks[1].clk));
+	clk = &dptx->pixel_clks[HSION_PIX0];
+	ret = clk_set_rate(clk->clk, 2);
+	dptx_dbg_bridge(dptx, "%s: %s = %lu (%d)\n", __func__,
+			clk->id, clk_get_rate(clk->clk), ret);
 
 	/*
 	 * Adjust DPU DP0 pixel clock to use divisor 2 to get 1/4 of pixel clock rate
 	 */
-	clk_set_rate(dptx->pixel_clks[3].clk, 2);
-	dptx_dbg_bridge(dptx, "%s: %s rate = %lu\n", __func__, dptx->pixel_clks[3].id,
-			clk_get_rate(dptx->pixel_clks[3].clk));
+	clk = &dptx->pixel_clks[DPU_PIX0];
+	ret = clk_set_rate(clk->clk, 2);
+	dptx_dbg_bridge(dptx, "%s: %s = %lu (%d)\n", __func__,
+			clk->id, clk_get_rate(clk->clk), ret);
 
 	/* Initiate video mode change */
 	dptx_video_mode_change(dptx, vparams->mode, 0);
 
-#if IS_ENABLED(CONFIG_DWC_DPTX_HDCP)
+	/* Enable SDPs */
+	dptx_spd_sdp_en(dptx, 1);
+	dptx_vsc_sdp_en(dptx, 1);
+
 	/* Initiate HDCP */
+#if IS_ENABLED(CONFIG_DWC_DPTX_HDCP)
 	dptx_hdcp_connect(dptx, 1);
 #endif // CONFIG_DWC_DPTX_HDCP
 
@@ -659,8 +689,11 @@ static enum drm_connector_status dptx_bridge_detect(struct drm_bridge *br)
 	struct dptx *dptx = container_of(br, struct dptx, bridge);
 
 	dptx_dbg_bridge(dptx, "%s\n", __func__);
-	return (!dptx->hpd_unplug_running && dptx_get_hpd_state(dptx) == HPD_PLUG &&
-		dptx->link.trained) ?
+
+	if (dptx->hpd_unplug_running || dptx->hpd_irq_unplug_running)
+		return connector_status_disconnected;
+
+	return (dptx_get_hpd_state(dptx) == HPD_PLUG && dptx->link.trained) ?
 		connector_status_connected : connector_status_disconnected;
 }
 
@@ -672,8 +705,10 @@ static const struct drm_edid *dptx_bridge_edid_read(struct drm_bridge *br, struc
 
 	co->ycbcr_420_allowed = dptx->ycbcr_420_en;
 
-	return (!dptx->hpd_unplug_running && dptx_get_hpd_state(dptx) == HPD_PLUG &&
-		dptx->link.trained) ?
+	if (dptx->hpd_unplug_running || dptx->hpd_irq_unplug_running)
+		return NULL;
+
+	return (dptx_get_hpd_state(dptx) == HPD_PLUG && dptx->link.trained) ?
 		drm_edid_alloc(dptx->edid, dptx->edid_size) : NULL;
 }
 
@@ -685,8 +720,10 @@ static struct edid *dptx_bridge_get_edid(struct drm_bridge *br, struct drm_conne
 
 	co->ycbcr_420_allowed = dptx->ycbcr_420_en;
 
-	return (!dptx->hpd_unplug_running && dptx_get_hpd_state(dptx) == HPD_PLUG &&
-		dptx->link.trained) ?
+	if (dptx->hpd_unplug_running || dptx->hpd_irq_unplug_running)
+		return NULL;
+
+	return (dptx_get_hpd_state(dptx) == HPD_PLUG && dptx->link.trained) ?
 		kmemdup(dptx->edid, dptx->edid_size, GFP_KERNEL) : NULL;
 }
 
@@ -699,14 +736,17 @@ struct dptx_allowed_mode {
 static struct dptx_allowed_mode dptx_allowed_modes[] = {
 	{3840, 2160, 594000},  /* CEA-861 */
 	{3840, 2160, 533250},  /* CVT-RB */
+	{3840, 2160, 522610},  /* CVT-RBv2 */
 	{3840, 2160, 297000},  /* CEA-861 */
 	{3840, 1600, 395000},  /* CVT-RB */
 	{3440, 1440, 319750},  /* CVT-RB */
 	{2560, 1600, 348500},  /* DMT 0x4D */
 	{2560, 1440, 241500},  /* CVT-RB */
 	{2560, 1440, 237600},  /* Custom */
+	{2560, 1440, 234590},  /* CVT-RBv2 */
 	{2560, 1080, 198000},  /* CEA-861 */
 	{1920, 1200, 193250},  /* DMT 0x45 */
+	{1920, 1200, 154000},  /* CVT-RB */
 	{1920, 1080, 297000},  /* CEA-861 */
 	{1920, 1080, 148500},  /* DMT 0x52 | CEA-861 */
 	{1920, 1080, 135000},  /* Custom */
@@ -921,6 +961,7 @@ static int dptx_probe(struct platform_device *pdev)
 	/* Create workqueue and works for HPD */
 	dptx->dp_wq = create_singlethread_workqueue(dev_name(&pdev->dev));
 	if (!dptx->dp_wq) {
+		retval = -ENOMEM;
 		dptx_err(dptx, "DP workqueue creation failed\n");
 		goto fail_wq;
 	}
@@ -935,23 +976,6 @@ static int dptx_probe(struct platform_device *pdev)
 	dptx->bridge.type = DRM_MODE_CONNECTOR_DisplayPort;
 	devm_drm_bridge_add(dptx->dev, &dptx->bridge);
 
-#if 0
-	/* TODO: revisit DPTX MEM requirements */
-	for (i = 0; i < MAX_MEM_IDX; i++) {
-		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
-		if (!res) {
-			dev_err(dev, "Failed to get memory resource %d\n", i);
-			return -ENODEV;
-		}
-
-		dptx->base[i] = devm_ioremap_resource(dev, res);
-		if (IS_ERR(dptx->base[i])) {
-			dev_err(dev, "Failed to map memory resource\n");
-			return PTR_ERR(dptx->base[i]);
-		}
-	}
-#endif
-
 	retval = init_regfields(dptx);
 	if (retval) {
 		goto fail;
@@ -963,18 +987,6 @@ static int dptx_probe(struct platform_device *pdev)
 		retval = -ENODEV;
 		goto fail;
 	}
-
-#if 0
-	/* TODO: revisit DPTX IRQ requirements */
-	/* Get IRQ numbers from device */
-	dev_info(dev, "Get IRQ numbers\n");
-	for (i = 0; i < MAX_IRQ_IDX; i++) {
-		dptx->irq[i] = platform_get_irq(pdev, i);
-		if (dptx->irq[i] < 0)
-			break;
-		dev_info(dev, "IRQ number %d.\n", dptx->irq[i]);
-	}
-#endif
 
 	dptx->cr_fail = false;
 	dptx->mst = false; // Should be disabled for HDCP.
@@ -998,6 +1010,8 @@ static int dptx_probe(struct platform_device *pdev)
 
 	dptx->bstatus = 0;
 	dptx->link_test_mode = false;
+	dptx->link_test_force_cr = false;
+	dptx->link_test_force_cheq = false;
 	dptx->ycbcr_420_en = true;
 
 	platform_set_drvdata(pdev, dptx);
@@ -1011,46 +1025,14 @@ static int dptx_probe(struct platform_device *pdev)
 
 	dptx_init_hwparams(dptx);
 
-	retval = dptx_core_init(dptx);
-	if (retval)
-		goto fail;
-
 #if IS_ENABLED(CONFIG_DWC_DPTX_HDCP)
 	retval = dptx_hdcp_probe(dptx);
 	if (retval)
 		goto fail;
 #endif // CONFIG_DWC_DPTX_HDCP
 
-	dptx_audio_config(dptx);
-	dptx_video_config(dptx, 0);
-
 	init_completion(&dptx->audio_disable_done);
 	BLOCKING_INIT_NOTIFIER_HEAD(&dptx->audio_notifier_head);
-
-	//TODO: phy_n621_power_up(dptx);
-
-	//Add controller reset
-	//TODO: rst_dptx_ctrl(dptx);
-#if 0
-	retval = dptx_core_init(dptx);
-	if (retval)
-		goto fail;
-#endif
-
-#if 0
-	/* TODO: revisit DPTX IRQ requirements */
-	retval = devm_request_threaded_irq(dptx->dev,
-					   dptx->irq[MAIN_IRQ],
-					   dptx_irq,
-					   dptx_threaded_irq,
-					   IRQF_SHARED | IRQ_LEVEL,
-					   "dwc_dptx_main_handler",
-					   dptx);
-	if (retval) {
-		dev_err(dev, "Request for irq %d failed\n", dptx->irq[MAIN_IRQ]);
-		return retval;
-	}
-#endif
 
 	retval = pm_runtime_put_sync(dptx->pd_dev[HSION_DP_PD]);
 	if (retval)

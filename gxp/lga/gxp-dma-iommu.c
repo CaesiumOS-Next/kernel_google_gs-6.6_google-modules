@@ -38,8 +38,7 @@ static int iommu_fault_handler(struct iommu_fault *fault, void *token)
 {
 	struct device *dev = token;
 
-	switch (fault->type) {
-	case IOMMU_FAULT_DMA_UNRECOV:
+	if (fault->type == IOMMU_FAULT_DMA_UNRECOV) {
 		dev_err(dev, "Unrecoverable IOMMU fault!\n");
 		dev_err(dev, "reason = %08X\n", fault->event.reason);
 		dev_err(dev, "flags = %08X\n", fault->event.flags);
@@ -47,16 +46,7 @@ static int iommu_fault_handler(struct iommu_fault *fault, void *token)
 		dev_err(dev, "perm = %08X\n", fault->event.perm);
 		dev_err(dev, "addr = %llX\n", fault->event.addr);
 		dev_err(dev, "fetch_addr = %llX\n", fault->event.fetch_addr);
-		break;
-	case IOMMU_FAULT_PAGE_REQ:
-		dev_err(dev, "IOMMU page request fault!\n");
-		dev_err(dev, "flags = %08X\n", fault->prm.flags);
-		dev_err(dev, "pasid = %08X\n", fault->prm.pasid);
-		dev_err(dev, "grpid = %08X\n", fault->prm.grpid);
-		dev_err(dev, "perm = %08X\n", fault->prm.perm);
-		dev_err(dev, "addr = %llX\n", fault->prm.addr);
-		break;
-	default:
+	} else {
 		dev_err(dev, "Unexpected IOMMU fault type (%d)\n", fault->type);
 	}
 

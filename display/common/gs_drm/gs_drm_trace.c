@@ -13,4 +13,5 @@ EXPORT_TRACEPOINT_SYMBOL(tracing_mark_write);
 EXPORT_TRACEPOINT_SYMBOL(reg_dump_header);
 EXPORT_TRACEPOINT_SYMBOL(reg_dump_line);
 EXPORT_TRACEPOINT_SYMBOL(disp_dpu_underrun);
+EXPORT_TRACEPOINT_SYMBOL(disp_dpu_line_underrun);
 EXPORT_TRACEPOINT_SYMBOL(disp_vblank_irq_enable);

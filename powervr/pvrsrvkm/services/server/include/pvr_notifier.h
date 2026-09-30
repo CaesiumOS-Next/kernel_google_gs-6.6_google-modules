@@ -92,6 +92,21 @@ PVRSRVRegisterCmdCompleteNotify(IMG_HANDLE *phNotify,
                                 PVRSRV_CMDCOMP_HANDLE hPrivData);
 
 /*************************************************************************/ /*!
+@Function       PVRSRVRegisterLowPrioCmdCompleteNotify
+@Description    Same as PVRSRVRegisterCmdCompleteNotify, but will service the
+                callbacks registered via this function after those registered
+                via PVRSRVRegisterCmdCompleteNotify, when possible.
+@Output         phNotify             Same as PVRSRVRegisterCmdCompleteNotify
+@Input          pfnCmdCompleteNotify Same as PVRSRVRegisterCmdCompleteNotify
+@Input          hPrivData            Same as PVRSRVRegisterCmdCompleteNotify
+@Return         PVRSRV_ERROR         Same as PVRSRVRegisterCmdCompleteNotify
+*/ /**************************************************************************/
+PVRSRV_ERROR
+PVRSRVRegisterLowPrioCmdCompleteNotify(IMG_HANDLE *phNotify,
+                                       PFN_CMDCOMP_NOTIFY pfnCmdCompleteNotify,
+                                       PVRSRV_CMDCOMP_HANDLE hPrivData);
+
+/*************************************************************************/ /*!
 @Function       PVRSRVUnregisterCmdCompleteNotify
 @Description    Unregister a previously registered callback function.
 @Input          hNotify              Command complete notifier handle

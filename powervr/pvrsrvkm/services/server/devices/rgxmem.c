@@ -909,6 +909,11 @@ void RGXCheckFaultAddress(PVRSRV_RGXDEV_INFO *psDevInfo,
 		SERVER_MMU_CONTEXT *psServerMMUContext =
 			IMG_CONTAINER_OF(psNode, SERVER_MMU_CONTEXT, sNode);
 
+		if (!MMU_ContextIsValid(psServerMMUContext->psMMUContext))
+		{
+			continue;
+		}
+
 		if (MMU_AcquireBaseAddr(psServerMMUContext->psMMUContext, &sPCDevPAddr) != PVRSRV_OK)
 		{
 			PVR_LOG(("Failed to get PC address for memory context"));
@@ -925,9 +930,15 @@ void RGXCheckFaultAddress(PVRSRV_RGXDEV_INFO *psDevInfo,
 	/* Lastly check for fault in the kernel allocated memory */
 	if (!PVRSRV_VZ_MODE_IS(GUEST, DEVINFO, psDevInfo))
 	{
+		if (!MMU_ContextIsValid(psDevInfo->psKernelMMUCtx))
+		{
+			goto out_unlock;
+		}
+
 		if (MMU_AcquireBaseAddr(psDevInfo->psKernelMMUCtx, &sPCDevPAddr) != PVRSRV_OK)
 		{
 			PVR_LOG(("Failed to get PC address for kernel memory context"));
+			goto out_unlock;
 		}
 
 		if (psDevPAddr->uiAddr == sPCDevPAddr.uiAddr)

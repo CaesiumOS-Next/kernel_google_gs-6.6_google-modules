@@ -202,6 +202,15 @@ static ssize_t show_latency_stats(struct kobject *kobj, struct attribute *attr,
 	else if (kobj == &lat->pd_fw_exit_transition_stats)
 		val = get_latency_stats_attr(&lat->latency_data.fw_exit_transition,
 					       attr);
+	else if (kobj == &lat->pd_tf_a_entry_stats)
+		val = get_latency_stats_attr(&lat->latency_data.tf_a_entry,
+					       attr);
+	else if (kobj == &lat->pd_tf_a_exit_stats)
+		val = get_latency_stats_attr(&lat->latency_data.tf_a_exit,
+					       attr);
+	else if (kobj == &lat->pd_tf_a_boot_stats)
+		val = get_latency_stats_attr(&lat->latency_data.tf_a_boot,
+					       attr);
 	else if (kobj == &lat->pd_e2e_entry_stats)
 		val = get_latency_stats_attr(&lat->latency_data.e2e_entry,
 					       attr);
@@ -258,86 +267,140 @@ static struct cpu_lpm_data *get_exiting_cpu_cluster_pd_lpm_data(
 	return NULL;
 }
 
-static void update_stats(struct device *dev,
-			const char *pm_domain_name,
-			struct cpu_lpm_data *lat,
-			struct cpu_lpm_stats_elem *data,
-			struct cpu_latency_stats_elem *latency_data,
-			u64 now,
-			struct timestamps_buffer *ts_buff)
+static int get_state_idx(struct device *dev,
+					struct cpu_lpm_data *lat)
 {
-	u64 fw_entry, fw_exit, e2e_entry, e2e_exit, delta, fw_sched_exit,
-		fw_exit_transition, fw_sched_entry, fw_entry_transition;
-	u64 last_entry_start_ts, last_exit_end_ts;
-	struct timestamps_buffer secondary_ts_buff;
-	struct cpu_lpm_data *exiting_cpu_lpm_data = get_exiting_cpu_pd_lpm_data();
+	struct generic_pm_domain *pm_domain =
+		pd_to_genpd(lat->genpd_dev->pm_domain);
+	unsigned int state_idx = pm_domain->state_idx;
+
+	if (state_idx >= lat->power_state_count) {
+		dev_err(dev,
+			"Domain %s state idx %u higher than its power state count %u\n",
+			lat->name, state_idx, lat->power_state_count
+		);
+		return -1;
+	}
+
+	return state_idx;
+}
+
+static int get_timestamp_buffer(struct device *dev,
+				struct cpu_lpm_data *lat,
+				struct cpu_lpm_data *exiting_cpu_lpm_data,
+				struct timestamps_buffer *ts_buff,
+				struct timestamps_buffer *fw_ts_buff,
+				struct timestamps_buffer *tf_a_ts_buff,
+				int read_firmware)
+{
 	struct cpu_lpm_data *exiting_cpu_cluster_lpm_stats;
+	int exiting_clstr_state_idx;
+	struct timestamps_buffer secondary_ts_buff;
 
-	if (!exiting_cpu_lpm_data)
-		return;
-
-	if (exiting_cpu_lpm_data == lat ||
+	if (read_firmware) {
+		*ts_buff = *tf_a_ts_buff;
+	} else if (exiting_cpu_lpm_data == lat ||
 		(exiting_cpu_lpm_data->cluster_pd_phandle == lat->power_domain_phandle)) {
-		last_entry_start_ts = ts_buff->last_entry_start_ts;
-		last_exit_end_ts = ts_buff->last_exit_end_ts;
+		*ts_buff = *fw_ts_buff;
 	} else {
 		exiting_cpu_cluster_lpm_stats = get_exiting_cpu_cluster_pd_lpm_data(
 			exiting_cpu_lpm_data);
 
 		if (!exiting_cpu_cluster_lpm_stats)
-			return;
+			return -EINVAL;
+
+		exiting_clstr_state_idx = get_state_idx(dev, exiting_cpu_cluster_lpm_stats);
+		if (exiting_clstr_state_idx < 0)
+			return -EINVAL;
 
 		if (read_cpu_pd_latency_stats(
-			exiting_cpu_cluster_lpm_stats->power_state,
-			&secondary_ts_buff))
-			return;
+			exiting_cpu_cluster_lpm_stats->power_state[exiting_clstr_state_idx],
+			&secondary_ts_buff, TYPE_CAP_CPU_POWER_STATS))
+			return -EINVAL;
 
-		last_entry_start_ts = secondary_ts_buff.last_entry_start_ts;
-		last_exit_end_ts = secondary_ts_buff.last_exit_end_ts;
+		ts_buff->last_entry_start_ts = secondary_ts_buff.last_entry_start_ts;
+		ts_buff->last_entry_end_ts = fw_ts_buff->last_entry_end_ts;
+		ts_buff->last_exit_end_ts = secondary_ts_buff.last_exit_end_ts;
+		ts_buff->last_exit_start_ts = fw_ts_buff->last_exit_start_ts;
 	}
 
-	/*
-	 * This is a case when ON notification is received
-	 * before any OFF was received. It has to be ignored
-	 * since it would corrupt avg, max and min data
-	 */
+	return 0;
+}
+
+static int validate_timestamps(struct device *dev,
+
+			     struct cpu_lpm_stats_elem *data, u64 now,
+			     struct timestamps_buffer *ts_buff,
+			     struct timestamps_buffer *fw_ts_buff,
+			     struct timestamps_buffer *tf_a_ts_buff,
+			     int read_firmware)
+{
+	u64 last_entry_sched_ts = fw_ts_buff->last_entry_sched_ts;
+	u64 last_entry_start_ts = ts_buff->last_entry_start_ts;
+	u64 last_entry_end_ts = ts_buff->last_entry_end_ts;
+	u64 last_exit_sched_ts = fw_ts_buff->last_exit_sched_ts;
+	u64 last_exit_start_ts = ts_buff->last_exit_start_ts;
+	u64 last_exit_end_ts = ts_buff->last_exit_end_ts;
+
 	if (data->last_entry_ts == 0)
-		return;
+		return -EINVAL;
+
+	if (now < data->last_entry_ts)
+		return -EINVAL;
 
 	data->last_exit_ts = now;
-	if (now < data->last_entry_ts)
-		return;
+	if (!(data->last_entry_ts < tf_a_ts_buff->last_entry_start_ts &&
+		  tf_a_ts_buff->last_entry_start_ts < tf_a_ts_buff->last_entry_end_ts))
+		return -EINVAL;
 
-	// This is a rejection
-	if (ts_buff->last_entry_end_ts < last_entry_start_ts
-		|| ts_buff->last_entry_end_ts < data->last_entry_ts) {
-		return;
-	}
+	if (!(tf_a_ts_buff->last_entry_end_ts < tf_a_ts_buff->last_exit_start_ts &&
+		  tf_a_ts_buff->last_exit_start_ts < tf_a_ts_buff->last_exit_end_ts &&
+		  tf_a_ts_buff->last_exit_end_ts < data->last_exit_ts))
+		return -EINVAL;
 
-	if (last_exit_end_ts < ts_buff->last_exit_start_ts) {
-		dev_err(dev,
-			"Exit end ts lower than exit start ts for power domain %s\n",
-			pm_domain_name);
-		return;
-	}
+	if (read_firmware)
+		return 0;
 
-	if (ts_buff->last_exit_sched_ts != 0 && (
-		ts_buff->last_exit_sched_ts > ts_buff->last_exit_start_ts ||
-		ts_buff->last_exit_sched_ts < ts_buff->last_entry_end_ts))
-		return;
+	if (!(tf_a_ts_buff->last_entry_end_ts < last_entry_sched_ts &&
+		  last_entry_sched_ts < last_entry_start_ts &&
+		  last_entry_start_ts < last_entry_end_ts))
+		return -EINVAL;
 
-	if (ts_buff->last_entry_sched_ts != 0 &&
-		ts_buff->last_entry_sched_ts > last_entry_start_ts)
-		return;
+	if (!(last_entry_end_ts < last_exit_sched_ts &&
+		  last_exit_sched_ts < last_exit_start_ts &&
+		  last_exit_start_ts < last_exit_end_ts &&
+		  last_exit_end_ts < tf_a_ts_buff->last_exit_start_ts))
+		return -EINVAL;
+
+	return 0;
+}
+
+static void update_residency_stats(struct cpu_lpm_stats_elem *data, u64 now)
+{
+	u64 delta = now - data->last_entry_ts;
 
 	data->count++;
-	delta = now - data->last_entry_ts;
 	data->total_residency += delta;
 	if (delta > data->max)
 		data->max = delta;
 
 	if (delta < data->min || data->min == 0)
 		data->min = delta;
+}
+
+static void update_e2e_latency_stats(
+	struct cpu_latency_stats_elem *latency_data,
+	struct cpu_lpm_stats_elem *data,
+	struct timestamps_buffer *ts_buff,
+	struct timestamps_buffer *fw_ts_buff,
+	int read_firmware)
+{
+	u64 last_entry_end_ts = ts_buff->last_entry_end_ts;
+	u64 last_exit_start_ts = ts_buff->last_exit_start_ts;
+	u64 last_exit_end_ts = ts_buff->last_exit_end_ts;
+
+	u64 e2e_entry = last_entry_end_ts - data->last_entry_ts;
+	u64 e2e_exit;
 
 	/*
 	 * Entry/Exit start timestamps collection might not
@@ -345,49 +408,139 @@ static void update_stats(struct device *dev,
 	 * hw latency calculations must be skipped and e2e exit
 	 * latency must be calculated using exit end timestamp.
 	 */
-	if (ts_buff->last_entry_sched_ts > 0) {
-		fw_sched_entry =
-			last_entry_start_ts - ts_buff->last_entry_sched_ts;
-		fw_entry_transition =
-			ts_buff->last_entry_end_ts - last_entry_start_ts;
-		fw_entry =
-			ts_buff->last_entry_end_ts - ts_buff->last_entry_sched_ts;
-		process_latency_stats(
-			&latency_data->fw_sched_entry, fw_sched_entry, data->count);
-		process_latency_stats(&latency_data->fw_entry_transition,
-					fw_entry_transition, data->count);
-		process_latency_stats(&latency_data->fw_entry, fw_entry, data->count);
-	} else if (last_entry_start_ts > 0) {
-		fw_entry =
-			ts_buff->last_entry_end_ts - last_entry_start_ts;
-		process_latency_stats(&latency_data->fw_entry, fw_entry, data->count);
-	}
 
-	e2e_entry = ts_buff->last_entry_end_ts - data->last_entry_ts;
-
-	if (ts_buff->last_exit_sched_ts > 0) {
-		fw_sched_exit =
-			ts_buff->last_exit_start_ts - ts_buff->last_exit_sched_ts;
-		fw_exit_transition =
-			last_exit_end_ts - ts_buff->last_exit_start_ts;
-		fw_exit = last_exit_end_ts - ts_buff->last_exit_sched_ts;
-		process_latency_stats(
-			&latency_data->fw_sched_exit, fw_sched_exit, data->count);
-		process_latency_stats(&latency_data->fw_exit_transition,
-					fw_exit_transition, data->count);
-		process_latency_stats(&latency_data->fw_exit, fw_exit, data->count);
-		e2e_exit = data->last_exit_ts - ts_buff->last_exit_sched_ts;
-	} else if (ts_buff->last_exit_start_ts > 0) {
-		fw_exit = last_exit_end_ts - ts_buff->last_exit_start_ts;
-		process_latency_stats(&latency_data->fw_exit, fw_exit, data->count);
-		e2e_exit =
-			data->last_exit_ts - ts_buff->last_exit_start_ts;
-	} else {
+	if (!read_firmware && fw_ts_buff->last_exit_sched_ts > 0)
+		e2e_exit = data->last_exit_ts - fw_ts_buff->last_exit_sched_ts;
+	else if (last_exit_start_ts > 0)
+		e2e_exit = data->last_exit_ts - last_exit_start_ts;
+	else
 		e2e_exit = data->last_exit_ts - last_exit_end_ts;
-	}
 
 	process_latency_stats(&latency_data->e2e_entry, e2e_entry, data->count);
 	process_latency_stats(&latency_data->e2e_exit, e2e_exit, data->count);
+}
+
+static void update_firmware_latency_stats(
+	struct cpu_latency_stats_elem *latency_data,
+	struct cpu_lpm_stats_elem *data,
+	struct timestamps_buffer *ts_buff,
+	struct timestamps_buffer *fw_ts_buff)
+{
+	u64 last_entry_start_ts = ts_buff->last_entry_start_ts;
+	u64 last_exit_end_ts = ts_buff->last_exit_end_ts;
+
+	u64 fw_sched_entry =
+		last_entry_start_ts - fw_ts_buff->last_entry_sched_ts;
+	u64 fw_entry_transition = fw_ts_buff->last_entry_end_ts - last_entry_start_ts;
+	u64 fw_entry = fw_ts_buff->last_entry_end_ts - fw_ts_buff->last_entry_sched_ts;
+
+	process_latency_stats(&latency_data->fw_sched_entry, fw_sched_entry,
+				data->count);
+	process_latency_stats(&latency_data->fw_entry_transition,
+				    fw_entry_transition, data->count);
+	process_latency_stats(&latency_data->fw_entry, fw_entry, data->count);
+
+	u64 fw_sched_exit =
+		fw_ts_buff->last_exit_start_ts - fw_ts_buff->last_exit_sched_ts;
+	u64 fw_exit_transition =
+		last_exit_end_ts - fw_ts_buff->last_exit_start_ts;
+	u64 fw_exit = last_exit_end_ts - fw_ts_buff->last_exit_sched_ts;
+
+	process_latency_stats(&latency_data->fw_sched_exit, fw_sched_exit,
+				data->count);
+	process_latency_stats(&latency_data->fw_exit_transition,
+				fw_exit_transition, data->count);
+	process_latency_stats(&latency_data->fw_exit, fw_exit, data->count);
+}
+
+static void update_tfa_latency_stats(
+	struct cpu_latency_stats_elem *latency_data,
+	struct cpu_lpm_stats_elem *data,
+	struct timestamps_buffer *ts_buff,
+	struct timestamps_buffer *tf_a_ts_buff,
+	int read_firmware)
+{
+	u64 last_exit_end_ts = ts_buff->last_exit_end_ts;
+	u64 tf_a_entry, tf_a_exit, tf_a_boot;
+
+	tf_a_exit = tf_a_ts_buff->last_exit_end_ts - tf_a_ts_buff->last_exit_start_ts;
+	process_latency_stats(&latency_data->tf_a_exit, tf_a_exit, data->count);
+
+	tf_a_entry =
+		tf_a_ts_buff->last_entry_end_ts - tf_a_ts_buff->last_entry_start_ts;
+	process_latency_stats(&latency_data->tf_a_entry, tf_a_entry, data->count);
+
+	/*
+	 * Handle TF-A boot latency
+	 */
+	if (!read_firmware) {
+		tf_a_boot = tf_a_ts_buff->last_exit_start_ts - last_exit_end_ts;
+		process_latency_stats(&latency_data->tf_a_boot, tf_a_boot, data->count);
+	}
+}
+
+static void update_stats(struct device *dev,
+			const char *pm_domain_name,
+			struct cpu_lpm_data *lat,
+			struct cpu_lpm_stats_elem *data,
+			struct cpu_latency_stats_elem *latency_data,
+			u64 now)
+{
+	int read_firmware;
+	struct timestamps_buffer ts_buff;
+	struct timestamps_buffer fw_ts_buff;
+	struct timestamps_buffer tf_a_ts_buff;
+	struct cpu_lpm_data *exiting_cpu_lpm_data = get_exiting_cpu_pd_lpm_data();
+
+	if (!exiting_cpu_lpm_data)
+		return;
+
+	int state_idx = get_state_idx(dev, lat);
+
+	if (state_idx < 0)
+		return;
+
+	int exiting_cpu_state_idx = get_state_idx(dev, exiting_cpu_lpm_data);
+
+	if (exiting_cpu_state_idx < 0)
+		return;
+
+	if (read_cpu_pd_latency_stats(
+			exiting_cpu_lpm_data->power_state[exiting_cpu_state_idx], &tf_a_ts_buff,
+			TYPE_TFA_CPU_POWER_STATS))
+		return;
+
+	read_firmware =
+		read_cpu_pd_latency_stats(lat->power_state[state_idx],
+			&fw_ts_buff, TYPE_CAP_CPU_POWER_STATS);
+
+	if (get_timestamp_buffer(dev, lat, exiting_cpu_lpm_data, &ts_buff,
+		&fw_ts_buff, &tf_a_ts_buff, read_firmware))
+		return;
+
+	if (validate_timestamps(dev, data, now, &ts_buff, &fw_ts_buff,
+							&tf_a_ts_buff, read_firmware))
+		return;
+
+	update_residency_stats(data, now);
+
+	/*
+	 * Handle e2e latencies.
+	 */
+	update_e2e_latency_stats(latency_data, data,
+		&ts_buff, &fw_ts_buff, read_firmware);
+
+	/*
+	 * Handle firmware latencies
+	 */
+	if (!read_firmware)
+		update_firmware_latency_stats(latency_data, data, &ts_buff, &fw_ts_buff);
+
+	/*
+	 * Handle TF-A latencies
+	 */
+	update_tfa_latency_stats(latency_data, data, &ts_buff, &tf_a_ts_buff,
+		read_firmware);
 }
 
 static int sswrp_cluster_pd_notifier(struct notifier_block *nb,
@@ -395,7 +548,6 @@ static int sswrp_cluster_pd_notifier(struct notifier_block *nb,
 {
 	u64 now = goog_gtc_get_counter();
 	struct cpu_lpm_data *lat = container_of(nb, struct cpu_lpm_data, nb);
-	struct timestamps_buffer ts_buff;
 
 	spin_lock(&lat->lock);
 	if (!lat->collect_data) {
@@ -406,12 +558,8 @@ static int sswrp_cluster_pd_notifier(struct notifier_block *nb,
 	if (action == GENPD_NOTIFY_OFF) {
 		lat->data.last_entry_ts = now;
 	} else if (action == GENPD_NOTIFY_ON) {
-		if (read_cpu_pd_latency_stats(lat->power_state, &ts_buff)) {
-			spin_unlock(&lat->lock);
-			return NOTIFY_OK;
-		}
 		update_stats(lat->genpd_dev,
-			lat->name, lat, &lat->data, &lat->latency_data, now, &ts_buff);
+			lat->name, lat, &lat->data, &lat->latency_data, now);
 	}
 
 	spin_unlock(&lat->lock);
@@ -437,7 +585,7 @@ static int init_and_add_latency_stats(struct kobject *pd_latency_stats,
 static const struct kobj_type pd_dir_kobj_type = {};
 
 static int init_core_specific_data(struct device *dev,
-								struct cpu_lpm_data *lat)
+				struct cpu_lpm_data *lat)
 {
 	struct device_node *curr_cpu;
 	struct device_node *curr_cpu_pd;
@@ -494,14 +642,14 @@ static int register_device_to_genpd(struct device *dev)
 	struct cpu_lpm_data *lat;
 	struct device *genpd_dev;
 	struct device_node *power_domain_phandle;
-	u32 power_state;
+	u32 power_state_count;
 
 	genpd_dev = genpd_dev_pm_attach_by_id(dev, 0);
 
 	if (!genpd_dev)
 		return -ENODEV;
 
-	lat = kzalloc(sizeof(*lat), GFP_KERNEL);
+	lat = devm_kzalloc(dev, sizeof(*lat), GFP_KERNEL);
 	if (!lat)
 		return -ENOMEM;
 
@@ -511,26 +659,40 @@ static int register_device_to_genpd(struct device *dev)
 
 	memset(&lat->latency_data, 0, sizeof(struct cpu_latency_stats_elem));
 
-	err = of_property_read_u32(dev->of_node, "power-state", &power_state);
+	power_state_count = of_property_count_elems_of_size(dev->of_node, "power-state",
+						sizeof(u32));
+	if (power_state_count < 0) {
+		dev_err(dev, "Error %d counting power-state elements", power_state_count);
+		return power_state_count;
+	}
+
+	lat->power_state_count = power_state_count;
+
+	lat->power_state = devm_kcalloc(dev, lat->power_state_count,
+					sizeof(*lat->power_state), GFP_KERNEL);
+	if (!lat->power_state)
+		return -ENOMEM;
+
+	err = of_property_read_u32_array(dev->of_node, "power-state",
+					 lat->power_state, lat->power_state_count);
 	if (err) {
 		dev_err(dev,
 			"Error %d during read power-state property", err);
-		return -EINVAL;
+		goto err;
 	}
-
-	lat->power_state = power_state;
 
 	power_domain_phandle = of_parse_phandle(dev->of_node, "power-domains", 0);
 	if (!power_domain_phandle) {
 		dev_err(dev, "Error during read power-domains property");
-		return -EINVAL;
+		err = -EINVAL;
+		goto err;
 	}
 
 	lat->power_domain_phandle = power_domain_phandle;
 	err = init_core_specific_data(dev, lat);
 	if (err) {
 		dev_err(dev, "Error during init core specific data\n");
-		return err;
+		goto err;
 	}
 
 	spin_lock_init(&lat->lock);
@@ -547,7 +709,7 @@ static int register_device_to_genpd(struct device *dev)
 	if (err) {
 		dev_err(dev, "Error %d during kobj init_and_add of %s\n", err,
 			lat->name);
-		goto err;
+		goto notifier_error;
 	}
 
 	err = kobject_init_and_add(&lat->pd_residency_data,
@@ -602,6 +764,23 @@ static int register_device_to_genpd(struct device *dev)
 	if (err)
 		goto fw_exit_transition_stats_err;
 
+	err = init_and_add_latency_stats(&lat->pd_tf_a_entry_stats,
+					 dev, &lat->pd_latency_data,
+					 "tf_a_entry");
+	if (err)
+		goto tf_a_entry_stats_error;
+	err = init_and_add_latency_stats(&lat->pd_tf_a_exit_stats,
+					 dev, &lat->pd_latency_data,
+					 "tf_a_exit");
+	if (err)
+		goto tf_a_exit_stats_error;
+
+	err = init_and_add_latency_stats(&lat->pd_tf_a_boot_stats,
+					 dev, &lat->pd_latency_data,
+					 "tf_a_boot");
+	if (err)
+		goto tf_a_boot_stats_error;
+
 	err = init_and_add_latency_stats(&lat->pd_e2e_entry_stats,
 					 dev, &lat->pd_latency_data, "e2e_entry");
 	if (err)
@@ -615,14 +794,22 @@ static int register_device_to_genpd(struct device *dev)
 	list_add(&lat->list, &cpu_lpm_list);
 
 	return err;
-err:
+notifier_error:
 	dev_pm_genpd_remove_notifier(dev);
+err:
+	kfree(lat->power_state);
 	kfree(lat);
 	return err;
 e2e_exit_stats_err:
 	kobject_put(&lat->pd_e2e_entry_stats);
 e2e_entry_stats_err:
-	kobject_put(&lat->pd_fw_exit_transition_stats);
+	kobject_put(&lat->pd_tf_a_boot_stats);
+tf_a_boot_stats_error:
+	kobject_put(&lat->pd_tf_a_exit_stats);
+tf_a_exit_stats_error:
+	kobject_put(&lat->pd_tf_a_entry_stats);
+tf_a_entry_stats_error:
+	kobject_put(&lat->pd_fw_entry_transition_stats);
 fw_exit_transition_stats_err:
 	kobject_put(&lat->pd_fw_entry_transition_stats);
 fw_entry_transition_stats_err:
@@ -640,6 +827,7 @@ latency_data_err:
 residency_data_err:
 	kobject_put(&lat->pd_dir);
 	dev_pm_genpd_remove_notifier(dev);
+	kfree(lat->power_state);
 	kfree(lat);
 	return err;
 }
@@ -696,6 +884,9 @@ static int google_cpu_lpm_stats_remove(struct platform_device *pdev)
 		kobject_put(&lat->pd_fw_sched_exit_stats);
 		kobject_put(&lat->pd_fw_entry_transition_stats);
 		kobject_put(&lat->pd_fw_exit_transition_stats);
+		kobject_put(&lat->pd_tf_a_entry_stats);
+		kobject_put(&lat->pd_tf_a_exit_stats);
+		kobject_put(&lat->pd_tf_a_boot_stats);
 		kobject_put(&lat->pd_e2e_entry_stats);
 		kobject_put(&lat->pd_e2e_exit_stats);
 		list_del(&lat->list);

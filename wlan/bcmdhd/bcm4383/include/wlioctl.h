@@ -28765,12 +28765,19 @@ typedef struct wl_art_cmd_config_v2 {
 	uint8 PAD[3];
 } wl_art_cmd_config_v2_t;
 
+typedef enum wl_art_conn_type {
+	WL_ART_CONN_HT	= 1u,	/**< ART is HT Connection */
+	WL_ART_CONN_VHT	= 2u,	/**< ART is VHT Connection */
+	WL_ART_CONN_HE	= 3u,	/**< ART is HE Connection */
+	WL_ART_CONN_EHT	= 4u,	/**< ART is EHT Connection */
+} wl_art_conn_type_t;
 
 /* ART Top level command IDs */
 enum {
 	WL_ART_CMD_ENAB		= 0,
 	WL_ART_CMD_TXACTIVE	= 1,
 	WL_ART_CMD_CONFIG	= 2,
+	WL_ART_CMD_CONN_SELECT	= 3,
 	WL_ART_CMD_LAST
 };
 

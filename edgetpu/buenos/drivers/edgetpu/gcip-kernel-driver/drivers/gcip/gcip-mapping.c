@@ -29,6 +29,7 @@
 #include <linux/swap.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
+#include <trace/events/gcip.h>
 
 #include <gcip/gcip-iommu.h>
 #include <gcip/gcip-mapping.h>
@@ -83,9 +84,10 @@ static unsigned int gcip_get_gup_flags(u64 host_addr, struct device *dev,
 	struct vm_area_struct *vma;
 	unsigned int gup_flags;
 	vm_flags_t vm_flags;
+	unsigned long untagged_host_addr = untagged_addr(host_addr);
 
 	mmap_read_lock(current->mm);
-	vma = vma_lookup(current->mm, host_addr & PAGE_MASK);
+	vma = vma_lookup(current->mm, untagged_host_addr & PAGE_MASK);
 	if (vma)
 		vm_flags = vma->vm_flags;
 	mmap_read_unlock(current->mm);
@@ -186,14 +188,15 @@ static int gcip_pin_user_pages(struct device *dev, struct page **pages, unsigned
 			break;
 
 		if (ret >= 0) {
-			dev_err(dev, "Can only pin %u of %u pages requested", ret, num_pages);
+			dev_warn(dev, "try #%d pinned %u of %u pages requested", tried + 1, ret,
+				 num_pages);
 			for (i = 0; i < ret; i++)
 				unpin_user_page(pages[i]);
 		}
 		ret = 0;
 	}
-	if (tried > 0)
-		dev_info(dev, "mapping required %d retries with LRU cache disabled", tried);
+	if (tried > 0 && (ret == num_pages))
+		dev_info(dev, "pinning required %d retries with LRU cache disabled", tried);
 
 	return ret;
 }
@@ -242,7 +245,7 @@ gcip_mapping_alloc_and_pin_user_pages(struct device *dev, u64 host_address, uint
 	if (!(*gup_flags & FOLL_WRITE))
 		goto err_free_pages;
 
-	dev_warn_ratelimited(dev, "pin failed (ret=%d), assuming buffer is read-only", ret);
+	dev_warn_ratelimited(dev, "writeable pin failed (ret=%d), retrying read-only", ret);
 	*gup_flags &= ~FOLL_WRITE;
 	*map_debug_flags |= GCIP_MAP_DEBUG_ASSUME_RDONLY;
 
@@ -366,7 +369,7 @@ err_unpin_page:
  * @dir: The DMA direction of the mapping.
  * @mm: The mm_struct to maintain pinned_vm.
  *
- * If the @sgt has never been mapped, pass DMA_NONE for @dir to skip set_page_dirty().
+ * If the @sgt has never been mapped, pass DMA_NONE for @dir to skip set_page_dirty_lock().
  */
 static void gcip_mapping_buffer_sgt_destroy(struct sg_table *sgt, enum dma_data_direction dir,
 					    struct mm_struct *mm)
@@ -378,7 +381,7 @@ static void gcip_mapping_buffer_sgt_destroy(struct sg_table *sgt, enum dma_data_
 	for_each_sg_page(sgt->sgl, &sg_iter, sgt->orig_nents, 0) {
 		page = sg_page_iter_page(&sg_iter);
 		if (dir == DMA_FROM_DEVICE || dir == DMA_BIDIRECTIONAL)
-			set_page_dirty(page);
+			set_page_dirty_lock(page);
 		unpin_user_page(page);
 		num_pages++;
 	}
@@ -699,6 +702,7 @@ static struct sg_table *gcip_mapping_dmabuf_sgt_create(struct device *dev, struc
 	struct sg_table *sgt_default;
 	int ret;
 
+	trace_gcip_map_dmabuf_attach(dev, dmabuf);
 	attachment = dma_buf_attach(dmabuf, dev);
 	if (IS_ERR(attachment)) {
 		dev_err(dev, "Failed to attach dma-buf (ret=%ld, name=%s)\n", PTR_ERR(attachment),
@@ -710,7 +714,9 @@ static struct sg_table *gcip_mapping_dmabuf_sgt_create(struct device *dev, struc
 
 	/* Map the attachment into the default domain. */
 	dma_resv_lock(dmabuf->resv, NULL);
+	trace_gcip_map_dmabuf_map_attachment_start(dev, dmabuf);
 	sgt_default = dma_buf_map_attachment(attachment, dir);
+	trace_gcip_map_dmabuf_map_attachment_end(dev, dmabuf);
 	dma_resv_unlock(dmabuf->resv);
 	if (IS_ERR(sgt_default)) {
 		ret = PTR_ERR(sgt_default);
@@ -813,6 +819,7 @@ static struct sg_table *gcip_mapping_dmabuf_map_sgt_to_iova(struct gcip_iommu_do
 	u64 gcip_map_flags = *map_flags_ptr;
 	struct dma_buf_attachment *attachment;
 	struct sg_table *sgt_default, *sgt_ret;
+	u64 client_context_map_flags;
 	int nents_mapped;
 	int ret;
 
@@ -836,7 +843,32 @@ static struct sg_table *gcip_mapping_dmabuf_map_sgt_to_iova(struct gcip_iommu_do
 		goto err_destroy_sgt;
 	}
 
-	nents_mapped = gcip_iommu_domain_map_sgt_to_iova(domain, sgt_ret, iova, &gcip_map_flags);
+	/*
+	 * If DMA_ATTR_PRIVILEGED or DMA_ATTR_NO_CACHE are set in the attrs provided by the heap
+	 * exporter then this mapping is from the system-uncached heap. That attr signalled the
+	 * SysMMU/SMMU driver to remove shareability/IOMMU_CACHE from the default domain mapping
+	 * (if it was requested), since this is invalid (and tends to hit bogus AP cache lines).
+	 * Also turn off coherency/IOMMU_CACHE in our per-context mapping.
+	 */
+#if defined(DMA_ATTR_NO_CACHE)
+	if (attachment->dma_map_attrs & (DMA_ATTR_NO_CACHE | DMA_ATTR_PRIVILEGED))
+#else
+	if (attachment->dma_map_attrs & DMA_ATTR_PRIVILEGED)
+#endif
+		gcip_map_flags &= ~BIT(GCIP_MAP_FLAGS_DMA_COHERENT_OFFSET);
+
+	/*
+	 * Force SKIP_CPU_SYNC for the per-context mapping.  If SKIP_CPU_SYNC was set by the dma-buf
+	 * exporter, or requested by IP client, then we don't need CMOs for our client context
+	 * mapping here.  If SKIP_CPU_SYNC isn't set then the associated CMOs were performed for the
+	 * default domain mapping by the dma-buf exporter during the dma_buf_map_attachment call; we
+	 * don't need a second sync here.  We make a copy of the gcip_map_flags to avoid modifying
+	 * the flags reported via debugfs, which could be confusing.
+	 */
+	client_context_map_flags = gcip_map_flags |
+		(DMA_ATTR_SKIP_CPU_SYNC << GCIP_MAP_FLAGS_DMA_ATTR_OFFSET);
+	nents_mapped = gcip_iommu_domain_map_sgt_to_iova(domain, sgt_ret, iova,
+							 &client_context_map_flags);
 	if (!nents_mapped) {
 		ret = -ENOSPC;
 		dev_err(domain->dev, "Failed to map dmabuf to IOMMU domain (ret=%d)\n", ret);
@@ -919,14 +951,25 @@ struct gcip_mapping *gcip_mapping_dmabuf_map(struct gcip_iommu_domain *domain,
 static void gcip_mapping_dmabuf_unmap(struct gcip_mapping *mapping)
 {
 	struct gcip_dmabuf_mapping *dmabuf_mapping = to_dmabuf_mapping(mapping);
+	u64 client_context_map_flags;
 
 	if (!mapping->domain->default_domain) {
+		/*
+		 * Force SKIP_CPU_SYNC for unmap of the per-context mapping.  If SKIP_CPU_SYNC was
+		 * set by the dma-buf exporter then we don't need CMOs for our client context
+		 * mapping here.  If SKIP_CPU_SYNC isn't set then the associated CMOs will be
+		 * performed for the default domain mapping by the dma-buf exporter during the
+		 * dma_buf_unmap_attachment call; we don't need a duplicate sync here.
+		 */
+		client_context_map_flags = mapping->gcip_map_flags |
+			(DMA_ATTR_SKIP_CPU_SYNC << GCIP_MAP_FLAGS_DMA_ATTR_OFFSET);
+
 		if (mapping->user_specified_daddr)
 			gcip_iommu_domain_unmap_sgt_from_iova(mapping->domain, mapping->sgt,
-							      mapping->gcip_map_flags);
+							      client_context_map_flags);
 		else
 			gcip_iommu_domain_unmap_sgt(mapping->domain, mapping->sgt,
-						    mapping->gcip_map_flags);
+						    client_context_map_flags);
 		sg_free_table(mapping->sgt);
 		kfree(mapping->sgt);
 	}

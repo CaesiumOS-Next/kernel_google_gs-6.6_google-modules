@@ -69,6 +69,7 @@ static int hdcp_auth13(struct dptx *dptx, bool is_dpcd12_plus)
 
 	dptx_err(dptx, "HDCP13 Timeout (%d)\n",
 		dptx_read_regfield(dptx, dptx->ctrl_fields->field_hdcpengaged));
+	dptx_hdcp_dump_regs(dptx);
 	return -ETIMEDOUT;
 }
 

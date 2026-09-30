@@ -57,7 +57,8 @@ static struct edgetpu_mapping *dmabuf_mapping_create(struct edgetpu_device_group
 	struct edgetpu_iommu_domain *etdomain;
 	struct dma_buf *dmabuf;
 	int ret;
-	u64 gcip_map_flags = edgetpu_mappings_encode_gcip_map_flags(flags, 0, false);
+	u64 gcip_map_flags = edgetpu_mappings_encode_gcip_map_flags(flags, map_to_dma_attr(flags),
+								    false);
 
 	dmabuf = dma_buf_get(fd);
 	if (IS_ERR(dmabuf))
@@ -77,18 +78,15 @@ static struct edgetpu_mapping *dmabuf_mapping_create(struct edgetpu_device_group
 	mapping->mapped_by_limited = limited;
 
 	down_read(&group->lock);
-	mutex_lock(&group->mapping_lock);
 	if (!edgetpu_device_group_is_ready(group)) {
 		ret = edgetpu_group_errno(group);
 		etdev_err(group->etdev, "client %s already errored: %d", group->client->name, ret);
-		mutex_unlock(&group->mapping_lock);
 		up_read(&group->lock);
 		goto err_device_group_put;
 	}
 	etdomain = edgetpu_group_domain_locked(group);
 
 	mapping->gcip_mapping = gcip_mapping_dmabuf_map(etdomain->gdomain, dmabuf, gcip_map_flags);
-	mutex_unlock(&group->mapping_lock);
 	up_read(&group->lock);
 	if (IS_ERR(mapping->gcip_mapping)) {
 		ret = PTR_ERR(mapping->gcip_mapping);
@@ -116,6 +114,9 @@ int edgetpu_map_dmabuf(struct edgetpu_device_group *group, struct edgetpu_map_dm
 
 	/* Establishing new TPU mappings sets client to "not OK to trim" state. */
 	group->client->trim_enabled = false;
+	/* Coherent mappings imply no CMO needed. */
+	if (arg->flags & EDGETPU_MAP_COHERENT)
+		arg->flags |= EDGETPU_MAP_SKIP_CPU_SYNC;
 	mapping = dmabuf_mapping_create(group, arg->dmabuf_fd, arg->flags, limited);
 	if (IS_ERR(mapping))
 		return PTR_ERR(mapping);

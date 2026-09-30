@@ -774,7 +774,7 @@ int dptx_add_stream(struct dptx *dptx)
  */
 int dptx_remove_stream(struct dptx *dptx, int stream)
 {
-	u8 payload_table[64];
+	u8 payload_table[64] = {0};
 	u32 reg;
 	int i;
 	int table_slot, start_slot, payload;

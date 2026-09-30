@@ -12,7 +12,7 @@
 #include "gs_panel/gs_panel_funcs_defaults.h"
 #include "trace/panel_trace.h"
 
-#define staea_DDIC_ID_LEN 8
+#define staea_DDIC_ID_LEN 11
 #define staea_DIMMING_FRAME 32
 #define STAEA_LUMINANCE_READS_PER_DBV 4
 #define STAEA_LUMINANCE_READ_LONG_LEN 18
@@ -28,6 +28,52 @@
 #define HEIGHT_MM 145
 
 #define PROJECT "staea"
+
+enum staea_lhbm_brt {
+	LHBM_R = 0,
+	LHBM_G,
+	LHBM_B,
+	LHBM_BRT_MAX
+};
+
+enum staea_lhbm_brt_group {
+	LHBM_BRT_GRP_0 = 0,
+	LHBM_BRT_GRP_1,
+	LHBM_BRT_GRP_2,
+	LHBM_BRT_GRP_3,
+	LHBM_BRT_GRP_4,
+	LHBM_BRT_GRP_5,
+	LHBM_BRT_GRP_MAX,
+};
+
+#define LHBM_BRT_REG_LEN 2
+#define LHBM_BRT_LEN (LHBM_BRT_MAX * LHBM_BRT_REG_LEN)
+
+enum staea_lhbm_brt_overdrive_group {
+	LHBM_OVERDRIVE_GRP_0_NIT = 0,
+	LHBM_OVERDRIVE_GRP_1_NIT,
+	LHBM_OVERDRIVE_GRP_5_NIT,
+	LHBM_OVERDRIVE_GRP_25_NIT,
+	LHBM_OVERDRIVE_GRP_150_NIT,
+	LHBM_OVERDRIVE_GRP_300_NIT,
+	LHBM_OVERDRIVE_GRP_IRC_OFF,
+	LHBM_OVERDRIVE_GRP_MAX
+};
+
+struct staea_lhbm_ctl {
+	/** @brt_normal: normal LHBM brightness parameters */
+	u8 brt_normal[LHBM_BRT_GRP_MAX][LHBM_BRT_LEN];
+	/** @brt_overdrive: overdrive LHBM brightness parameters */
+	u8 brt_overdrive[LHBM_OVERDRIVE_GRP_MAX][LHBM_BRT_GRP_MAX][LHBM_BRT_LEN];
+	/** @overdrived: whether or not LHBM is overdrived */
+	bool overdrived;
+	/** @hist_roi_configured: whether LHBM histogram configuration is done */
+	bool hist_roi_configured;
+	enum gs_drm_connector_lhbm_hist_roi_type hist_roi_type;
+};
+
+static const u8 staea_cmd2_page2[] = {0xF0, 0x55, 0xAA, 0x52, 0x08, 0x02};
+static const u8 staea_lhbm_brightness_reg = 0xD1;
 
 /**
  * struct staea_luminance_read_config
@@ -51,6 +97,7 @@ struct staea_panel {
 	struct gs_panel base;
 	enum color_data_type cal_read_type;
 	struct staea_luminance_read_config luminance_read_config;
+	struct staea_lhbm_ctl lhbm_ctl;
 };
 
 #define to_spanel(ctx) container_of(ctx, struct staea_panel, base)
@@ -104,9 +151,9 @@ static DEFINE_GS_CMDSET(staea_off);
 
 static const struct gs_dsi_cmd staea_init_cmds[] = {
 	/* CMD2, Page3 */
-	GS_DSI_CMD(0xF0, 0x55, 0xAA, 0x52, 0x08, 0x03),
+	GS_DSI_REV_CMD(PANEL_REV_LT(PANEL_REV_PROTO1_1), 0xF0, 0x55, 0xAA, 0x52, 0x08, 0x03),
 	/* AOD power IP turn off */
-	GS_DSI_CMD(0xC7, 0x00),
+	GS_DSI_REV_CMD(PANEL_REV_LT(PANEL_REV_PROTO1_1), 0xC7, 0x00),
 
 	/* Page Disable */
 	GS_DSI_CMD(0xF0, 0x55, 0xAA, 0x52, 0x00, 0x00),
@@ -197,10 +244,6 @@ static const struct gs_dsi_cmd staea_init_cmds[] = {
 };
 static DEFINE_GS_CMDSET(staea_init);
 
-static bool _is_max_hbm_level(u16 level, struct gs_panel * ctx) {
-	return level == ctx->desc->brightness_desc->brt_capability->hbm.level.max;
-}
-
 static void staea_update_te2(struct gs_panel *ctx)
 {
 	struct gs_panel_te2_timing timing;
@@ -237,29 +280,15 @@ static void staea_update_irc(struct gs_panel *ctx, const enum gs_hbm_mode hbm_mo
 	const u16 level = gs_panel_get_brightness(ctx);
 
 	if (GS_IS_HBM_ON_IRC_OFF(hbm_mode)) {
-		/* sync from bigSurf : to achieve the max brightness with IRC off which
-		 * need to set dbv to 0xFFF */
-		if (_is_max_hbm_level(level, ctx)) {
-			/* set brightness to hbm */
-			GS_DCS_BUF_ADD_CMD(dev, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x0F, 0xFF);
-		}
-
-		/* IRC Off */
-		GS_DCS_BUF_ADD_CMD(dev, 0x5F, 0x01, 0x00);
-		if (vrefresh == 120)
-			GS_DCS_BUF_ADD_CMD(dev, 0x2F, 0x00);
-		else
-			GS_DCS_BUF_ADD_CMD(dev, 0x2F, 0x02);
+		/* Peak luminance ON */
+		GS_DCS_BUF_ADD_CMD(dev, 0x5F, 0x05, 0x00);
+		GS_DCS_BUF_ADD_CMD(dev, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x0F, 0xFF);
 	} else {
 		const u8 val1 = level >> 8;
 		const u8 val2 = level & 0xff;
 
-		/* IRC ON */
+		/* Peak luminance OFF */
 		GS_DCS_BUF_ADD_CMD(dev, 0x5F, 0x00, 0x00);
-		if (vrefresh == 120)
-			GS_DCS_BUF_ADD_CMD(dev, 0x2F, 0x00);
-		else
-			GS_DCS_BUF_ADD_CMD(dev, 0x2F, 0x02);
 
 		/* sync from bigSurf : restore the dbv value while IRC ON */
 		GS_DCS_BUF_ADD_CMD(dev, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, val1, val2);
@@ -268,21 +297,225 @@ static void staea_update_irc(struct gs_panel *ctx, const enum gs_hbm_mode hbm_mo
 	GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x00);
 }
 
+static void _write_local_hbm_brightness(struct device *dev,
+	u8 (*brt_group)[LHBM_BRT_GRP_MAX][LHBM_BRT_LEN])
+{
+	enum staea_lhbm_brt_group group;
+
+	GS_DCS_BUF_ADD_CMDLIST(dev, staea_cmd2_page2);
+	for (group = 0; group < LHBM_BRT_GRP_MAX; group++) {
+		u8 *brt = (*brt_group)[group];
+		u8 lhbm_brt_offset = group * LHBM_BRT_LEN;
+		enum staea_lhbm_brt ch;
+
+		for (ch = 0; ch < LHBM_BRT_MAX; ch++) {
+			u8 reg_offset = ch * LHBM_BRT_REG_LEN;
+
+			GS_DCS_BUF_ADD_CMD(dev, 0x6F, lhbm_brt_offset + reg_offset);
+			GS_DCS_BUF_ADD_CMD(dev, staea_lhbm_brightness_reg, brt[ch * 2],
+								brt[ch * 2 + 1]);
+		}
+	}
+	/* Empty command is for flush */
+	GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x00);
+}
+
+/* sync from hlos/panel_config-staea-cal0.pb */
+static const u32 dbv_table[] = {
+	1, 159, 225, 318, 476, 641, 692, 981, 1110, 1216, 1372, 1507, 1694, 1731, 2073, 2080, 2224, 2367,
+	2388, 2526, 2554, 2691, 2725, 2862, 2905, 3043, 3098, 3243, 3316, 3396, 3566, 3686, 3826
+};
+static const u32 nit_table[] = {
+	1, 2, 3, 5, 10, 17, 20, 39, 50, 60, 76, 91, 115, 120, 172, 173, 200, 233, 238, 277, 286, 335, 349,
+	411, 433, 512, 549, 658, 722, 800, 996, 1165, 1400
+};
+
+static u32 _convert_dbv_to_nits(struct device *dev, u32 dbv)
+{
+	int count = ARRAY_SIZE(dbv_table);
+	int i;
+
+	if(dbv == dbv_table[count-1]) return nit_table[count-1];
+
+	for(i = count - 2; i >= 0; i--) {
+		if (dbv >= dbv_table[i]) {
+			u32 coef = mult_frac(1, (nit_table[i+1] - nit_table[i]) * 1000,
+									dbv_table[i + 1] - dbv_table[i]);
+
+			return panel_calc_linear_luminance(dbv - dbv_table[i], coef, nit_table[i]);
+		}
+	}
+
+	return 0;
+}
+
+static const int dbv_band[] = {
+	3827, 3879, 3973, 4057
+};
+
+static const int gray_band[] = {
+	0, 15, 40, 65, 90, 115, 140, 165, 190, 215, 240
+};
+
+static const int dbv_gray_coef[ARRAY_SIZE(dbv_band)][ARRAY_SIZE(gray_band)] = {
+	{945, 955, 950, 950, 950, 950, 950, 960, 970, 985, 1000},
+	{935, 945, 950, 950, 950, 950, 960, 970, 980, 995, 1010},
+	{935, 945, 950, 950, 950, 950, 960, 970, 980, 995, 1010},
+	{935, 945, 950, 950, 955, 955, 965, 975, 990, 1000, 1010},
+};
+
+static int staea_get_local_hbm_brightness_coef(struct device *dev, u32 dbv, u32 gray) {
+	int i;
+	int dbv_grp = 0;
+	int gray_grp = 0;
+
+	for (i = 0; i < ARRAY_SIZE(dbv_band); i++) {
+		if (dbv < dbv_band[i]) break;
+		dbv_grp = i;
+	}
+
+	for(i = 0; i < ARRAY_SIZE(gray_band); i++) {
+		if (gray <= gray_band[i]) break;
+		gray_grp = i;
+	}
+
+	dev_dbg(dev, "dbv_grp=%d, gray_grp=%d, coef=%d/1000",
+			dbv_grp, gray_grp, dbv_gray_coef[dbv_grp][gray_grp]);
+	return dbv_gray_coef[dbv_grp][gray_grp];
+}
+
+
+static void _update_lhbm_brightness_irc_off(struct gs_panel *ctx, int coef) {
+	struct staea_panel *spanel = to_spanel(ctx);
+	struct device *dev = ctx->dev;
+
+	int ch = 0;
+	enum staea_lhbm_brt_group group;
+	for (group= 0; group < LHBM_BRT_GRP_MAX ; group++) {
+		u8 *p_norm = spanel->lhbm_ctl.brt_normal[group];
+		u8 *p_over = spanel->lhbm_ctl.brt_overdrive[LHBM_OVERDRIVE_GRP_IRC_OFF][group];
+		int val;
+		for (ch = 0; ch < LHBM_BRT_MAX; ch++) {
+			int p = ch * 2;
+
+			val = (p_norm[p] << 8) | p_norm[p + 1];
+			val = mult_frac(val, coef, 1000);
+			p_over[p] = (val & 0xFF00) >> 8;
+			p_over[p + 1] = val & 0x00FF;
+		}
+	}
+
+	for (group = 0; group < LHBM_BRT_GRP_MAX; group++)
+		dev_dbg(dev, "normal lhbm brightness[%d]: %*ph\n",
+			group, LHBM_BRT_LEN, spanel->lhbm_ctl.brt_normal[group]);
+
+	for (group = 0; group < LHBM_BRT_GRP_MAX; group++)
+		dev_dbg(dev, "irc off lhbm brightness[%d]: %*ph\n",
+			group, LHBM_BRT_LEN, spanel->lhbm_ctl.brt_overdrive[LHBM_OVERDRIVE_GRP_IRC_OFF][group]);
+}
+
+static enum staea_lhbm_brt_overdrive_group staea_get_local_hbm_brightness_grp(struct gs_panel *ctx) {
+	enum staea_lhbm_brt_overdrive_group group = LHBM_OVERDRIVE_GRP_MAX;
+	struct device *dev = ctx->dev;
+	u32 gray = ctx->gs_connector->lhbm_gray_level;
+	u32 dbv = gs_panel_get_brightness(ctx);
+	u32 normal_dbv_max = ctx->desc->brightness_desc->brt_capability->normal.level.max;
+	u32 luma = 0;
+
+	if (GS_IS_HBM_ON_IRC_OFF(ctx->hbm_mode)) {
+		int coef = staea_get_local_hbm_brightness_coef(dev, dbv, gray);
+
+		_update_lhbm_brightness_irc_off(ctx, coef);
+		group = LHBM_OVERDRIVE_GRP_IRC_OFF;
+	} else if (gray < 15) {
+		group = LHBM_OVERDRIVE_GRP_0_NIT;
+	} else {
+		if (dbv <= normal_dbv_max) {
+			luma = _convert_dbv_to_nits(dev, dbv);
+			dev_dbg(dev, "lhbm overdrive | _convert_dbv_to_nits: %d dbv = %d nits", dbv, luma);
+		}
+		else {
+			luma = panel_calc_linear_luminance(dbv, 645, -1256);
+			dev_dbg(dev, "lhbm overdrive | panel_calc_linear_luminance: %d dbv = %d nits", dbv, luma);
+		}
+
+		dev_dbg(dev, "lhbm overdrive | %d dbv = %d nits(255 gray)", dbv, luma);
+		luma = panel_calc_gamma_2_2_luminance(gray, 255, luma);
+		dev_dbg(dev, "lhbm overdrive | luma = %d", luma);
+
+		if (luma < 1)
+			group = LHBM_OVERDRIVE_GRP_1_NIT;
+		else if (luma < 5)
+			group = LHBM_OVERDRIVE_GRP_5_NIT;
+		else if (luma < 25)
+			group = LHBM_OVERDRIVE_GRP_25_NIT;
+		else if (luma < 150)
+			group = LHBM_OVERDRIVE_GRP_150_NIT;
+		else if (luma < 300)
+			group = LHBM_OVERDRIVE_GRP_300_NIT;
+		else
+			group = LHBM_OVERDRIVE_GRP_MAX;
+	}
+
+	if (group == LHBM_OVERDRIVE_GRP_IRC_OFF) {
+		dev_info(dev, "lhbm overdrive | gray=%u dbv=%u grp=%d\n", gray, dbv, group);
+	} else {
+		dev_info(dev, "lhbm overdrive | gray=%u dbv=%u luma=%u grp=%d\n", gray, dbv, luma, group);
+	}
+	return group;
+}
+
+static void staea_set_local_hbm_brightness(struct gs_panel *ctx, bool is_first_stage)
+{
+	struct staea_panel *spanel = to_spanel(ctx);
+	struct device *dev = ctx->dev;
+	struct staea_lhbm_ctl *ctl = &spanel->lhbm_ctl;
+	u8 (*brt)[LHBM_BRT_GRP_MAX][LHBM_BRT_LEN];
+
+	enum staea_lhbm_brt_overdrive_group group = LHBM_OVERDRIVE_GRP_MAX;
+	dev_info(ctx->dev, "set LHBM brightness at %s stage\n", is_first_stage ? "1st" : "2nd");
+	PANEL_ATRACE_BEGIN(__func__);
+	if (is_first_stage) {
+		group = staea_get_local_hbm_brightness_grp(ctx);
+	} else {
+		if (GS_IS_HBM_ON_IRC_OFF(ctx->hbm_mode)) {
+			dev_info(dev, "lhbm overdrive | irc off, no action\n");
+			PANEL_ATRACE_END(__func__);
+			return;
+		}
+	}
+
+	if (group < LHBM_OVERDRIVE_GRP_MAX) {
+		brt = &(ctl->brt_overdrive[group]);
+		ctl->overdrived = true;
+	} else {
+		brt = &(ctl->brt_normal);
+		ctl->overdrived = false;
+	}
+	dev_dbg(dev, "lhbm overdrive | set %s brightness: [%d]\n",
+		ctl->overdrived ? "overdrive" : "normal", ctl->overdrived ? group : -1);
+
+	_write_local_hbm_brightness(dev, brt);
+	PANEL_ATRACE_END(__func__);
+}
+
 #define LHBM_GAMMASET0 3826
 #define LHBM_GAMMASET2 3397
-#define LHBM_GAMMASET3 2224
-#define LHBM_GAMMASET4 1731
+#define LHBM_GAMMASET3 2840
+#define LHBM_GAMMASET4 2224
 
 static void staea_set_local_hbm_gamma(struct gs_panel *ctx, u16 br)
 {
 	struct device *dev = ctx->dev;
 
 	GS_DCS_BUF_ADD_CMD(dev, 0x6F, 0x07);
-	/* HBM on IRC off: gamma set 1 */
-	if (GS_IS_HBM_ON_IRC_OFF(ctx->hbm_mode) && _is_max_hbm_level(br, ctx))
-		GS_DCS_BUF_ADD_CMD(dev, 0x87, 0x05);
-	else if (br > LHBM_GAMMASET0)
-		GS_DCS_BUF_ADD_CMD(dev, 0x87, 0x00);
+	if (br > LHBM_GAMMASET0) {
+		/* HBM on Peak on: gamma set 5 */
+		if (GS_IS_HBM_ON_IRC_OFF(ctx->hbm_mode))
+			GS_DCS_BUF_ADD_CMD(dev, 0x87, 0x05);
+		else
+			GS_DCS_BUF_ADD_CMD(dev, 0x87, 0x00);
+	}
 	else if (br > LHBM_GAMMASET2)
 		GS_DCS_BUF_ADD_CMD(dev, 0x87, 0x01);
 	else if (br > LHBM_GAMMASET3)
@@ -300,6 +533,7 @@ static void staea_set_local_hbm_mode(struct gs_panel *ctx, bool local_hbm_en)
 	if (local_hbm_en) {
 		u16 level = gs_panel_get_brightness(ctx);
 
+		staea_set_local_hbm_brightness(ctx, level);
 		staea_set_local_hbm_gamma(ctx, level);
 		GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x87, 0x05);
 	} else {
@@ -324,16 +558,12 @@ static void staea_change_frequency(struct gs_panel *ctx, const struct gs_panel_m
 		ctx->lhbm.effective_state = GLOCAL_HBM_DISABLED;
 	}
 
-	if (!GS_IS_HBM_ON(ctx->hbm_mode)) {
-		if (vrefresh == 120)
-			GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x2F, 0x00);
-		else
-			GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x2F, 0x02);
-	} else {
-		staea_update_irc(ctx, ctx->hbm_mode, vrefresh);
-	}
+	if (vrefresh == 120)
+		GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x2F, 0x00);
+	else
+		GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x2F, 0x02);
 
-	dev_dbg(dev, "%s: change to %dhz\n", __func__, vrefresh);
+	dev_info(dev, "%s: change to %dhz\n", __func__, vrefresh);
 }
 
 static void staea_set_dimming(struct gs_panel *ctx, bool dimming_on)
@@ -361,7 +591,7 @@ static void staea_set_nolp_mode(struct gs_panel *ctx, const struct gs_panel_mode
 	if (!gs_is_panel_active(ctx))
 		return;
 	/* exit AOD */
-	GS_DCS_BUF_ADD_CMD(dev, MIPI_DCS_EXIT_IDLE_MODE);
+	GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, MIPI_DCS_EXIT_IDLE_MODE);
 	staea_change_frequency(ctx, pmode);
 
 	/* Delay setting dimming on AOD exit until brightness has stabilized. */
@@ -390,6 +620,7 @@ static int staea_enable(struct drm_panel *panel)
 	struct gs_panel *ctx = container_of(panel, struct gs_panel, base);
 	struct device *dev = ctx->dev;
 	const struct gs_panel_mode *pmode = ctx->current_mode;
+	struct staea_panel *spanel = to_spanel(ctx);
 
 	if (!pmode) {
 		dev_err(dev, "no current mode set\n");
@@ -416,6 +647,7 @@ static int staea_enable(struct drm_panel *panel)
 
 	GS_DCS_WRITE_CMD(dev, MIPI_DCS_SET_DISPLAY_ON);
 
+	spanel->lhbm_ctl.hist_roi_configured = false;
 	ctx->dsi_hs_clk_mbps = MIPI_DSI_FREQ_MBPS_DEFAULT;
 
 	return 0;
@@ -429,11 +661,45 @@ static u32 staea_get_local_hbm_mode_effective_delay_frames(struct gs_panel *ctx)
 	}
 }
 
+static void staea_update_lhbm_hist_config(struct gs_panel *ctx, struct drm_atomic_state *state)
+{
+	struct staea_panel *spanel = to_spanel(ctx);
+	struct staea_lhbm_ctl *ctl = &spanel->lhbm_ctl;
+	const struct gs_panel_mode *pmode = ctx->current_mode;
+	const struct drm_display_mode *mode;
+	/* lhbm center below the center of AA: 540, radius: 100 */
+	const int d = 540, r = 100;
+	enum gs_drm_connector_lhbm_hist_roi_type new_hist_roi_type =
+			(GS_IS_HBM_ON_IRC_OFF(ctx->hbm_mode)) ? GS_HIST_ROI_FULL_SCREEN : GS_HIST_ROI_CIRCLE;
+
+	if (ctl->hist_roi_configured && new_hist_roi_type == ctl->hist_roi_type)
+		return;
+
+	if (!pmode) {
+		dev_err(ctx->dev, "no current mode set\n");
+		return;
+	}
+	mode = &pmode->mode;
+	if (new_hist_roi_type == GS_HIST_ROI_FULL_SCREEN) {
+		// IRC OFF - Full screen
+		gs_panel_update_lhbm_hist_data_helper(ctx, state, true, GS_HIST_ROI_FULL_SCREEN, d, r);
+		dev_info(ctx->dev, "set roi: full screen");
+	} else {
+		// IRC ON - LHBM circle
+		gs_panel_update_lhbm_hist_data_helper(ctx, state, true, GS_HIST_ROI_CIRCLE, d, r);
+		dev_info(ctx->dev, "set roi: lhbm circle");
+	}
+	ctl->hist_roi_type = new_hist_roi_type;
+	ctl->hist_roi_configured = true;
+}
+
 static int staea_atomic_check(struct gs_panel *ctx, struct drm_atomic_state *state)
 {
 	struct drm_connector *conn = &ctx->gs_connector->base;
 	struct drm_connector_state *new_conn_state = drm_atomic_get_new_connector_state(state, conn);
 	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
+
+	staea_update_lhbm_hist_config(ctx, state);
 
 	if (!ctx->current_mode || drm_mode_vrefresh(&ctx->current_mode->mode) == 120 ||
 		!new_conn_state || !new_conn_state->crtc)
@@ -526,7 +792,6 @@ static void staea_update_ffc(struct gs_panel *ctx, unsigned int hs_clk_mbps)
 	PANEL_ATRACE_END(__func__);
 }
 
-#define MAX_BR_HBM_IRC_OFF 4095
 static int staea_set_brightness(struct gs_panel *ctx, u16 br)
 {
 	struct device *dev = ctx->dev;
@@ -544,13 +809,8 @@ static int staea_set_brightness(struct gs_panel *ctx, u16 br)
 		ctx->timestamps.idle_exit_dimming_delay_ts = 0;
 	}
 
-	if (GS_IS_HBM_ON_IRC_OFF(ctx->hbm_mode) && _is_max_hbm_level(br, ctx)) {
-		GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x0F, 0xFF);
-		dev_dbg(dev, "apply max DBV when reach hbm max with irc off\n");
-	} else {
-		GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
+	GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
 						br >> 8, br & 0xff);
-	}
 
 	return 0;
 }
@@ -571,6 +831,14 @@ static void staea_set_hbm_mode(struct gs_panel *ctx, enum gs_hbm_mode hbm_mode)
 			 GS_IS_HBM_ON_IRC_OFF(ctx->hbm_mode));
 }
 
+static void staea_set_local_hbm_mode_post(struct gs_panel *ctx)
+{
+	const struct staea_panel *spanel = to_spanel(ctx);
+
+	if (spanel->lhbm_ctl.overdrived)
+		staea_set_local_hbm_brightness(ctx, false);
+}
+
 static void staea_mode_set(struct gs_panel *ctx, const struct gs_panel_mode *pmode)
 {
 	staea_change_frequency(ctx, pmode);
@@ -585,7 +853,9 @@ static void staea_get_panel_rev(struct gs_panel *ctx, u32 id)
 	u8 rev = main | sub;
 
 	if(rev == 0x4)
-		rev = PANEL_REV_PROTO1;
+		rev = 0;
+	else if(rev == 0x5)
+		rev = 1;
 
 	gs_panel_get_panel_rev(ctx, rev);
 }
@@ -944,6 +1214,100 @@ static const struct gs_panel_mode_array staea_lp_modes = {
 	},/* modes */
 };
 
+static void _update_lhbm_overdrive_brightness(struct gs_panel *ctx,
+	enum staea_lhbm_brt_overdrive_group grp, int coef)
+{
+	struct staea_panel *spanel = to_spanel(ctx);
+	enum staea_lhbm_brt_group norm_grp;
+
+	for (norm_grp = 0; norm_grp < LHBM_BRT_GRP_MAX ; norm_grp++) {
+		for (int ch = 0; ch < LHBM_BRT_MAX; ch++) {
+			u8 *p_norm = spanel->lhbm_ctl.brt_normal[norm_grp];
+			u8 *p_over = spanel->lhbm_ctl.brt_overdrive[grp][norm_grp];
+			u16 val;
+			int p = ch * 2;
+
+			val = (p_norm[p] << 8) | p_norm[p + 1];
+			dev_info(ctx->dev, "val: %d(dec)", val);
+			val = mult_frac(val, coef, 1000);;
+			dev_info(ctx->dev, "val * %d / 1000 = %d(dec)", coef, val);
+			p_over[p] = (val & 0xFF00) >> 8;
+			p_over[p + 1] = val & 0x00FF;
+		}
+	}
+}
+
+static int staea_get_normal_lhbm_brightness(struct gs_panel *ctx)
+{
+	struct device *dev = ctx->dev;
+	struct staea_panel *spanel = to_spanel(ctx);
+	struct mipi_dsi_device *dsi = to_mipi_dsi_device(ctx->dev);
+	enum staea_lhbm_brt_group group;
+	int ret;
+
+	GS_DCS_BUF_ADD_CMDLIST(dev, staea_cmd2_page2);
+	for (group = 0; group < LHBM_BRT_GRP_MAX; group++) {
+		u8 *p_norm = spanel->lhbm_ctl.brt_normal[group];
+		u8 lhbm_brt_offset = group * LHBM_BRT_LEN;
+		enum staea_lhbm_brt ch;
+
+		/* read RGB gamma value */
+		for (ch = 0; ch < LHBM_BRT_MAX; ch++) {
+			u8 reg_offset = ch * LHBM_BRT_REG_LEN;
+
+			GS_DCS_BUF_ADD_CMD_AND_FLUSH(dev, 0x6F, lhbm_brt_offset + reg_offset);
+			ret = mipi_dsi_dcs_read(dsi, 0xD1, p_norm + reg_offset, 2);
+			if(ret != LHBM_BRT_REG_LEN) {
+				dev_err(dev, "failed to read lhbm gamma set[%d] ret=%d\n",
+					group, ret);
+				return 1;
+			}
+		}
+	}
+
+	for (group = 0; group < LHBM_BRT_GRP_MAX; group++)
+		dev_info(dev, "lhbm normal brightness[%d]: %*ph\n",
+			group, LHBM_BRT_LEN, spanel->lhbm_ctl.brt_normal[group]);
+
+	return 0;
+}
+
+static void staea_lhbm_brightness_init(struct gs_panel *ctx)
+{
+	struct staea_panel *spanel = to_spanel(ctx);
+	enum staea_lhbm_brt_overdrive_group grp;
+	enum staea_lhbm_brt_group normal_grp;
+
+	if (staea_get_normal_lhbm_brightness(ctx)) {
+		return;
+	}
+
+	/* 0 nit, R*1.06, G*1.06, B*1.06 */
+	grp = LHBM_OVERDRIVE_GRP_0_NIT;
+	_update_lhbm_overdrive_brightness(ctx, grp, 1060);
+	/* 0-1 nit, R*1.05, G*1.05, B*1.05 */
+	grp = LHBM_OVERDRIVE_GRP_1_NIT;
+	_update_lhbm_overdrive_brightness(ctx, grp, 1050);
+	/* 1-5 nit, R*1.04, G*1.04, B*1.04 */
+	grp = LHBM_OVERDRIVE_GRP_5_NIT;
+	_update_lhbm_overdrive_brightness(ctx, grp, 1040);
+	/* 5-25 nit, R*1.03, G*1.03, B*1.03 */
+	grp = LHBM_OVERDRIVE_GRP_25_NIT;
+	_update_lhbm_overdrive_brightness(ctx, grp, 1030);
+	/* 25-150 nit, R*1.02, G*1.02, B*1.02 */
+	grp = LHBM_OVERDRIVE_GRP_150_NIT;
+	_update_lhbm_overdrive_brightness(ctx, grp, 1020);
+	/* 150-300 nit, R*1.015, G*1.015, B*1.015 */
+	grp = LHBM_OVERDRIVE_GRP_300_NIT;
+	_update_lhbm_overdrive_brightness(ctx, grp, 1015);
+
+	for (grp = 0; grp < LHBM_OVERDRIVE_GRP_MAX; grp++)
+		for (normal_grp = 0; normal_grp < LHBM_BRT_GRP_MAX; normal_grp++)
+			dev_info(ctx->dev, "lhbm overdrive brightness[%d][%d]: %*ph\n",
+				grp, normal_grp, LHBM_BRT_LEN,
+				spanel->lhbm_ctl.brt_overdrive[grp][normal_grp]);
+}
+
 static void staea_debugfs_init(struct drm_panel *panel, struct dentry *root)
 {
 	struct gs_panel *ctx = container_of(panel, struct gs_panel, base);
@@ -969,6 +1333,7 @@ panel_out:
 static void staea_panel_init(struct gs_panel *ctx)
 {
 	staea_dimming_frame_setting(ctx, staea_DIMMING_FRAME);
+	staea_lhbm_brightness_init(ctx);
 }
 
 static int staea_panel_probe(struct mipi_dsi_device *dsi)
@@ -1000,6 +1365,7 @@ static const struct gs_panel_funcs staea_gs_funcs = {
 	.set_nolp_mode = staea_set_nolp_mode,
 	.set_binned_lp = gs_panel_set_binned_lp_helper,
 	.set_local_hbm_mode = staea_set_local_hbm_mode,
+	.set_local_hbm_mode_post = staea_set_local_hbm_mode_post,
 	.set_hbm_mode = staea_set_hbm_mode,
 	.set_dimming = staea_set_dimming,
 	.is_mode_seamless = gs_panel_is_mode_seamless_helper,
@@ -1095,7 +1461,6 @@ static struct gs_panel_calibration_desc staea_calibration_desc = {
 
 static struct gs_panel_lhbm_desc staea_lhbm_desc = {
 	.lhbm_on_delay_frames = 2,
-	.effective_delay_frames = 2,
 	.post_cmd_delay_frames = 2,
 };
 

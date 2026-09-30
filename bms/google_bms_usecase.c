@@ -39,7 +39,7 @@ const char *bms_usecase_to_str(enum gsu_usecases usecase)
 	struct gsu_usecase_config_t *config;
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, usecase) {
-		if (config->usecase == usecase)
+		if (config && config->usecase == usecase)
 			return config->name;
 	}
 
@@ -52,12 +52,13 @@ bool bms_usecase_is_uc_wireless(enum gsu_usecases usecase)
 	struct gsu_usecase_config_t *config;
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, usecase) {
-		if (config->usecase == usecase)
+		if (config && config->usecase == usecase)
 			return config->is_wireless;
 	}
 
-	dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
-		__func__, usecase);
+	if (singleton_bms_uc_data)
+		dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
+			__func__, usecase);
 
 	return false;
 }
@@ -68,12 +69,13 @@ bool bms_usecase_is_uc_wired(enum gsu_usecases usecase)
 	struct gsu_usecase_config_t *config;
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, usecase) {
-		if (config->usecase == usecase)
+		if (config && config->usecase == usecase)
 			return config->is_wired;
 	}
 
-	dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
-		__func__, usecase);
+	if (singleton_bms_uc_data)
+		dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
+			__func__, usecase);
 
 	return false;
 }
@@ -84,12 +86,13 @@ bool bms_usecase_is_uc_charging_enabled(enum gsu_usecases usecase)
 	struct gsu_usecase_config_t *config;
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, usecase) {
-		if (config->usecase == usecase)
+		if (config && config->usecase == usecase)
 			return config->is_charging;
 	}
 
-	dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
-		__func__, usecase);
+	if (singleton_bms_uc_data)
+		dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
+			__func__, usecase);
 
 	return false;
 }
@@ -101,23 +104,24 @@ bool bms_usecase_is_chg_changed(enum gsu_usecases from_uc, enum gsu_usecases to_
 	int from_chg = -1, to_chg = -1;
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, from_uc) {
-		if (config->usecase == from_uc) {
+		if (config && config->usecase == from_uc) {
 			from_chg = config->chg_index;
 			break;
 		}
 	}
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, to_uc) {
-		if (config->usecase == to_uc) {
+		if (config && config->usecase == to_uc) {
 			to_chg = config->chg_index;
 			break;
 		}
 	}
 
 	if (from_chg == -1 || to_chg == -1) {
-		dev_err(singleton_bms_uc_data->chg_data->dev,
-		"%s: Error could not find usecase from_uc:%d chg:%d to_uc:%d chg:%d\n",
-		__func__, from_uc, from_chg, to_uc, to_chg);
+		if (singleton_bms_uc_data)
+			dev_err(singleton_bms_uc_data->chg_data->dev,
+				"%s: Error could not find usecase from_uc:%d chg:%d to_uc:%d chg:%d\n",
+				__func__, from_uc, from_chg, to_uc, to_chg);
 		return 0;
 	}
 
@@ -130,12 +134,13 @@ bool bms_usecase_is_uc_cp(enum gsu_usecases usecase)
 	struct gsu_usecase_config_t *config;
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, usecase) {
-		if (config->usecase == usecase)
+		if (config && config->usecase == usecase)
 			return config->is_cp;
 	}
 
-	dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
-		__func__, usecase);
+	if (singleton_bms_uc_data)
+		dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
+			__func__, usecase);
 
 	return false;
 }
@@ -146,12 +151,13 @@ bool bms_usecase_is_uc_otg(enum gsu_usecases usecase)
 	struct gsu_usecase_config_t *config;
 
 	hash_for_each_possible(gsu_usecase_table, config, hnode, usecase) {
-		if (config->usecase == usecase)
+		if (config && config->usecase == usecase)
 			return config->is_otg;
 	}
 
-	dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
-		__func__, usecase);
+	if (singleton_bms_uc_data)
+		dev_err(singleton_bms_uc_data->chg_data->dev, "%s: Error could not find usecase %d\n",
+			__func__, usecase);
 
 	return false;
 }
@@ -350,7 +356,8 @@ void bms_usecase_free_node_locked(struct bms_usecase_data *bms_uc_data,
 	if (free_state == BMS_USECASE_FREE_FROM_LIST || free_state == BMS_USECASE_FREE_ALL) {
 		klist_remove(&entry->list_node);
 
-		if (!_bms_usecase_meta_async_get(entry->value))
+		if (!_bms_usecase_meta_async_get(entry->value) &&
+			entry->status != BMS_USECASE_STATUS_ORPHAN)
 			bms_usecase_up(entry);
 	}
 
@@ -552,6 +559,12 @@ static void bms_usecase_process_work(struct work_struct *work)
 		mutex_lock(&bms_uc_data->queue_lock);
 		if (!_bms_usecase_meta_async_get(entry->value) &&
 		    entry->status == BMS_USECASE_STATUS_ORPHAN) {
+			/*
+			 * Explicitly reset the semaphore state for orphaned nodes.
+			 * The submitter was interrupted and left an unconsumed signal,
+			 * which must be cleared before the node returns to the pool.
+			 */
+			bms_usecase_reset_sem(entry);
 			bms_usecase_free_node_locked(bms_uc_data, entry, BMS_USECASE_FREE_ALL);
 		} else {
 			bms_usecase_free_node_locked(bms_uc_data, entry,

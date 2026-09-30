@@ -14,8 +14,7 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 
-#define GCIP_FENCE_DRIVER_NAME_LEN 64
-#define GCIP_FENCE_TIMELINE_NAME_LEN 64
+#define GCIP_DMA_FENCE_NAME_LENGTH 64
 
 #define to_gcip_fence(fence) container_of(fence, struct gcip_dma_fence, fence)
 
@@ -25,12 +24,14 @@
  * @fence_list_lock: Protects the list headed by @fence_list_head.
  * @dev: The device pointer for logging.
  * @driver_name: The driver name of this fence manager.
+ * @name: The name of the fence manager.
  */
 struct gcip_dma_fence_manager {
 	struct list_head fence_list;
 	spinlock_t fence_list_lock;
 	struct device *dev;
-	char driver_name[GCIP_FENCE_DRIVER_NAME_LEN];
+	const char *driver_name;
+	char name[GCIP_DMA_FENCE_NAME_LENGTH];
 };
 
 /**
@@ -40,71 +41,87 @@ struct gcip_dma_fence_manager {
  * @timeline_name: The timeline name of this fence.
  * @lock: Protects @fence.
  * @list_node: The list node for the fence manager's list.
- * @release: The callback to be called when the fence is released.
  */
 struct gcip_dma_fence {
 	struct dma_fence fence;
-	struct gcip_dma_fence_manager *mgr;
-	char timeline_name[GCIP_FENCE_TIMELINE_NAME_LEN];
+	struct gcip_dma_fence_manager __rcu *mgr;
+	char timeline_name[GCIP_DMA_FENCE_NAME_LENGTH];
 	spinlock_t lock;
 	struct list_head list_node;
-	void (*release)(struct gcip_dma_fence *gfence);
-};
-
-/**
- * struct gcip_dma_fence_data - GCIP DMA fence initialization data
- * @timeline_name: A null-terminated string with length less than GCIP_FENCE_TIMELINE_NAME_LEN.
- * @seqno: The sequence number to initialize the fence with.
- * @fence: (Output) The fd of the new sync_file with the new fence.
- * @release: (Optional) The callback to be called when the fence is released.
- *
- * The content of @timeline_name will be copied so it's fine to release this pointer after the
- * gcip_dma_fence_init() call.
- *
- * If @release is NULL, gcip_dma_fence_exit() will be called when the fence is released.
- */
-struct gcip_dma_fence_data {
-	const char *timeline_name;
-	u64 seqno;
-	int fence;
-	void (*release)(struct gcip_dma_fence *gfence);
 };
 
 /**
  * gcip_dma_fence_manager_create() - Allocates and returns a GCIP DMA fence manager.
  * @dev: The device for logging and managed memory allocation.
- * @driver_name: The driver name of this fence.
+ * @driver_name: The driver name of this fence manager.
+ * @name: The name of the fence manager.
  *
- * Memory is allocated as @dev managed so there is no release function of the manager.
+ * The @driver_name is used by the fences managed by this manager. It must be a constant
+ * string (e.g., a string literal) that will never be freed. Otherwise, calling get_driver_name()
+ * on a fence after the string is freed may cause use-after-free (UAF) issues.
  *
  * Return: A pointer to the fence manager on success, or the pointer to a negative errno otherwise.
  */
-struct gcip_dma_fence_manager *gcip_dma_fence_manager_create(struct device *dev, char *driver_name);
+struct gcip_dma_fence_manager *
+gcip_dma_fence_manager_create(struct device *dev, const char *driver_name, const char *name);
+
+/**
+ * gcip_dma_fence_manager_destroy() - Destroys the fence manager.
+ * @mgr: The fence manager to destroy.
+ *
+ * The remaining fences in the manager will be signaled with -ECANCELED and removed from the list.
+ */
+void gcip_dma_fence_manager_destroy(struct gcip_dma_fence_manager *mgr);
 
 /**
  * gcip_dma_fence_manager_show() - Prints data of all fences in @mgr to the sequence file @s.
  * @mgr: The fence manager to show.
  * @s: The sequence file to print to.
- * @fence_show: The custom fence show function to be called for each fence.
+ */
+void gcip_dma_fence_manager_show(struct gcip_dma_fence_manager *mgr, struct seq_file *s);
+
+/**
+ * gcip_dma_fence_create() - Allocates and initializes a GCIP DMA fence.
+ * @mgr: The fence manager to use for the fence.
+ * @seqno: The sequence number to initialize the fence with.
+ * @timeline_name: A null-terminated string with length less than GCIP_DMA_FENCE_NAME_LENGTH.
  *
- * If @fence_show is NULL, the gcip_dma_fence_show() will be used as the default.
+ * This function does:
+ *  1. Allocate memory for the GCIP DMA fence object.
+ *  2. Initialize the GCIP DMA fence object.
+ *
+ * @mgr can be NULL, which means the fence will not be managed by any fence manager.
+ *
+ * The content of @timeline_name will be copied so it's fine to release this pointer afterwards.
+ *
+ * The returned fence must be released with gcip_dma_fence_put().
+ *
+ * Return: A pointer to the GCIP DMA fence on success, or a negative errno pointer otherwise.
  */
-void gcip_dma_fence_manager_show(struct gcip_dma_fence_manager *mgr, struct seq_file *s,
-				 void (*fence_show)(struct gcip_dma_fence *, struct seq_file *));
+struct gcip_dma_fence *gcip_dma_fence_create(struct gcip_dma_fence_manager *mgr, u64 seqno,
+					     const char *timeline_name);
 
-/*
- * This function does
- *  1. Initialize the DMA fence object
- *  2. Install an FD associated with the created DMA fence
+/**
+ * gcip_dma_fence_install_fd() - Installs a file descriptor for the fence.
+ * @gfence: The GCIP DMA fence to install.
+ *
+ * The reference count of the fence will be increased by one, which is held by the sync_file.
+ *
+ * Return: The file descriptor on success, or a negative errno otherwise.
  */
-int gcip_dma_fence_init(struct gcip_dma_fence_manager *mgr, struct gcip_dma_fence *gfence,
-			struct gcip_dma_fence_data *data);
+int gcip_dma_fence_install_fd(struct gcip_dma_fence *gfence);
 
-/*
- * Reverts gcip_dma_fence_init(). Removes @gfence from the manager's list.
- * This function will not free @gfence.
+/**
+ * gcip_dma_fence_get() - Increments the reference count of the GCIP DMA fence.
+ * @gfence: The fence to get.
  */
-void gcip_dma_fence_exit(struct gcip_dma_fence *gfence);
+struct gcip_dma_fence *gcip_dma_fence_get(struct gcip_dma_fence *gfence);
+
+/**
+ * gcip_dma_fence_put() - Decrements the reference count of the GCIP DMA fence.
+ * @gfence: The fence to put.
+ */
+void gcip_dma_fence_put(struct gcip_dma_fence *gfence);
 
 /*
  * Sets @status to the DMA fence status of DMA fence FD @fence.
@@ -139,6 +156,16 @@ int gcip_dma_fence_signal(int fence, int error, bool ignore_signaled);
 
 /* Identical to gcip_dma_fence_signal except this function accepts gcip_dma_fence as the input. */
 int gcip_dma_fenceptr_signal(struct gcip_dma_fence *gfence, int error, bool ignore_signaled);
+
+/**
+ * gcip_dma_fence_scnprintf() - Prints data of @gfence to the buffer @buf.
+ * @buf: The buffer to print to.
+ * @size: The size of the buffer.
+ * @gfence: The fence to print.
+ *
+ * Return: The number of characters written into @buf not including the trailing '\0'.
+ */
+int gcip_dma_fence_scnprintf(char *buf, size_t size, struct gcip_dma_fence *gfence);
 
 /* Prints data of @gfence to the sequence file @s. For debug purpose only. */
 void gcip_dma_fence_show(struct gcip_dma_fence *gfence, struct seq_file *s);

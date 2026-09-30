@@ -20,7 +20,10 @@ int init_regfields(struct dptx *dptx)
 	int retval;
 
 	//DPTX Controller Regfields
-	dptx->ctrl_fields = kmalloc(sizeof(*dptx->ctrl_fields), GFP_KERNEL);
+	dptx->ctrl_fields = devm_kzalloc(dptx->dev, sizeof(*dptx->ctrl_fields), GFP_KERNEL);
+	if (!dptx->ctrl_fields)
+		return -ENOMEM;
+
 	dptx->regs[DPTX] = devm_regmap_init_mmio(dptx->dev, dptx->base[DPTX], &dwc_dptx_ctrl_regmap_cfg);
 	if (IS_ERR(dptx->regs[DPTX])) {
 		dev_err(dptx->dev, "Failed to create Controller Regmap\n");
@@ -40,7 +43,10 @@ int init_regfields(struct dptx *dptx)
 	}
 
 	//Clock Manager Regfields
-	dptx->clkmng_fields = kmalloc(sizeof(*dptx->clkmng_fields), GFP_KERNEL);
+	dptx->clkmng_fields = devm_kzalloc(dptx->dev, sizeof(*dptx->clkmng_fields), GFP_KERNEL);
+	if (!dptx->clkmng_fields)
+		return -ENOMEM;
+
 	dptx->regs[CLKMGR] = devm_regmap_init_mmio(dptx->dev, dptx->base[CLKMGR], &dwc_dptx_clkmng_regmap_cfg);
 	if (IS_ERR(dptx->regs[CLKMGR])) {
 		dev_err(dptx->dev, "Failed to create Clock Manager Regmap\n");
@@ -53,7 +59,10 @@ int init_regfields(struct dptx *dptx)
 	}
 
 	//Reset Manager Regfields
-	dptx->rstmng_fields = kmalloc(sizeof(*dptx->rstmng_fields), GFP_KERNEL);
+	dptx->rstmng_fields = devm_kzalloc(dptx->dev, sizeof(*dptx->rstmng_fields), GFP_KERNEL);
+	if (!dptx->rstmng_fields)
+		return -ENOMEM;
+
 	dptx->regs[RSTMGR] = devm_regmap_init_mmio(dptx->dev, dptx->base[RSTMGR], &dwc_dptx_rstmng_regmap_cfg);
 	if (IS_ERR(dptx->regs[RSTMGR])) {
 		dev_err(dptx->dev, "Failed to create Reset Manager Regmap\n");
@@ -66,7 +75,10 @@ int init_regfields(struct dptx *dptx)
 	}
 
 	//Audio Generator Regfields
-	dptx->ag_fields = kmalloc(sizeof(*dptx->ag_fields), GFP_KERNEL);
+	dptx->ag_fields = devm_kzalloc(dptx->dev, sizeof(*dptx->ag_fields), GFP_KERNEL);
+	if (!dptx->ag_fields)
+		return -ENOMEM;
+
 	dptx->regs[AG] = devm_regmap_init_mmio(dptx->dev, dptx->base[AG], &dwc_dptx_ag_regmap_cfg);
 	if (IS_ERR(dptx->regs[AG])) {
 		dev_err(dptx->dev, "Failed to create Audio Generator Regmap\n");
@@ -79,7 +91,10 @@ int init_regfields(struct dptx *dptx)
 	}
 
 	//Video Generator Regfields
-	dptx->vg_fields = kmalloc(sizeof(*dptx->vg_fields), GFP_KERNEL);
+	dptx->vg_fields = devm_kzalloc(dptx->dev, sizeof(*dptx->vg_fields), GFP_KERNEL);
+	if (!dptx->vg_fields)
+		return -ENOMEM;
+
 	dptx->regs[VG] = devm_regmap_init_mmio(dptx->dev, dptx->base[VG], &dwc_dptx_vg_regmap_cfg);
 	if (IS_ERR(dptx->regs[VG])) {
 		dev_err(dptx->dev, "Failed to create Video Generator Regmap\n");

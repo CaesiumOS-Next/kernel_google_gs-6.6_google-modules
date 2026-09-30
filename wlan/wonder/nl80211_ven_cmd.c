@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
+
+#include "include/wonder/wondertap.h"
 #define LOG_MODULE_NAME "ven_cmd"
 
 #include <net/cfg80211.h>
@@ -80,20 +83,28 @@ wonder_set_reg_policy[WONDER_VEN_ATTR_REG_MAX + 1] = {
 };
 
 static const struct nla_policy
-wonder_channel_schedule_policy[WONDER_VEN_ATTR_CHANNEL_SCHEDULE_MAX + 1] = {
-	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_SCHEDULE_LIST_LEN),
-	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_SCHEDULE_NEXT_IDX),
-	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_SCHEDULE_DWELL_TIME),
-	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_SCHEDULE_SWITCH_TIME),
-	WONDER_POL_NESTED(WONDER_VEN_ATTR_CHANNEL_SCHEDULE_LIST),
-	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_SCHEDULE_TSF_OFFSET),
-};
-
-static const struct nla_policy
 wonder_channel_list_entry_policy[WONDER_VEN_ATTR_CHANNEL_LIST_ENTRY_MAX + 1] = {
 	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_LIST_ENTRY_FREQ),
 	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_LIST_ENTRY_BW),
 	WONDER_POL_SCALAR(WONDER_VEN_ATTR_CHANNEL_LIST_ENTRY_ROLE),
+};
+
+static const struct nla_policy
+wonder_set_station_info_policy[WONDER_VEN_ATTR_STA_INFO_MAX + 1] = {
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_STA_INFO_ACTION),
+	WONDER_POL_BINARY(WONDER_VEN_ATTR_STA_INFO_MAC),
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_STA_INFO_AID),
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_STA_INFO_CAPABILITY_MASK),
+	[WONDER_VEN_ATTR_STA_INFO_HT_CAP] = { .type = NLA_BINARY },
+	[WONDER_VEN_ATTR_STA_INFO_VHT_CAP] = { .type = NLA_BINARY },
+	[WONDER_VEN_ATTR_STA_INFO_HE_CAP] = { .type = NLA_BINARY },
+	[WONDER_VEN_ATTR_STA_INFO_HE_6GHZ_CAP] = { .type = NLA_BINARY },
+};
+
+static const struct nla_policy
+wonder_set_features_policy[WONDER_VEN_ATTR_FEATURE_MAX + 1] = {
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_FEATURE_ID),
+	WONDER_POL_SCALAR(WONDER_VEN_ATTR_FEATURE_ENABLE),
 };
 
 static int wonder_vendor_cmd_set_frequency(struct wiphy *wiphy,
@@ -221,6 +232,87 @@ static int wonder_vendor_cmd_set_filter(struct wiphy *wiphy,
 	return ret;
 }
 
+static bool wonder_tx_rate_sanity_check(u32 preamble, u32 bw, u32 gi, u8 nss, u8 mcs)
+{
+	if (preamble == WONDERTAP_RATE_PREAMBLE_HT) {
+		/* HT MCS Index: NSS1(0-7), NSS2(8-15), NSS3(16-23), NSS4(24-31) */
+		u8 min_mcs = (nss - 1) * 8;
+		u8 max_mcs = min_mcs + 7;
+
+		/* HT (802.11n) max 40MHz and max 4 NSS */
+		if (bw > WONDERTAP_RATE_BW_40) {
+			pr_warn("HT: Invalid BW %u (Max 40MHz)\n", bw);
+			return false;
+		}
+
+		if (nss < 1 || nss > 4) {
+			pr_warn("HT: Invalid NSS %u (Max 4)\n", nss);
+			return false;
+		}
+
+		if (mcs < min_mcs || mcs > max_mcs) {
+			pr_warn("HT: Invalid MCS %u for NSS %u (Expected %u-%u)\n",
+				mcs, nss, min_mcs, max_mcs);
+			return false;
+		}
+
+		if (gi > WONDERTAP_RATE_GI_0_8_US) {
+			pr_warn("Invalid GI %u (HT only support 0.8 or 0.4)\n", gi);
+			return false;
+		}
+	} else if (preamble == WONDERTAP_RATE_PREAMBLE_VHT) {
+		/* VHT (802.11ac) max 160MHz and max 8 NSS */
+		if (bw > WONDERTAP_RATE_BW_160) {
+			pr_warn("VHT: Invalid BW %u (Max 160MHz)\n", bw);
+			return false;
+		}
+
+		if (nss < 1 || nss > 8) {
+			pr_warn("VHT: Invalid NSS %u (Max 8)\n", nss);
+			return false;
+		}
+
+		/* VHT MCS is independent of NSS, max 9 (256-QAM) */
+		if (mcs > 9) {
+			pr_warn("VHT: Invalid MCS %u (Max 9)\n", mcs);
+			return false;
+		}
+
+		if (gi > WONDERTAP_RATE_GI_0_8_US) {
+			pr_warn("Invalid GI %u (VHT only support 0.8 or 0.4)\n", gi);
+			return false;
+		}
+	} else if (preamble == WONDERTAP_RATE_PREAMBLE_HE) {
+		/* HE (802.11ax) max 160MHz and max 8 NSS */
+		if (bw > WONDERTAP_RATE_BW_160) {
+			pr_warn("HE: Invalid BW %u (Max 160MHz)\n", bw);
+			return false;
+		}
+
+		if (nss < 1 || nss > 8) {
+			pr_warn("HE: Invalid NSS %u (Max 8)\n", nss);
+			return false;
+		}
+
+		/* HE MCS max 11 (1024-QAM) */
+		if (mcs > 11) {
+			pr_warn("HE: Invalid MCS %u (Max 11)\n", mcs);
+			return false;
+		}
+
+		if (gi == WONDERTAP_RATE_GI_SHORT || gi > WONDERTAP_RATE_GI_3_2_US) {
+			pr_warn("HE: Invalid GI %u (Expected Default, 0.8us, 1.6us, 3.2us)\n",
+				gi);
+			return false;
+		}
+	} else {
+		pr_err("Unsupported preamble type: %u\n", preamble);
+		return false;
+	}
+
+	return true;
+}
+
 static int wonder_vendor_cmd_set_fixed_tx_rate(struct wiphy *wiphy,
 								struct wireless_dev *wdev,
 								const void *data, int data_len)
@@ -253,6 +345,12 @@ static int wonder_vendor_cmd_set_fixed_tx_rate(struct wiphy *wiphy,
 
 	wonder_info("Set fixed TX rate: preamble=%u, bw=%u, gi=%u, nss=%u, mcs=%u\n",
 				params.preamble, params.bw, params.gi, params.nss, params.mcs);
+
+	if (!wonder_tx_rate_sanity_check(params.preamble, params.bw, params.gi,
+		params.nss, params.mcs)) {
+		pr_warn("Invalid TX rate.\n");
+		return -EINVAL;
+	}
 
 	return wondertap_set_fixed_tx_rate(&wonder->wondertap_data, &params);
 }
@@ -359,15 +457,36 @@ static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct wonder_data *wonder = hw->priv;
 	struct sk_buff *skb;
-	const size_t reply_skb_size = sizeof(u32) + sizeof(u8) * 3;
-	u8 hw_amsdu = wonder->wondertap_data.cap.bits.amsdu_aggregation;
-	u8 hw_ampdu = wonder->wondertap_data.cap.bits.ampdu_aggregation;
-	u8 ch_hopping = wonder->wondertap_data.cap.bits.channel_hopping;
-	bool is_ibss_mode = wdev->iftype != NL80211_IFTYPE_MONITOR ? true : false;
+	const size_t reply_skb_size = sizeof(u32) + sizeof(u8) * 6;
+	struct wondertap_capability cap;
+	bool is_ibss_mode = (wdev && wdev->iftype != NL80211_IFTYPE_MONITOR) ? true : false;
 	u32 mtu_size = is_ibss_mode ? WONDER_IBSS_MODE_MTU_SIZE : INT_MAX;
+	u8 hbs_support;
+	u8 nss;
+	u8 hw_amsdu;
+	u8 hw_ampdu;
+	u8 hw_ra;
+	u8 ch_hopping;
+	int ret;
 
-	pr_info("Handling is_ibss_mode: %d, MTU: %u, HW_AMSDU: %u, HW_AMPDU: %u, CH_HOPPING: %u\n",
-		is_ibss_mode, mtu_size, hw_amsdu, hw_ampdu, ch_hopping);
+	ret = wondertap_get_capabilities(&wonder->wondertap_data, &cap);
+
+	if (ret) {
+		pr_err("Failed to get capabilities\n");
+		return -EINVAL;
+	}
+
+	hbs_support = cap.bits.hbs_support;
+	nss = cap.bits.nss;
+	hw_amsdu = cap.bits.amsdu_aggregation;
+	hw_ampdu = cap.bits.ampdu_aggregation;
+	hw_ra = cap.bits.rate_adaptation;
+	ch_hopping = cap.bits.channel_hopping;
+
+	pr_info("Handling is_ibss_mode: %d, MTU: %u, HW_AMSDU: %u, HW_AMPDU: %u, HW_RA: %u, "
+		"CH_HOPPING: %u, HBS_SUPPORT: %u, NSS: %u\n",
+		is_ibss_mode, mtu_size, hw_amsdu, hw_ampdu, hw_ra,
+		ch_hopping, hbs_support, nss);
 
 	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, nla_total_size(reply_skb_size));
 	if (!skb) {
@@ -394,8 +513,26 @@ static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
 		return -EMSGSIZE;
 	}
 
+	if (nla_put(skb, WONDER_VEN_ATTR_CAP_HW_RA, sizeof(u8), &hw_ra)) {
+		pr_err("Failed to put CAP HW_RA attribute\n");
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+
 	if (nla_put(skb, WONDER_VEN_ATTR_CAP_CH_HOPPING, sizeof(u8), &ch_hopping)) {
 		pr_err("Failed to put CAP CH_HOPPING attribute\n");
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put(skb, WONDER_VEN_ATTR_CAP_HBS_SUPPORT, sizeof(u8), &hbs_support)) {
+		pr_err("Failed to put CAP HBS_SUPPORT attribute\n");
+		kfree_skb(skb);
+		return -EMSGSIZE;
+	}
+
+	if (nla_put(skb, WONDER_VEN_ATTR_CAP_NSS, sizeof(u8), &nss)) {
+		pr_err("Failed to put CAP NSS attribute\n");
 		kfree_skb(skb);
 		return -EMSGSIZE;
 	}
@@ -516,28 +653,266 @@ static int wonder_vendor_cmd_get_mac_tsf(struct wiphy *wiphy,
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct wonder_data *wonder = hw->priv;
 	struct sk_buff *skb;
+	u64 sys_time_before;
+	u64 sys_time_after;
 	u32 mac_tsf;
 	int ret;
 
+	sys_time_before = ktime_get_ns();
 	ret = wondertap_get_mac_tsf(&wonder->wondertap_data, &mac_tsf);
+	sys_time_after = ktime_get_ns();
 	if (ret)
 		return ret;
 
-	wonder_info("Handling GET_MAC_TSF. Found TSF: %u\n", mac_tsf);
+	wonder_info("Handling GET_MAC_TSF. TSF: %u, sys_time_before: %llu, sys_time_after: %llu\n",
+		    mac_tsf, sys_time_before, sys_time_after);
 
-	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, nla_total_size(sizeof(u32)));
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, nla_total_size(sizeof(u32)) +
+						  nla_total_size(sizeof(u64)) * 2);
 	if (!skb) {
 		wonder_error("Failed to allocate reply skb\n");
 		return -ENOMEM;
 	}
 
-	if (nla_put_u32(skb, WONDER_VEN_ATTR_MAC_TSF, mac_tsf)) {
-		pr_err("Failed to put MAC TSF attribute\n");
+	if (nla_put_u32(skb, WONDER_VEN_ATTR_MAC_TSF, mac_tsf) ||
+	    nla_put_u64_64bit(skb, WONDER_VEN_ATTR_MAC_TSF_SYS_TIME_BEFORE, sys_time_before,
+			      WONDER_VEN_ATTR_MAC_TSF_UNSPEC) ||
+	    nla_put_u64_64bit(skb, WONDER_VEN_ATTR_MAC_TSF_SYS_TIME_AFTER, sys_time_after,
+			      WONDER_VEN_ATTR_MAC_TSF_UNSPEC)) {
+		wonder_error("Failed to put MAC TSF attributes\n");
 		kfree_skb(skb);
 		return -EMSGSIZE;
 	}
 
 	return cfg80211_vendor_cmd_reply(skb);
+}
+
+static int wonder_vendor_cmd_get_channel_status_report(struct wiphy *wiphy,
+						       struct wireless_dev *wdev,
+						       const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct wonder_data *wonder = hw->priv;
+	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_channel_status_report *report;
+	struct sk_buff *skb;
+	struct nlattr *list;
+	u32 num_channels;
+	size_t size;
+	int ret, i;
+
+	mutex_lock(&wondertap->lock);
+	num_channels = wondertap->cached_channel_schedule.channel_list_len;
+	mutex_unlock(&wondertap->lock);
+
+	if (num_channels == 0) {
+		pr_err("Channel hopping list is empty.\n");
+		return -EINVAL;
+	}
+
+	size = sizeof(*report) + num_channels * sizeof(struct wondertap_channel_status);
+	report = kzalloc(size, GFP_KERNEL);
+	if (!report)
+		return -ENOMEM;
+
+	report->channel_status_len = num_channels;
+	ret = wondertap_get_channel_status_report(wondertap, report);
+	if (ret) {
+		pr_err("Failed to get channel status report: %d\n", ret);
+		kfree(report);
+		return ret;
+	}
+
+	/* Calculate Netlink attribute sizes (header + list + array items) */
+	size = nla_total_size(sizeof(u32)) * 3 +
+	       nla_total_size(0) +
+	       num_channels * (nla_total_size(0) +
+			       nla_total_size(sizeof(u32)) * 4 +
+			       nla_total_size(sizeof(u16)) * 2);
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, size + 100);
+	if (!skb) {
+		pr_err("Failed to allocate reply skb\n");
+		kfree(report);
+		return -ENOMEM;
+	}
+
+	if (nla_put_u32(skb, WONDER_VEN_ATTR_CH_STATUS_REPORT_REQ_TSF,
+			report->current_channel_hopping_request_tsf) ||
+	    nla_put_u32(skb, WONDER_VEN_ATTR_CH_STATUS_REPORT_CUR_IDX,
+			report->current_channel_index) ||
+	    nla_put_u32(skb, WONDER_VEN_ATTR_CH_STATUS_REPORT_LEN,
+			report->channel_status_len))
+		goto nla_put_failure;
+
+	list = nla_nest_start(skb, WONDER_VEN_ATTR_CH_STATUS_REPORT_LIST);
+	if (!list)
+		goto nla_put_failure;
+
+	for (i = 0; i < report->channel_status_len; i++) {
+		struct nlattr *entry;
+		struct wondertap_channel_status *status = &report->status[i];
+
+		entry = nla_nest_start(skb, i + 1);
+		if (!entry)
+			goto nla_put_failure;
+
+		if (nla_put_u32(skb, WONDER_VEN_ATTR_CH_STATUS_ENTRY_SWITCH_TSF,
+				status->channel_switch_tsf) ||
+		    nla_put_u32(skb, WONDER_VEN_ATTR_CH_STATUS_ENTRY_FREQ,
+				status->freq) ||
+		    nla_put_u32(skb, WONDER_VEN_ATTR_CH_STATUS_ENTRY_START_TSF,
+				status->channel_start_tsf) ||
+		    nla_put_u32(skb, WONDER_VEN_ATTR_CH_STATUS_ENTRY_END_TSF,
+				status->channel_end_tsf) ||
+		    nla_put_u16(skb, WONDER_VEN_ATTR_CH_STATUS_ENTRY_TX_TRAFFIC_INDEX,
+				status->tx_traffic_index) ||
+		    nla_put_u16(skb, WONDER_VEN_ATTR_CH_STATUS_ENTRY_RX_TRAFFIC_INDEX,
+				status->rx_traffic_index))
+			goto nla_put_failure;
+
+		nla_nest_end(skb, entry);
+	}
+	nla_nest_end(skb, list);
+
+	kfree(report);
+	return cfg80211_vendor_cmd_reply(skb);
+
+nla_put_failure:
+	pr_err("Failed to put channel status report attribute\n");
+	kfree_skb(skb);
+	kfree(report);
+	return -EMSGSIZE;
+}
+
+static int wonder_vendor_cmd_set_station_info(struct wiphy *wiphy,
+					      struct wireless_dev *wdev,
+					      const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct wonder_data *wonder = hw->priv;
+	struct nlattr *tb[WONDER_VEN_ATTR_STA_INFO_MAX + 1];
+	struct wondertap_station_info sta_info = {0};
+	enum wondertap_station_action action;
+
+	if (nla_parse(tb, WONDER_VEN_ATTR_STA_INFO_MAX, data, data_len,
+		      wonder_set_station_info_policy, NULL) < 0) {
+		pr_err("Failed to parse station info attributes\n");
+		return -EINVAL;
+	}
+
+	/* Check that mandatory attributes are present */
+	if (!tb[WONDER_VEN_ATTR_STA_INFO_ACTION] ||
+	    !tb[WONDER_VEN_ATTR_STA_INFO_MAC]) {
+		pr_err("Missing mandatory attributes for station info\n");
+		return -EINVAL;
+	}
+
+	action = nla_get_u32(tb[WONDER_VEN_ATTR_STA_INFO_ACTION]);
+	nla_memcpy(sta_info.mac, tb[WONDER_VEN_ATTR_STA_INFO_MAC], ETH_ALEN);
+
+	if (tb[WONDER_VEN_ATTR_STA_INFO_AID])
+		sta_info.aid = nla_get_u16(tb[WONDER_VEN_ATTR_STA_INFO_AID]);
+
+	if (tb[WONDER_VEN_ATTR_STA_INFO_CAPABILITY_MASK])
+		sta_info.capability_mask =
+			nla_get_u32(tb[WONDER_VEN_ATTR_STA_INFO_CAPABILITY_MASK]);
+
+	if (tb[WONDER_VEN_ATTR_STA_INFO_HT_CAP]) {
+		if (nla_len(tb[WONDER_VEN_ATTR_STA_INFO_HT_CAP]) ==
+		    sizeof(struct ieee80211_ht_cap))
+			memcpy(&sta_info.ht_capa,
+			       nla_data(tb[WONDER_VEN_ATTR_STA_INFO_HT_CAP]),
+			       sizeof(struct ieee80211_ht_cap));
+		else
+			return -EINVAL;
+	}
+
+	if (tb[WONDER_VEN_ATTR_STA_INFO_VHT_CAP]) {
+		if (nla_len(tb[WONDER_VEN_ATTR_STA_INFO_VHT_CAP]) ==
+		    sizeof(struct ieee80211_vht_cap))
+			memcpy(&sta_info.vht_capa,
+			       nla_data(tb[WONDER_VEN_ATTR_STA_INFO_VHT_CAP]),
+			       sizeof(struct ieee80211_vht_cap));
+		else
+			return -EINVAL;
+	}
+
+	if (tb[WONDER_VEN_ATTR_STA_INFO_HE_CAP]) {
+		size_t he_len = nla_len(tb[WONDER_VEN_ATTR_STA_INFO_HE_CAP]);
+
+		if (he_len <= sizeof(struct ieee80211_he_cap_elem)) {
+			memcpy(&sta_info.he_capa,
+			       nla_data(tb[WONDER_VEN_ATTR_STA_INFO_HE_CAP]),
+			       he_len);
+			sta_info.he_capa_len = he_len;
+		} else {
+			return -EINVAL;
+		}
+	}
+
+	if (tb[WONDER_VEN_ATTR_STA_INFO_HE_6GHZ_CAP]) {
+		if (nla_len(tb[WONDER_VEN_ATTR_STA_INFO_HE_6GHZ_CAP]) ==
+		    sizeof(struct ieee80211_he_6ghz_capa))
+			memcpy(&sta_info.he_6ghz_capa,
+			       nla_data(tb[WONDER_VEN_ATTR_STA_INFO_HE_6GHZ_CAP]),
+			       sizeof(struct ieee80211_he_6ghz_capa));
+		else
+			return -EINVAL;
+	}
+
+	pr_debug("SET_STATION_INFO: action=%u, mac=%pM, aid=%u, cap_mask=0x%x\n",
+		    action, sta_info.mac, sta_info.aid, sta_info.capability_mask);
+
+	wondertap_set_station_info(&wonder->wondertap_data, action, &sta_info);
+	return 0;
+}
+
+static int wonder_vendor_cmd_set_features(struct wiphy *wiphy,
+					  struct wireless_dev *wdev,
+					  const void *data, int data_len)
+{
+	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
+	struct wonder_data *wonder = hw->priv;
+	struct nlattr *tb[WONDER_VEN_ATTR_FEATURE_MAX + 1];
+	u32 feature_id;
+	u8 enable;
+
+	if (nla_parse(tb, WONDER_VEN_ATTR_FEATURE_MAX, data, data_len,
+		      wonder_set_features_policy, NULL) < 0) {
+		wonder_error("Failed to parse features attributes\n");
+		return -EINVAL;
+	}
+
+	if (!tb[WONDER_VEN_ATTR_FEATURE_ID] || !tb[WONDER_VEN_ATTR_FEATURE_ENABLE]) {
+		wonder_error("Missing mandatory attributes for set features\n");
+		return -EINVAL;
+	}
+
+	feature_id = nla_get_u32(tb[WONDER_VEN_ATTR_FEATURE_ID]);
+	enable = nla_get_u8(tb[WONDER_VEN_ATTR_FEATURE_ENABLE]);
+
+	wonder_info("SET_FEATURES: feature_id=%u, enable=%u\n", feature_id, enable);
+
+	switch (feature_id) {
+	case WONDER_FEATURE_CHANNEL_HOPPING:
+		wonder->channel_hopping_enable = enable;
+		break;
+	case WONDER_FEATURE_AMSDU:
+		wonder->amsdu_enable = enable;
+		break;
+	case WONDER_FEATURE_AMPDU:
+		wonder->ampdu_enable = enable;
+		break;
+	case WONDER_FEATURE_RA:
+		wonder->ra_enable = enable;
+		break;
+	default:
+		wonder_error("Unknown feature ID: %u\n", feature_id);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static const struct wiphy_vendor_command wonder_vendor_cmds[] = {
@@ -600,7 +975,7 @@ static const struct wiphy_vendor_command wonder_vendor_cmds[] = {
 			.vendor_id = WONDER_VENDOR_ID,
 			.subcmd = WONDER_VEN_SUBCMD_GET_CAP
 		},
-		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.flags = 0,
 		.doit = wonder_vendor_cmd_get_cap,
 		.policy = VENDOR_CMD_RAW_DATA,
 	},
@@ -622,12 +997,41 @@ static const struct wiphy_vendor_command wonder_vendor_cmds[] = {
 		.doit = wonder_vendor_cmd_get_mac_tsf,
 		.policy = VENDOR_CMD_RAW_DATA,
 	},
+	{
+		.info = {
+			.vendor_id = WONDER_VENDOR_ID,
+			.subcmd = WONDER_VEN_SUBCMD_GET_CHANNEL_STATUS_REPORT
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = wonder_vendor_cmd_get_channel_status_report,
+		.policy = VENDOR_CMD_RAW_DATA,
+	},
+	{
+		.info = {
+			.vendor_id = WONDER_VENDOR_ID,
+			.subcmd = WONDER_VEN_SUBCMD_SET_STATION_INFO
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = wonder_vendor_cmd_set_station_info,
+		.policy = VENDOR_CMD_RAW_DATA,
+	},
+	{
+		.info = {
+			.vendor_id = WONDER_VENDOR_ID,
+			.subcmd = WONDER_VEN_SUBCMD_SET_FEATURES
+		},
+		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
+		.doit = wonder_vendor_cmd_set_features,
+		.policy = VENDOR_CMD_RAW_DATA,
+	},
 };
 
-const struct wiphy_vendor_command *wonder_get_wiphy_vendor_command(void) {
+const struct wiphy_vendor_command *wonder_get_wiphy_vendor_command(void)
+{
 	return wonder_vendor_cmds;
 }
 
-size_t wonder_get_wiphy_vendor_command_array_size(void) {
+size_t wonder_get_wiphy_vendor_command_array_size(void)
+{
 	return ARRAY_SIZE(wonder_vendor_cmds);
 }

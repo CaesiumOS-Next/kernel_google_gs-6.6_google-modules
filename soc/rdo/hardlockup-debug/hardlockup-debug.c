@@ -59,6 +59,7 @@ enum hardlockup_magic {
 
 static struct task_struct *pm_suspend_task;
 static DEFINE_SPINLOCK(pm_suspend_task_lock);
+static unsigned long pm_panic_once;
 
 static void hardlockup_debug_bug_func(void)
 {
@@ -145,9 +146,9 @@ static int hardlockup_debug_bug_handler(struct pt_regs *regs, unsigned long esr)
 	static atomic_t dump_tasks_once = ATOMIC_INIT(1);
 	int cpu = raw_smp_processor_id();
 	unsigned int val;
-	unsigned long flags;
 	unsigned long last_pc;
 	int log_lock_acquired;
+	bool pm_panic = false;
 
 	hardlockup_debug_disable_fiq();
 
@@ -208,6 +209,7 @@ static int hardlockup_debug_bug_handler(struct pt_regs *regs, unsigned long esr)
 			allcorelockup_detected ? "WDT expired" : "Core", cpu,
 			hardlockup_core_mask);
 
+	google_cdd_save_context(regs, false);
 	dump_backtrace(regs, NULL, KERN_DEFAULT);
 
 	if (atomic_cmpxchg(&dump_tasks_once, 1, 0)) {
@@ -226,25 +228,53 @@ static int hardlockup_debug_bug_handler(struct pt_regs *regs, unsigned long esr)
 		}
 	}
 
-	spin_lock_irqsave(&pm_suspend_task_lock, flags);
-	if (pm_suspend_task) {
-		pr_emerg("pm_suspend_task '%s' %d hung (state=%d)",
-				pm_suspend_task->comm, pm_suspend_task->pid,
-				pm_suspend_task->__state);
-		sched_show_task(pm_suspend_task);
-	}
-	spin_unlock_irqrestore(&pm_suspend_task_lock, flags);
+	if (pm_suspend_task && !test_and_set_bit(0, &pm_panic_once)) {
+		if (spin_trylock(&pm_suspend_task_lock)) {
+			pr_emerg("pm_suspend_task '%s' %d hung (state=%d)\n",
+					pm_suspend_task->comm, pm_suspend_task->pid,
+					pm_suspend_task->__state);
+			sched_show_task(pm_suspend_task);
+			spin_unlock(&pm_suspend_task_lock);
+		} else {
+			pr_warn("Failed to get pm_suspend_task_lock\n");
+		}
 
-	hardlockup_core_handled_mask |= BIT(cpu);
+		pm_panic = true;
+	}
+
+	set_bit(cpu, &hardlockup_core_handled_mask);
 
 	if (log_lock_acquired)
 		raw_spin_unlock(&hardlockup_log_lock);
 
-	if (hardlockup_core_mask == hardlockup_core_handled_mask) {
+	if ((READ_ONCE(hardlockup_core_handled_mask) & hardlockup_core_mask) ==
+	    hardlockup_core_mask) {
 		pr_emerg("***** All locked up cores dumped the call stack *****\n");
-		if (pm_suspend_task)
-			panic("PM suspend timeout");
 		//TODO(b/205354981): If we can request warm reset from here
+	}
+
+	if (pm_panic) {
+		/*
+		 * Wait 1 second max for all CPUs to complete their logging
+		 * A 1-second ceiling is pragmatic to allow slow UART consoles to drain
+		 * backtraces from all CPUs
+		 */
+		int wait = 1 * USEC_PER_SEC;
+		const int poll_interval_us = 10;
+
+		while (hardlockup_core_mask !=
+		       (READ_ONCE(hardlockup_core_handled_mask) & hardlockup_core_mask) &&
+		       wait > 0) {
+			udelay(poll_interval_us);
+			wait -= poll_interval_us;
+		}
+
+		if (wait <= 0)
+			pr_emerg("Timeout waiting for cores: expected_mask=%#lx, handled_mask=%#lx\n",
+				 hardlockup_core_mask, READ_ONCE(hardlockup_core_handled_mask));
+
+		/* Panic here also sets the string as Ramdump Reason */
+		panic("PM suspend timeout");
 	}
 	/* If cpu is locked, wait for WDT reset without executing code anymore. */
 	hardlockup_debug_spin_func();

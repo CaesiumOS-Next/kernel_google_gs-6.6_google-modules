@@ -297,6 +297,9 @@ int gxp_mcu_platform_after_probe(struct gxp_dev *gxp)
 	if (ret)
 		return ret;
 
+	if (gxp->coresight_remote_init)
+		gxp->coresight_remote_init(gxp);
+
 	ret = gxp_devfreq_init(gxp);
 	if (ret)
 		dev_warn(gxp->dev, "Failed to init devfreq framework: %d\n", ret);
@@ -317,6 +320,8 @@ void gxp_mcu_platform_before_remove(struct gxp_dev *gxp)
 	gxp_mcu_exit(gxp_mcu_of(gxp));
 	gxp_usage_stats_exit(gxp);
 	gxp_devfreq_exit(gxp);
+	if (gxp->coresight_remote_exit)
+		gxp->coresight_remote_exit(gxp);
 }
 
 void gxp_mcu_dev_init(struct gxp_mcu_dev *mcu_dev)

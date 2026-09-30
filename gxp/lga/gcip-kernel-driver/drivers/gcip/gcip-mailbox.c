@@ -53,6 +53,37 @@
 
 #define IS_BLOCK_OFF() (mailbox->ops->is_block_off ? mailbox->ops->is_block_off(mailbox) : false)
 
+/**
+ * struct gcip_mailbox_waiter_sync - The struct to hold the awaiter of the synchronous command.
+ * @awaiter: The embedded awaiter of the synchronous command.
+ * @release_ready: A completion struct to indicate that the awaiter is ready to be released.
+ */
+struct gcip_mailbox_waiter_sync {
+	struct gcip_mailbox_awaiter awaiter;
+	struct completion release_ready;
+};
+
+/**
+ * gcip_mailbox_waiter_sync_release() - The callback to release the synchronous awaiter.
+ * @awaiter: The pointer to the awaiter of the synchronous command.
+ *
+ * The sync_rsp will not be freed here because it will be released automatically when the function
+ * gcip_mailbox_send_cmd() returns. This function will only mark the @release_ready completed and
+ * notify gcip_mailbox_send_cmd() to continue.
+ */
+static void gcip_mailbox_waiter_sync_release(struct gcip_mailbox_awaiter *awaiter)
+{
+	struct gcip_mailbox_waiter_sync *waiter_sync =
+		container_of(awaiter, struct gcip_mailbox_waiter_sync, awaiter);
+
+	complete_all(&waiter_sync->release_ready);
+}
+
+/* The awaiter operators for the synchronous command. */
+static const struct gcip_mailbox_awaiter_ops sync_awaiter_ops = {
+	.release = gcip_mailbox_waiter_sync_release
+};
+
 static void gcip_mailbox_async_cmd_timeout_work(struct work_struct *work);
 
 /**
@@ -200,7 +231,11 @@ static int gcip_mailbox_wait_list_add(struct gcip_mailbox *mailbox,
 	int ret;
 
 	if (mailbox->ops->before_enqueue_wait_list) {
-		ret = mailbox->ops->before_enqueue_wait_list(mailbox, awaiter->rsp, awaiter);
+		/* If the awaiter is a synchronous one, pass NULL to the callback */
+		ret = mailbox->ops->before_enqueue_wait_list(
+			mailbox, awaiter->rsp,
+			gcip_mailbox_awaiter_get_ops(awaiter) == &sync_awaiter_ops ? NULL :
+										     awaiter);
 		if (ret)
 			return ret;
 	}
@@ -270,6 +305,9 @@ static int gcip_mailbox_enqueue_cmd(struct gcip_mailbox *mailbox, void *cmd,
 	idx = CIRC_QUEUE_REAL_INDEX(GET_TX_QUEUE_TAIL(), mailbox->queue_wrap_bit);
 	cmd_ptr = mailbox->tx_queue + mailbox->tx_elem_size * idx;
 	memcpy(cmd_ptr, cmd, mailbox->tx_elem_size);
+
+	/* Make sure the command is written to the command queue before incrementing the tail. */
+	dma_wmb();
 
 	INC_TX_QUEUE_TAIL(1);
 
@@ -451,6 +489,14 @@ static void *gcip_mailbox_fetch_responses(struct gcip_mailbox *mailbox, u32 *tot
 				ret = prev_ptr;
 			break;
 		}
+
+		/*
+		 * Ensure response queue content is read after reading the updated tail.
+		 * This prevents CPU from bypassing data dependency via branch prediction,
+		 * and avoids a race condition where firmware updates the tail and responses
+		 * between the time the CPU reads the responses and the time it reads the tail.
+		 */
+		dma_rmb();
 		/* Copies responses. */
 		j = CIRC_QUEUE_REAL_INDEX(head, wrap_bit);
 		for (i = 0; i < count; i++) {
@@ -721,43 +767,14 @@ int gcip_mailbox_send_cmd_no_rsp(struct gcip_mailbox *mailbox, void *cmd)
 	return ret;
 }
 
-/**
- * struct gcip_mailbox_waiter_sync - The struct to hold the awaiter of the synchronous command.
- * @awaiter: The embedded awaiter of the synchronous command.
- * @release_ready: A completion struct to indicate that the awaiter is ready to be released.
- */
-struct gcip_mailbox_waiter_sync {
-	struct gcip_mailbox_awaiter awaiter;
-	struct completion release_ready;
-};
-
-/**
- * gcip_mailbox_waiter_sync_release() - The callback to release the synchronous awaiter.
- * @awaiter: The pointer to the awaiter of the synchronous command.
- *
- * The sync_rsp will not be freed here because it will be released automatically when the function
- * gcip_mailbox_send_cmd() returns. This function will only mark the @release_ready completed and
- * notify gcip_mailbox_send_cmd() to continue.
- */
-static void gcip_mailbox_waiter_sync_release(struct gcip_mailbox_awaiter *awaiter)
-{
-	struct gcip_mailbox_waiter_sync *waiter_sync =
-		container_of(awaiter, struct gcip_mailbox_waiter_sync, awaiter);
-
-	complete_all(&waiter_sync->release_ready);
-}
-
 int gcip_mailbox_send_cmd(struct gcip_mailbox *mailbox, void *cmd, void *resp)
 {
 	struct gcip_mailbox_waiter_sync waiter_sync;
 	struct gcip_mailbox_awaiter *awaiter = &waiter_sync.awaiter;
-	static const struct gcip_mailbox_awaiter_ops ops = {
-		.release = gcip_mailbox_waiter_sync_release
-	};
 	int ret;
 
 	init_completion(&waiter_sync.release_ready);
-	ret = gcip_mailbox_awaiter_init_onstack(awaiter, mailbox, resp, &ops);
+	ret = gcip_mailbox_awaiter_init_onstack(awaiter, mailbox, resp, &sync_awaiter_ops);
 	if (ret) {
 		complete_all(&waiter_sync.release_ready);
 		goto out;

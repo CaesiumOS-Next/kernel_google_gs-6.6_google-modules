@@ -27,6 +27,8 @@
 
 #define EDGETPU_USE_IIF_MAILBOX 1
 
+#define EDGETPU_NUM_VII_CREDITS_PER_CLIENT 16
+
 static inline u32 edgetpu_mailbox_get_context_csr_base(u32 index)
 {
 	return EDGETPU_MBOX_BASE + index * EDGETPU_MBOX_CSRS_SIZE;

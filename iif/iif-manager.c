@@ -75,8 +75,8 @@ static void iif_manager_destroy(struct kref *kref)
 /* Validates @ops. Returns true if operators are valid. */
 static bool iif_manager_validate_ops(const struct iif_manager_fence_ops *ops)
 {
-	return ops->sync_unit_name && ops->fence_create && ops->fence_retire && ops->fence_signal &&
-	       ops->add_poll_cb && ops->remove_poll_cb;
+	return ops->sync_unit_name && ops->fence_create && ops->fence_release &&
+	       ops->fence_signal && ops->add_poll_cb && ops->remove_poll_cb;
 }
 
 struct iif_manager *iif_manager_init(const struct device_node *np)
@@ -346,3 +346,16 @@ struct iif_fence *iif_manager_get_fence_from_id(struct iif_manager *mgr, int id)
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(iif_manager_get_fence_from_id);
+
+void iif_manager_fence_unblocked(struct iif_manager *mgr, int id)
+{
+	struct iif_fence *fence;
+
+	fence = iif_manager_get_fence_from_id(mgr, id);
+	if (!fence)
+		return;
+
+	iif_fence_unblocked(fence);
+	iif_fence_put_async(fence);
+}
+EXPORT_SYMBOL_GPL(iif_manager_fence_unblocked);

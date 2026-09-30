@@ -64,7 +64,7 @@ void iif_all_signaler_submission_waiter_put(struct iif_signaler_submission_waite
 
 static struct iif_signaler_submission_waiter_cb *
 iif_signaler_submission_waiter_cb_alloc(struct iif_signaler_submission_waiter *waiter,
-				       struct iif_fence *fence)
+					struct iif_fence *fence)
 {
 	struct iif_signaler_submission_waiter_cb *cb;
 

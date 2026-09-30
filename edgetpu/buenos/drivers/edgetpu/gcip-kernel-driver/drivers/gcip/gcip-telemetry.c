@@ -2,20 +2,23 @@
 /*
  * GCIP telemetry: logging and tracing.
  *
- * Copyright (C) 2022 Google LLC
+ * Copyright (C) 2022-2026 Google LLC
  */
 
+#include <linux/cleanup.h>
+#include <linux/compiler.h>
 #include <linux/container_of.h>
-#include <linux/delay.h>
 #include <linux/dev_printk.h>
+#include <linux/err.h>
 #include <linux/eventfd.h>
+#include <linux/jiffies.h>
 #include <linux/log2.h>
 #include <linux/mm.h>
 #include <linux/mm_types.h>
 #include <linux/mutex.h>
-#include <linux/refcount.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/workqueue.h>
 
 #include <gcip/gcip-memory.h>
@@ -59,10 +62,10 @@ int gcip_telemetry_set_event(struct gcip_telemetry *tel, u32 eventfd)
 	if (IS_ERR(ctx))
 		return PTR_ERR(ctx);
 
-	mutex_lock(&tel->state_ctx_lock);
-	prev_ctx = tel->ctx;
-	tel->ctx = ctx;
-	mutex_unlock(&tel->state_ctx_lock);
+	scoped_guard(mutex, &tel->state_ctx_lock) {
+		prev_ctx = tel->ctx;
+		tel->ctx = ctx;
+	}
 
 	if (prev_ctx)
 		eventfd_ctx_put(prev_ctx);
@@ -74,10 +77,10 @@ void gcip_telemetry_unset_event(struct gcip_telemetry *tel)
 {
 	struct eventfd_ctx *prev_ctx;
 
-	mutex_lock(&tel->state_ctx_lock);
-	prev_ctx = tel->ctx;
-	tel->ctx = NULL;
-	mutex_unlock(&tel->state_ctx_lock);
+	scoped_guard(mutex, &tel->state_ctx_lock) {
+		prev_ctx = tel->ctx;
+		tel->ctx = NULL;
+	}
 
 	if (prev_ctx)
 		eventfd_ctx_put(prev_ctx);
@@ -85,29 +88,79 @@ void gcip_telemetry_unset_event(struct gcip_telemetry *tel)
 
 /**
  * copy_with_wrap() - The helper function to copy data out of the log buffer with wrapping.
- * @header: The telemetry header to read and write the head value.
  * @dest: The buffer to copy the data to.
+ * @start: The start address of the telemetry circular buffer.
+ * @raw_head: The current raw head value containing the wrap bit and real head.
  * @length: The length of the data to be copied.
- * @size: The size of telemetry buffer.
- * @start: The start address of the telemetry buffer.
+ * @size: The size of telemetry circular buffer.
+ *
+ * Return: the new head value on success, U32_MAX on failure (e.g. head out of bounds).
  */
-static void copy_with_wrap(struct gcip_telemetry_header *header, void *dest, u32 length, u32 size,
-			   void *start)
+static u32 copy_with_wrap(void *dest, void *start, u32 raw_head, u32 length, u32 size)
 {
-	const u32 wrap_bit = size + sizeof(*header);
-	u32 remaining = 0;
-	u32 head = header->head & (wrap_bit - 1);
+	const u32 max_length = size - sizeof(struct gcip_log_entry_header);
+	const u32 wrap_bit = size + sizeof(struct gcip_telemetry_header);
+	u32 wrap_bit_val = raw_head & wrap_bit;
+	u32 head = raw_head & (wrap_bit - 1);
+
+	if (unlikely(length == 0 || length > max_length || head >= size))
+		return U32_MAX;
 
 	if (head + length < size) {
 		memcpy(dest, start + head, length);
-		header->head += length;
+		head = raw_head + length;
 	} else {
-		remaining = size - head;
+		u32 remaining = size - head;
+		u32 wrapped_len = length - remaining;
+
 		memcpy(dest, start + head, remaining);
-		memcpy(dest + remaining, start, length - remaining);
-		header->head = (header->head & wrap_bit) ^ wrap_bit;
-		header->head |= length - remaining;
+		memcpy(dest + remaining, start, wrapped_len);
+		head = (wrap_bit_val ^ wrap_bit) | wrapped_len;
 	}
+
+	return head;
+}
+
+/**
+ * gcip_telemetry_read_log_entry() - Read a log entry from telemetry buffer.
+ * @header: Pointer to the telemetry buffer header.
+ * @buffer: Destination buffer to copy log entry payload.
+ * @code: Pointer to output the log entry level/code.
+ *
+ * This function extracts the log entry header and copies the log payload into the buffer.
+ * If corruption is detected, head will be reseted to tail.
+ *
+ * Return: 0 on success, or a negative errno on otherwise.
+ */
+static int gcip_telemetry_read_log_entry(struct gcip_telemetry_header *header, char *buffer,
+					 s16 *code)
+{
+	const size_t queue_size = header->size - sizeof(*header);
+	void *start = (void *)header + sizeof(*header);
+	u32 head = READ_ONCE(header->head);
+	struct gcip_log_entry_header entry;
+	int ret = 0;
+
+	head = copy_with_wrap(&entry, start, head, sizeof(entry), queue_size);
+	if (head == U32_MAX) {
+		ret = -EIO;
+		goto out;
+	}
+
+	head = copy_with_wrap(buffer, start, head, entry.length, queue_size);
+	if (head == U32_MAX) {
+		ret = -EIO;
+		goto out;
+	}
+
+	buffer[entry.length] = 0;
+
+	*code = entry.code;
+
+out:
+	WRITE_ONCE(header->head, ret ? READ_ONCE(header->tail) : head);
+
+	return ret;
 }
 
 /**
@@ -121,29 +174,26 @@ static void gcip_telemetry_fw_log(const struct gcip_telemetry *log)
 {
 	struct device *dev = log->dev;
 	struct gcip_telemetry_header *header = log->header;
-	struct gcip_log_entry_header entry;
-	u8 *start;
-	const size_t queue_size = header->size - sizeof(*header);
-	const size_t max_length = queue_size - sizeof(entry);
-	char *buffer = kvmalloc(max_length + 1, GFP_KERNEL);
+	const size_t max_length =
+		log->memory.size - sizeof(*header) - sizeof(struct gcip_log_entry_header);
+	char *buffer;
+	s16 code;
+	int ret;
 
+	buffer = kvmalloc(max_length + 1, GFP_KERNEL);
 	if (!buffer) {
-		header->head = header->tail;
+		WRITE_ONCE(header->head, READ_ONCE(header->tail));
 		return;
 	}
-	start = (u8 *)header + sizeof(*header);
 
-	while (header->head != header->tail) {
-		copy_with_wrap(header, &entry, sizeof(entry), queue_size, start);
-		if (entry.length == 0 || entry.length > max_length) {
-			header->head = header->tail;
+	while (READ_ONCE(header->head) != READ_ONCE(header->tail)) {
+		ret = gcip_telemetry_read_log_entry(header, buffer, &code);
+		if (ret) {
 			dev_err(dev, "log queue is corrupted");
 			break;
 		}
-		copy_with_wrap(header, buffer, entry.length, queue_size, start);
-		buffer[entry.length] = 0;
 
-		switch (entry.code) {
+		switch (code) {
 		case GCIP_FW_LOG_LEVEL_VERBOSE:
 		case GCIP_FW_LOG_LEVEL_DEBUG:
 		case GCIP_FW_LOG_LEVEL_INFO:
@@ -158,6 +208,7 @@ static void gcip_telemetry_fw_log(const struct gcip_telemetry *log)
 			break;
 		}
 	}
+
 	kvfree(buffer);
 }
 
@@ -171,7 +222,7 @@ static void gcip_telemetry_fw_trace(const struct gcip_telemetry *trace)
 {
 	struct gcip_telemetry_header *header = trace->header;
 
-	header->head = header->tail;
+	WRITE_ONCE(header->head, READ_ONCE(header->tail));
 }
 
 void gcip_telemetry_irq_handler(struct gcip_telemetry *tel)
@@ -184,10 +235,10 @@ void gcip_telemetry_irq_handler(struct gcip_telemetry *tel)
 		return;
 
 	/* Early return if we know there is no pending data. */
-	if (tel->header && (tel->header->head == tel->header->tail))
+	if (tel->header && (READ_ONCE(tel->header->head) == READ_ONCE(tel->header->tail)))
 		return;
 
-	schedule_work(&tel->work);
+	schedule_delayed_work(&tel->work, 0);
 }
 
 /**
@@ -197,9 +248,9 @@ void gcip_telemetry_irq_handler(struct gcip_telemetry *tel)
  */
 static void gcip_telemetry_inc_mmap_count(struct gcip_telemetry *tel, int dif)
 {
-	mutex_lock(&tel->mmap_lock);
+	guard(mutex)(&tel->mmap_lock);
+
 	tel->mmapped_count += dif;
-	mutex_unlock(&tel->mmap_lock);
 }
 
 /**
@@ -233,6 +284,14 @@ static const struct vm_operations_struct gcip_telemetry_vma_ops = {
 	.close = gcip_telemetry_vma_ops_close,
 };
 
+/**
+ * gcip_telemetry_mmap_sgt() - Maps telemetry memory buffer using scatter-gather list.
+ * @tel: Pointer to the telemetry structure.
+ * @vma: Pointer to the VM area structure representing the mapping.
+ * @size: Size of the memory to map.
+ *
+ * Return: 0 on success, or a negative errno otherwise.
+ */
 static int gcip_telemetry_mmap_sgt(struct gcip_telemetry *tel, struct vm_area_struct *vma,
 				   unsigned long size)
 {
@@ -246,8 +305,8 @@ static int gcip_telemetry_mmap_sgt(struct gcip_telemetry *tel, struct vm_area_st
 
 		ret = remap_pfn_range(vma, vm_next, pfn, sg->length, vma->vm_page_prot);
 		if (ret) {
-			dev_err(tel->dev, "cannot remap log/trace segment#%d size=%u ret=%d\n",
-				i, sg->length, ret);
+			dev_err(tel->dev, "cannot remap log/trace segment#%d size=%u ret=%d\n", i,
+				sg->length, ret);
 			/* zap_page_range* not exported to modules, leave partial map in place. */
 			return ret;
 		}
@@ -271,13 +330,13 @@ int gcip_telemetry_mmap(struct gcip_telemetry *tel, struct vm_area_struct *vma)
 		return -EINVAL;
 	}
 
-	mutex_lock(&tel->mmap_lock);
+	guard(mutex)(&tel->mmap_lock);
 
 	if (tel->mmapped_count) {
 		ret = -EBUSY;
 		dev_warn(tel->dev, "%s is already mmapped %ld times", tel->name,
 			 tel->mmapped_count);
-		goto err_unlock;
+		return ret;
 	}
 
 	vm_flags_set(vma, VM_DONTCOPY | VM_DONTEXPAND | VM_DONTDUMP);
@@ -296,47 +355,40 @@ int gcip_telemetry_mmap(struct gcip_telemetry *tel, struct vm_area_struct *vma)
 
 	vma->vm_pgoff = orig_pgoff;
 	if (ret)
-		goto err_unlock;
+		return ret;
 
 	vma->vm_ops = &gcip_telemetry_vma_ops;
 	vma->vm_private_data = tel;
 	tel->mmapped_count = 1;
 	mem->host_addr = vma->vm_start;
 
-	mutex_unlock(&tel->mmap_lock);
-
 	return 0;
-
-err_unlock:
-	mutex_unlock(&tel->mmap_lock);
-	return ret;
 }
 
 /**
- * gcip_telemetry_worker() - The worker for processing log/trace/hwtrace buffers.
+ * gcip_telemetry_warn_no_eventfd() - Prints a warning if no eventfd is registered for consumption.
+ * @tel: Pointer to the telemetry structure.
+ */
+static void gcip_telemetry_warn_no_eventfd(const struct gcip_telemetry *tel)
+{
+	dev_warn(tel->dev, "No eventfd registered, not consuming the telemetry buffer");
+}
+
+/**
+ * gcip_telemetry_worker() - The worker for processing log/trace/hwtrace or opaque buffers.
  * @work: The work_struct of the telemetry.
  */
 static void gcip_telemetry_worker(struct work_struct *work)
 {
-	struct gcip_telemetry *tel = container_of(work, struct gcip_telemetry, work);
+	struct gcip_telemetry *tel = container_of(work, struct gcip_telemetry, work.work);
 	struct gcip_telemetry_header *header = tel->header;
-	u32 prev_head;
 
-	/*
-	 * Loops while following conditions are all true:
-	 * 1. The telemetry is enabled.
-	 * 2. The header is visible(not NULL).
-	 * 3. There is data to be consumed, and the previous iteration made progress.
-	 */
-	do {
-		mutex_lock(&tel->state_ctx_lock);
-		if (tel->state != GCIP_TELEMETRY_ENABLED) {
-			mutex_unlock(&tel->state_ctx_lock);
+	scoped_guard(mutex, &tel->state_ctx_lock) {
+		if (tel->state != GCIP_TELEMETRY_ENABLED)
 			return;
-		}
-
-		if (header)
-			prev_head = header->head;
+		/* Opaque type buffers do not have a header, always signal on each run. */
+		if (header && (READ_ONCE(header->head) == READ_ONCE(header->tail)))
+			return;
 
 		/*
 		 * The runtime side handler and the fallback function should consider the case that
@@ -346,14 +398,12 @@ static void gcip_telemetry_worker(struct work_struct *work)
 			eventfd_signal(tel->ctx, 1);
 		else if (tel->fallback_fn)
 			tel->fallback_fn(tel);
-		else
-			dev_warn(tel->dev, "Failed to consume the telemetry buffer");
+	}
 
-		mutex_unlock(&tel->state_ctx_lock);
-		msleep(GCIP_TELEMETRY_TYPE_LOG_RECHECK_DELAY);
-	} while (header && (header->head != header->tail) && (header->head != prev_head));
-
-	/* If another IRQ arrives after the header check, we should schedule another worker. */
+	/* Opaque type buffers do not need a recheck for new data arriving concurrently. */
+	if (tel->type != GCIP_TELEMETRY_TYPE_OPAQUE)
+		schedule_delayed_work(to_delayed_work(work),
+				      msecs_to_jiffies(GCIP_TELEMETRY_TYPE_LOG_RECHECK_DELAY));
 }
 
 int gcip_telemetry_init(struct gcip_telemetry *tel, enum gcip_telemetry_type type,
@@ -395,7 +445,7 @@ int gcip_telemetry_init(struct gcip_telemetry *tel, enum gcip_telemetry_type typ
 		break;
 	case GCIP_TELEMETRY_TYPE_OPAQUE:
 		name = GCIP_TELEMETRY_NAME_OPAQUE;
-		fallback_fn = NULL;
+		fallback_fn = gcip_telemetry_warn_no_eventfd;
 		header = NULL;
 		break;
 	default:
@@ -419,7 +469,7 @@ int gcip_telemetry_init(struct gcip_telemetry *tel, enum gcip_telemetry_type typ
 		tel->header->entries_dropped = 0;
 	}
 
-	INIT_WORK(&tel->work, gcip_telemetry_worker);
+	INIT_DELAYED_WORK(&tel->work, gcip_telemetry_worker);
 	mutex_init(&tel->mmap_lock);
 	mutex_init(&tel->state_ctx_lock);
 
@@ -428,13 +478,17 @@ int gcip_telemetry_init(struct gcip_telemetry *tel, enum gcip_telemetry_type typ
 
 void gcip_telemetry_exit(struct gcip_telemetry *tel)
 {
-	mutex_lock(&tel->state_ctx_lock);
-	if (tel->ctx)
-		eventfd_ctx_put(tel->ctx);
-	tel->ctx = NULL;
-	/* Prevents racing with the worker. */
-	tel->state = GCIP_TELEMETRY_INVALID;
-	mutex_unlock(&tel->state_ctx_lock);
+	struct eventfd_ctx *prev_ctx;
 
-	cancel_work_sync(&tel->work);
+	/* Prevents racing with the worker. */
+	scoped_guard(mutex, &tel->state_ctx_lock) {
+		prev_ctx = tel->ctx;
+		tel->ctx = NULL;
+		tel->state = GCIP_TELEMETRY_INVALID;
+	}
+
+	if (prev_ctx)
+		eventfd_ctx_put(prev_ctx);
+
+	cancel_delayed_work_sync(&tel->work);
 }

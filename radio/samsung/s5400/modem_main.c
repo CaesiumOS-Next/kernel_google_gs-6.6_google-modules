@@ -131,6 +131,9 @@ static struct modem_ctl *create_modemctl_device(struct platform_device *pdev,
  #if IS_ENABLED(CONFIG_LINK_DEVICE_PCIE)
 	init_completion(&modemctl->pcie_power_on_cmpl);
  #endif
+#if IS_ENABLED(CONFIG_GOOGLE_CRASH_DEBUG_DUMP)
+	spin_lock_init(&modemctl->google_cdd_data_lock);
+#endif
 
 	/* init modemctl device for getting modemctl operations */
 	ret = call_modem_init_func(modemctl, pdata);

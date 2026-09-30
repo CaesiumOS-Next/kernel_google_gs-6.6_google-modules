@@ -9,6 +9,7 @@
 #define __UWB_FW_H__
 
 #include <linux/firmware.h>
+#include <linux/types.h>
 
 #define MAX_APDU_DATA_LEN     249
 #define MAX_AP_APDU_DATA_LEN  240

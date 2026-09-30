@@ -153,6 +153,121 @@ little-endian format.
    * - 14-15
      - Size of data in message buffer.
 
+FWTP to user space message interface
+====================================
+
+Communication between FWTP drivers and user space makes use of Netlink. Netlink
+was chosen because it supports sending unsolicited messages from the kernel
+which is needed to stream tracepoints to user space.
+
+Debugfs interface
+=================
+
+FWTP drivers provide a debugfs interface for controlling and inspecting FWTP
+tracepoint operations. The debugfs files are located in a directory named after
+the device under the debugfs root.
+
+request_subscribe
+-----------------
+
+Write-only. Enables or disables tracepoint subscriptions. Writing non-zero
+enables, zero disables.
+
+Examples::
+
+  echo 1 > /sys/kernel/debug/fwtp_gdmc/request_subscribe
+  echo 1 > /sys/kernel/debug/fwtp-cpm/cpm/request_subscribe
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_cpm.c
+   :identifiers: fwtp_cpm_debugfs_write_subscribe
+
+request_poll
+------------
+
+GDMC-specific. Write-only. Triggers polling of tracepoints from firmware.
+
+Example::
+
+  echo 1 > /sys/kernel/debug/fwtp_gdmc/request_poll
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp_google_gdmc.c
+   :identifiers: google_gdmc_tracepoint_debugfs_write_tracepoint_poll
+
+filter_list
+-----------
+
+Read-only. Shows the list of available tracepoint filters.
+
+Example::
+
+  cat /sys/kernel/debug/fwtp-cpm/cpm/filter_list
+
+Output example::
+
+  POWER
+  BM
+  APCPWR
+  IDS
+  CPM
+  ..
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp.c
+   :identifiers: fwtp_debugfs_filter_list_show
+
+filter_block
+------------
+
+Write-only. Configures filters to block tracepoints. Accepts a comma-separated
+list of filter names, or `all` to select all filters.
+
+Examples::
+
+  echo "POWER,BM" > /sys/kernel/debug/fwtp-cpm/cpm/filter_block
+  echo "all" > /sys/kernel/debug/fwtp-cpm/cpm/filter_block
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp.c
+   :identifiers: fwtp_debugfs_filter_block_write
+
+filter_unblock
+--------------
+
+Write-only. Configures filters to not block tracepoints. Accepts a
+comma-separated list of filter names, or `all` to select all filters.
+
+Examples::
+
+  echo "GWDT" > /sys/kernel/debug/fwtp-cpm/cpm/filter_unblock
+  echo "all" > /sys/kernel/debug/fwtp-cpm/cpm/filter_unblock
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp.c
+   :identifiers: fwtp_debugfs_filter_unblock_write
+
+add_tracepoint
+--------------
+
+Write-only. Adds a tracepoint with a given payload value.
+
+Examples::
+
+  echo 42 > /sys/kernel/debug/fwtp_gdmc/add_tracepoint
+  echo 42 > /sys/kernel/debug/fwtp-cpm/cpm/add_tracepoint
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp.c
+   :identifiers: fwtp_debugfs_add_tracepoint_write
+
+trace
+-----
+
+Read-only. Shows the contents of the tracepoint buffer.
+
+Examples::
+
+  cat /sys/kernel/debug/fwtp_gdmc/trace
+  cat /sys/kernel/debug/fwtp-cpm/cpm/trace
+
+.. kernel-doc:: private/google-modules/soc/rdo/drivers/soc/google/fwtp/fwtp.c
+   :identifiers: fwtp_debugfs_trace_show
+
 Testing
 =======
 

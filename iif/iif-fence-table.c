@@ -213,10 +213,13 @@ void iif_fence_table_init_single_shot_fence_entry(struct iif_fence_table *fence_
 	fence_table->signal_table[fence_id].remaining_signals = total_signalers;
 	fence_table->signal_table[fence_id].flag = 0;
 	fence_table->signal_table[fence_id].error = 0;
+	/* Guarantees WC write buffers commit initialized entry to physical memory. */
+	mb();
 }
 
 void iif_fence_table_init_reusable_fence_entry(struct iif_fence_table *fence_table,
-					       unsigned int fence_id, u16 timeout, u8 waiters)
+					       unsigned int fence_id, u16 timeout, u8 waiters,
+					       u8 signal_flag)
 {
 	fence_table->wait_table[fence_id].waiting_ips = waiters;
 	fence_table->wait_table[fence_id].flag = BIT(IIF_WAIT_TABLE_FLAG_REUSABLE_BIT);
@@ -224,15 +227,19 @@ void iif_fence_table_init_reusable_fence_entry(struct iif_fence_table *fence_tab
 	       sizeof(fence_table->wait_table[fence_id].sync_points));
 
 	fence_table->signal_table[fence_id].timeline = 0;
-	fence_table->signal_table[fence_id].flag = 0;
+	fence_table->signal_table[fence_id].flag = signal_flag;
 	fence_table->signal_table[fence_id].timeout = timeout;
 	fence_table->signal_table[fence_id].error = 0;
+	/* Guarantees WC write buffers commit initialized entry to physical memory. */
+	mb();
 }
 
 void iif_fence_table_set_waiting_ip(struct iif_fence_table *fence_table, unsigned int fence_id,
 				    enum iif_ip_type ip)
 {
 	fence_table->wait_table[fence_id].waiting_ips |= BIT(ip);
+	/* Guarantees external readers observe new waiting IP instantly. */
+	mb();
 }
 
 u8 iif_fence_table_get_waiting_ip(struct iif_fence_table *fence_table, unsigned int fence_id)
@@ -252,6 +259,8 @@ void iif_fence_table_set_sync_point(struct iif_fence_table *fence_table, unsigne
 
 	sync_point->start_timeline = start_timeline;
 	sync_point->count = count;
+	/* Guarantees external readers observe registered sync point instantly. */
+	mb();
 }
 
 void iif_fence_table_get_sync_point(struct iif_fence_table *fence_table, unsigned int fence_id,
@@ -278,8 +287,11 @@ void iif_fence_table_set_remaining_signals(struct iif_fence_table *fence_table,
 	 * value in the fence table first to see whether the fence was signaled more times by the IP
 	 * compared to the kernel perspective. If it was, we should ignore updating the table.
 	 */
-	if (fence_table->signal_table[fence_id].remaining_signals > remaining_signalers)
+	if (fence_table->signal_table[fence_id].remaining_signals > remaining_signalers) {
 		fence_table->signal_table[fence_id].remaining_signals = remaining_signalers;
+		/* Guarantees external readers observe remaining signals instantly. */
+		mb();
+	}
 }
 
 unsigned int iif_fence_table_get_remaining_signals(struct iif_fence_table *fence_table,
@@ -290,7 +302,22 @@ unsigned int iif_fence_table_get_remaining_signals(struct iif_fence_table *fence
 
 void iif_fence_table_inc_timeline(struct iif_fence_table *fence_table, unsigned int fence_id)
 {
-	fence_table->signal_table[fence_id].timeline++;
+	u8 timeline = fence_table->signal_table[fence_id].timeline;
+	u8 flag = fence_table->signal_table[fence_id].flag;
+
+	/*
+	 * If the fence is non-reusable, the timeline will monotonically increase and must not
+	 * exceed the max. If the fence is reusable, the timeline will wrap around starting from 1.
+	 */
+	if (!(flag & BIT(IIF_SIGNAL_TABLE_FLAG_CIRCULAR_REUSABLE_BIT)) &&
+	    timeline >= IIF_SIGNAL_TABLE_MAX_TIMELINE)
+		return;
+
+	timeline = (timeline % IIF_SIGNAL_TABLE_MAX_TIMELINE) + 1;
+	fence_table->signal_table[fence_id].timeline = timeline;
+
+	/* Guarantees external readers observe timeline increment instantly. */
+	mb();
 }
 
 unsigned int iif_fence_table_get_timeline(struct iif_fence_table *fence_table,
@@ -307,6 +334,8 @@ unsigned int iif_fence_table_get_timeout(struct iif_fence_table *fence_table, un
 void iif_fence_table_set_flag(struct iif_fence_table *fence_table, unsigned int fence_id, u8 flag)
 {
 	fence_table->signal_table[fence_id].flag = flag;
+	/* Guarantees external readers observe flags instantly. */
+	mb();
 }
 
 u8 iif_fence_table_get_flag(struct iif_fence_table *fence_table, unsigned int fence_id)
@@ -320,7 +349,12 @@ int iif_fence_table_get_error(struct iif_fence_table *fence_table, unsigned int 
 
 	if (!(flag & BIT(IIF_SIGNAL_TABLE_FLAG_ERROR_BIT)))
 		return 0;
-
+	/*
+	 * The error code must be read after reading the flag. Either at the IIF kernel driver or
+	 * the IP firmware, the fence error is expected to set before updating the flag, so we need
+	 * to read the error code after reading the flag to ensure we get the correct error code.
+	 */
+	rmb();
 	return iif_fence_table_to_linux_error_code(fence_table->signal_table[fence_id].error);
 }
 
@@ -334,6 +368,13 @@ void iif_fence_table_set_error(struct iif_fence_table *fence_table, unsigned int
 
 	fence_table->signal_table[fence_id].error =
 		iif_fence_table_to_signal_table_error_code(error);
+	/*
+	 * The error code must be set before setting the flag to let external readers see the
+	 * error.
+	 */
+	wmb();
 	iif_fence_table_set_flag(fence_table, fence_id,
 				 flag | BIT(IIF_SIGNAL_TABLE_FLAG_ERROR_BIT));
+	/* Guarantees external readers observe error code instantly. */
+	mb();
 }

@@ -1140,9 +1140,6 @@ static bool ccm_lnr_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const voi
 	if (hw->rev == DC_REV_0) {
 		reg_coef = VS_SH_PANEL_FIELD(hw_id, GAMUT_MATRIX_COEF0_Address);
 		reg_offset = VS_SH_PANEL_FIELD(hw_id, GAMUT_MATRIX_COEF_OFFSET0_Address);
-	} else {
-		reg_coef = VS_SH_PANEL_FIELD(hw_id, GAMUT_MATRIX_EX_COEF0_Address);
-		reg_offset = VS_SH_PANEL_FIELD(hw_id, GAMUT_MATRIX_EX_COEF_OFFSET0_Address);
 	}
 
 	/* enable CCM */
@@ -1255,48 +1252,12 @@ static bool _9400_degamma_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, con
 	return true;
 }
 
-static bool _9500_degamma_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
-{
-	u32 config = 0;
-	const struct drm_vs_xstep_lut *degamma = data;
-	const u32 reg_seg_cnt = VS_SH_PANEL_FIELD(hw_id, EOTF_SEGMENT_COUNT_Address);
-	const u32 reg_seg_pnt = VS_SH_PANEL_FIELD(hw_id, EOTF_SEGMENT_POINT1_Address);
-	const u32 reg_seg_step = VS_SH_PANEL_FIELD(hw_id, EOTF_SEGMENT_STEP_Address);
-	const u32 reg_seg_data = VS_SH_PANEL_FIELD(hw_id, EOTF_DATA_Address);
-
-	trace_config_hw_display_feature_en("9500_DEGAMMA", hw_id, enable);
-
-	/* enable EOTF */
-	config = dc_read(hw, VS_SET_PANEL_FIELD(DCREG_SH_PANEL, hw_id, CONFIG_Address));
-	config = (hw_id > HW_DISPLAY_1) ?
-			 (VS_SET_FIELD(config, DCREG_SH_PANEL2_CONFIG, EOTF, enable)) :
-			 VS_SET_FIELD(config, DCREG_SH_PANEL0_CONFIG, EOTF, enable);
-
-	dc_write(hw, VS_SET_PANEL_FIELD(DCREG_SH_PANEL, hw_id, CONFIG_Address), config);
-
-	/* C0 - C8 configuration */
-	if (enable) {
-		/* segment count start from 0, so the configured value minus 1*/
-		dc_write(hw, reg_seg_cnt, degamma->seg_cnt - 1);
-
-		/* commit the segment points */
-		dc_write_u32_blob(hw, reg_seg_pnt, degamma->seg_point, degamma->seg_cnt - 1);
-
-		/* commit the segment steps */
-		dc_write_u32_blob(hw, reg_seg_step, degamma->seg_step, degamma->seg_cnt);
-
-		/* commit the coef data */
-		dc_write_u32_blob(hw, reg_seg_data, degamma->data, degamma->entry_cnt);
-	}
-	return true;
-}
-
 static bool _degamma_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void *data)
 {
 	if (hw->rev == DC_REV_0)
 		return _9400_degamma_config_hw(hw, hw_id, enable, data);
-	else
-		return _9500_degamma_config_hw(hw, hw_id, enable, data);
+
+	return false;
 }
 
 VS_DC_BLOB_PROPERTY_PROTO(degamma_proto, "DEGAMMA", struct drm_vs_xstep_lut, degamma_check, NULL,

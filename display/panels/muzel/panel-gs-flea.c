@@ -345,12 +345,15 @@ static const struct gs_dsi_cmd flea_init_cmds[] = {
 	GS_DSI_CMD(MIPI_DCS_SET_PAGE_ADDRESS, 0x00, 0x00, 0x09, 0x77),
 
 	/* FFC On (758.4Mpbs) Setting */
-	GS_DSI_CMDLIST(test_key_enable),
-	GS_DSI_CMDLIST(test_key_fc_enable),
+	/* b/527706636 disable FFC
 	GS_DSI_CMD(0xB0, 0x00, 0x3E, 0xC5),
 	GS_DSI_CMD(0xC5, 0x56, 0x13),
 	GS_DSI_CMD(0xB0, 0x00, 0x36, 0xC5),
 	GS_DSI_CMD(0xC5, 0x11, 0x10, 0x50, 0x05),
+	*/
+
+	GS_DSI_CMDLIST(test_key_enable),
+	GS_DSI_CMDLIST(test_key_fc_enable),
 
 	/* VDDD LDO Setting */
 	GS_DSI_REV_CMD(PANEL_REV_RANGE(PANEL_REV_EVT1, PANEL_REV_DVT1), 0xB0, 0x00, 0x58, 0xD7),
@@ -708,6 +711,9 @@ static int flea_panel_config(struct gs_panel *ctx)
 
 static void flea_pre_update_ffc(struct gs_panel *ctx)
 {
+	// Disable FFC b/527706636
+	return;
+
 	struct device *dev = ctx->dev;
 
 	dev_dbg(ctx->dev, "disabling FFC\n");
@@ -729,6 +735,9 @@ static void flea_pre_update_ffc(struct gs_panel *ctx)
 
 static void flea_update_ffc(struct gs_panel *ctx, unsigned int hs_clk_mbps)
 {
+	// Disable FFC b/527706636
+	return;
+
 	struct device *dev = ctx->dev;
 
 	dev_dbg(ctx->dev, "hs_clk_mbps: current=%u, target=%u\n",
@@ -782,7 +791,8 @@ static void flea_panel_init(struct gs_panel *ctx)
 	 * cause any artifacts. After boot, we will use the correct FFC parameters
 	 * all the time.
 	 */
-	flea_update_ffc(ctx, MIPI_DSI_FREQ_DEFAULT);
+	// Disable FFC b/527706636
+	// flea_update_ffc(ctx, MIPI_DSI_FREQ_DEFAULT);
 }
 
 static void flea_prepare_color_data_read(struct device *dev)

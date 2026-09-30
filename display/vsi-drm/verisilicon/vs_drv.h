@@ -11,6 +11,8 @@
 #include <drm/drm_device.h>
 #include <drm/drm_gem.h>
 
+#include <drm/sscd/gs_sscd_dpu.h>
+#include "vs_sscd.h"
 #include "vs_plane.h"
 
 struct drm_state_history_record;
@@ -38,11 +40,37 @@ struct vs_drm_private {
 	 * recently-committed drm_atomic_states
 	 */
 	struct drm_state_history_record *sh_record;
+
+	/**
+	 * @dsi_coredump_funcs: SSCD function table for coordinated DSI bridge
+	 * coredumps. Filled by the DSI driver during bind to allow the
+	 * DPU to trigger and collect DSI-specific diagnostic data.
+	 */
+	struct sscd_funcs dsi_coredump_funcs;
+
+	/**
+	 * @dpu_reg_coredump_funcs: SSCD function table for coordinated DPU
+	 * register coredumps. Filled during bind.
+	 */
+	struct sscd_funcs dpu_reg_coredump_funcs;
+
+	/**
+	 * @dpu_state_coredump_funcs: SSCD function table for coordinated DPU
+	 * state coredumps. Filled during bind.
+	 */
+	struct sscd_funcs dpu_state_coredump_funcs;
+
+	/**
+	 * @wb_connectors_mask: Bitmask of all writeback connectors on the device
+	 */
+	u32 wb_connectors_mask;
 };
 
 int vs_drm_iommu_attach_device(struct drm_device *drm_dev, struct device *dev);
 
 void vs_drm_iommu_detach_device(struct drm_device *drm_dev, struct device *dev);
+
+void vs_drm_iommu_init(struct drm_device *drm_dev);
 
 void vs_drm_update_alignment(struct drm_device *drm_dev, unsigned int pitch_align,
 			     unsigned int addr_align);
@@ -60,4 +88,5 @@ static inline bool is_iommu_enabled(struct drm_device *dev)
 
 	return priv->domain != NULL ? true : false;
 }
+
 #endif /* __VS_DRV_H__ */

@@ -17,7 +17,9 @@
 #include <ufs/ufshcd.h>
 
 #include "../pinctrl/google/common.h"
+#ifndef HAVE_UFSHCD_RPM_GET_SYNC
 #include "core/ufshcd-priv.h"
+#endif
 #include "ufs-google-dbg.h"
 #include "ufs-google-platform.h"
 #include "ufs-google.h"

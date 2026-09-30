@@ -10,7 +10,9 @@
 #include <linux/platform_device.h>
 #include <linux/reboot.h>
 #include <host/ufshcd-pltfrm.h>
+#ifndef HAVE_UFSHCD_RPM_GET_SYNC
 #include <core/ufshcd-priv.h>
+#endif
 #include <ip-idle-notifier/google_ip_idle_notifier.h>
 #include <mailbox/protocols/mba/cpm/common/pmic/pmic_service.h>
 #include "ufs-google.h"
@@ -20,6 +22,7 @@
 #include "ufs-google-dbg.h"
 #include "ufs-google-platform.h"
 #include "ufs-pixel-crypto.h"
+#include "ufs-google-priv.h"
 
 #define MCQ_CFG_n(r, i)		((r) + MCQ_QCFG_SIZE * (i))
 #define MCQ_OPR_OFFSET_n(p, i)	\
@@ -2347,14 +2350,31 @@ static int ufs_google_device_reset(struct ufs_hba *hba)
 	struct ufs_google_host *host = ufshcd_get_variant(hba);
 
 	/*
-	 * In prior to getting this, GENPD_NOTIFY_PRE_ON and
-	 * GENPD_NOTIFY_ON were called by generic resume callback.
-	 * Hence, returning zero makes ufshcd_set_ufs_dev_active()
-	 * which avoids link_startup_again = true in ufshcd_link_startup.
+	 * Limit the physical RSTn device reset exclusively to Micron UFS devices.
+	 *
+	 * Background:
+	 * Originally, this reset mechanism was introduced to help Micron UFS devices
+	 * recover from unrecoverable errors during UFS_EVT_LINK_STARTUP_FAIL.
+	 * However, after deploying this logic, other vendor devices (specifically
+	 * Samsung and Kioxia) experienced severe, non-responsive failures during
+	 * suspend/resume or reset sequences.
+	 *
+	 * The ufshcd_eh_in_progress() check is added to ensure this physical reset
+	 * is only executed when the device is actively undergoing error recovery.
+	 * It prevents the reset from being mistakenly triggered during normal
+	 * initialization or suspend/resume operations.
+	 *
+	 * To mitigate in-market stability issues, we restrict this hardware reset
+	 * behavior so that it is triggered only for the specific vendor (Micron)
+	 * where it is proven to be necessary.
 	 */
-	gpiod_set_value(host->resetb, 0);
-	usleep_range(RESETB_DELAY_MIN_US, RESETB_DELAY_MAX_US);
-	gpiod_set_value(host->resetb, 1);
+	if ((host->caps & GCAP_TOGGLE_RESETB_ON_RESET) &&
+	    hba->dev_info.wmanufacturerid == UFS_VENDOR_MICRON &&
+	    ufshcd_eh_in_progress(hba)) {
+		gpiod_set_value(host->resetb, 0);
+		usleep_range(RESETB_DELAY_MIN_US, RESETB_DELAY_MAX_US);
+		gpiod_set_value(host->resetb, 1);
+	}
 
 	return 0;
 }

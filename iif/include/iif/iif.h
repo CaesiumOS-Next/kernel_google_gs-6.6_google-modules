@@ -13,7 +13,7 @@
 
 /* Interface Version. */
 #define IIF_INTERFACE_VERSION_MAJOR 1
-#define IIF_INTERFACE_VERSION_MINOR 3
+#define IIF_INTERFACE_VERSION_MINOR 5
 
 #define IIF_IOCTL_BASE 'i'
 
@@ -83,6 +83,19 @@
  * This must not be used if one of signaler or waiter IPs is not supporting this.
  */
 #define IIF_FLAGS_DIRECT (1u << 2)
+
+/*
+ * Create a circular reusable fence.
+ *
+ * The fence behaves like it has infinite timeline by wrapping around. The fence will be unblocked
+ * at every single signal (i.e., will be unblocked at every timelines).
+ *
+ * Note that if this flag is set, the fence won't have timeout and registering sync points will be
+ * invalid.
+ *
+ * This flag is meaningful only if the fence is reusable.
+ */
+#define IIF_FLAGS_CIRCULAR_REUSABLE (1u << 3)
 
 /*
  * ioctls for /dev/iif.
@@ -209,7 +222,9 @@ struct iif_create_fence_with_params_ioctl {
 	 * If the signaler is an IP and the fence is a reusable fence, a timeout error will be
 	 * propagated to the waiters if the timeline value of the fence reaches it.
 	 *
-	 * Can pass `IIF_FENCE_REUSABLE_MAX_TIMEOUT` to not have timeout.
+	 * Can pass `IIF_FENCE_REUSABLE_MAX_TIMEOUT` to set the maximum timeout.
+	 *
+	 * This will be ignored if `IIF_FLAGS_CIRCULAR_REUSABLE` is set to @flags.
 	 */
 	__u64 timeout;
 	/*
@@ -226,7 +241,31 @@ struct iif_create_fence_with_params_ioctl {
 	__u8 reserved[9];
 };
 
-/* Create an IIF fence with parameters. */
+/*
+ * Create an IIF fence with parameters.
+ *
+ * To wait/poll on the fence, it is strongly recommended to create a dedicated
+ * tracker using IIF_FENCE_CREATE_TRACKER ioctl and poll on the tracker's file
+ * descriptor instead of polling on the fence file descriptor directly. This
+ * prevents race conditions between multiple concurrent waiters especially for
+ * reusable fences.
+ *
+ * However, waiting directly on the fence file descriptor is still limitedly
+ * supported and acceptable only in the following scenarios:
+ *   a. The fence is a single-shot fence.
+ *   b. The fence is a reusable fence, but the user can guarantee that they are
+ *      the only one waiting on this fence. Note that the IIF kernel driver does
+ *      not enforce or check if there are multiple waiters polling on the same
+ *      fence file descriptor directly; it is the user's responsibility to avoid
+ *      this.
+ *
+ * If the user chooses to wait on the fence file descriptor directly, they can
+ * poll() on it to notice the fence unblocking. However, for reusable fences, if
+ * the user needs to know the exact timeline value at which the fence has been
+ * unblocked, they must use the `IIF_FENCE_CREATE_TRACKER` ioctl instead (Note
+ * that the `IIF_FENCE_GET_INFORMATION_WITH_DETAILS` ioctl is not reliable to
+ * get the fence status on poll() signal for reusable fences).
+ */
 #define IIF_CREATE_FENCE_WITH_PARAMS \
 	_IOWR(IIF_IOCTL_BASE, 2, struct iif_create_fence_with_params_ioctl)
 
@@ -477,6 +516,8 @@ struct iif_fence_add_sync_point_ioctl {
 
 /*
  * Adds a sync point to notify waiters of the fence.
+ *
+ * Note that this ioctl will always return -EINVAL for circular reusable fences.
  */
 #define IIF_FENCE_ADD_SYNC_POINT \
 	_IOW(IIF_IOCTL_BASE, IIF_FENCE_IOCTL_NUM_BASE + 7, struct iif_fence_add_sync_point_ioctl)
@@ -552,16 +593,8 @@ struct iif_fence_get_information_with_details_ioctl {
 		 */
 		__u8 signaled;
 		/*
-		 * The fence timeline. (For reusable fences)
-		 *
-		 * Note that this value will be updated only when the fence
-		 * reaches any registered sync-point and the underlying
-		 * sync-unit notifies the IIF driver. (i.e., it won't be updated
-		 * for every single signal)
-		 *
-		 * The runtime should check this value whenever `poll()` syscall
-		 * is notified to see whether the fence actually reached the
-		 * timeline they are waiting for.
+		 * The latest fence timeline that the fence has been unblocked
+		 * from the signaler's perspective. (For reusable fences)
 		 */
 		__u64 timeline;
 	};
@@ -572,14 +605,11 @@ struct iif_fence_get_information_with_details_ioctl {
 	 *
 	 * For single-shot fences, even though this field is set, @signaled can
 	 * be false. In that case, the runtime shouldn't consider the fence as
-	 * unblocked. It is dependenet on the implementation details of the
+	 * unblocked. It is dependent on the implementation details of the
 	 * underlying sync-unit.
 	 *
-	 * For reusable fences, if this field is set, the waiters should
-	 * consider the fence has been errored out and can stop waiting on the
-	 * fence even if @timeline hasn't reached the value they are waiting
-	 * for. The `poll()` syscall will be notified immediately if the fence
-	 * is errored out.
+	 * For reusable fences, if this field is set, it means that the fence
+	 * has been errored out at @timeline from the signaler's perspective.
 	 */
 	__s16 error;
 	/* Reserved. */
@@ -589,10 +619,118 @@ struct iif_fence_get_information_with_details_ioctl {
 /*
  * Returns the fence information.
  *
+ * WARNING: Relying on this ioctl to get the fence status when the user poll()
+ * on the fence, especially for reusable fences, will not be reliable because
+ * this ioctl only returns the latest fence information from the signaler's
+ * perspective (which is not synchronized with the waiter's timeline viewpoint).
+ * The runtime should use the mmap-based status page mapped via the tracker FD
+ * for reliable status checks (See IIF_FENCE_CREATE_TRACKER ioctl).
+ *
  * Returns 0 on success.
  */
 #define IIF_FENCE_GET_INFORMATION_WITH_DETAILS             \
 	_IOR(IIF_IOCTL_BASE, IIF_FENCE_IOCTL_NUM_BASE + 8, \
 	     struct iif_fence_get_information_with_details_ioctl)
+
+struct iif_fence_tracker_status {
+	/*
+	 * The fence error.
+	 *
+	 * For single-shot fences, it can be set before @signaled becomes true.
+	 * The user must check @signaled first to determine if the fence is
+	 * unblocked or not and then check @error to see if it was errored out.
+	 *
+	 * For reusable fences, the waiters must consider the fence as errored
+	 * out immediately if this field is set to a non-zero value.
+	 */
+	__s32 error;
+	/* Reserved. */
+	__u8 reserved[4];
+	union {
+		/*
+		 * True if the fence is signaled. (Only for single-shot fences)
+		 *
+		 * The waiter must consider the fence is unblocked only if this
+		 * field is set to true. Even though @error is set, if this
+		 * field is false, the fence must be considered as blocked.
+		 */
+		__u8 signaled;
+		/*
+		 * The timeline value of the fence which will be increased by 1
+		 * for each signal starting from 0. (Only for reusable fences)
+		 */
+		__u64 timeline;
+	};
+};
+
+/*
+ * Creates a fence tracker for polling on the fence.
+ *
+ * If the fence is reusable fence, it is highly recommended to utilize this
+ * ioctl to create a tracker and poll on the tracker's file instead of polling
+ * on the fence file directly since the timeline viewpoint will be separated for
+ * each tracker and it can prevent any possible race conditions between waiters
+ * polling on the same reusable fence concurrently.
+ *
+ * If the fence is single-shot fence, or the fence is reusable but the user is
+ * the only one polling on the fence, it is workable to poll on the fence
+ * file directly without creating a tracker, but utilizing this ioctl is
+ * recommended for better compatibility with all kinds of fences.
+ *
+ * The file descriptor of the tracker's file will be set to the passed user
+ * pointer. Note that the fence file can be closed while the user is polling on
+ * the tracker's file as the tracker is holding a refcount to the fence.
+ *
+ * The tracker file is only for polling on the fence and it won't support any
+ * other operations. The user must close the file as soon as it doesn't need to
+ * poll on the fence anymore and the file MUST NOT be shared with any others.
+ *
+ * To get the fence status after the poll syscall has been unblocked, the user
+ * can map a status page using the mmap() syscall on the returned tracker FD.
+ * The mapped memory has the layout of `struct iif_fence_tracker_status`. Note
+ * that the size passed to mmap() must be exactly one page (i.e. `PAGE_SIZE`).
+ * Requesting a larger size will return `-EINVAL`.
+ *
+ * Example (Single-shot fence):
+ *   s32 tracker_fd;
+ *   ioctl(fence_fd, IIF_FENCE_CREATE_TRACKER, &tracker_fd);
+ *
+ *   struct iif_fence_tracker_status *status = mmap(
+ *       NULL, PAGE_SIZE, PROT_READ, MAP_SHARED, tracker_fd, 0
+ *   );
+ *
+ *   struct pollfd pfd = { .fd = tracker_fd, .events = POLLIN };
+ *   if (poll(&pfd, 1, -1) > 0) {
+ *       // Read the error and signaled status directly from the mapped page.
+ *       if (status->signaled)
+ *           printf("Fence signaled, error=%d\n", status->error);
+ *   }
+ *
+ *   munmap(status, PAGE_SIZE);
+ *   close(tracker_fd);
+ *
+ * Example (Reusable fence):
+ *   s32 tracker_fd;
+ *   ioctl(fence_fd, IIF_FENCE_CREATE_TRACKER, &tracker_fd);
+ *
+ *   struct iif_fence_tracker_status *status = mmap(
+ *       NULL, PAGE_SIZE, PROT_READ, MAP_SHARED, tracker_fd, 0
+ *   );
+ *
+ *   struct pollfd pfd = { .fd = tracker_fd, .events = POLLIN };
+ *
+ *   while (poll(&pfd, 1, -1) > 0) {
+ *       // Read the error and timeline status directly from the mapped page.
+ *       if (status->error < 0) {
+ *           printf("Fence errored out: %d\n", status->error);
+ *           break;
+ *       }
+ *       printf("Fence unblocked at timeline %llu\n", status->timeline);
+ *   }
+ *
+ *   munmap(status, PAGE_SIZE);
+ *   close(tracker_fd);
+ */
+#define IIF_FENCE_CREATE_TRACKER _IOR(IIF_IOCTL_BASE, IIF_FENCE_IOCTL_NUM_BASE + 9, __s32)
 
 #endif /* __IIF_IIF_H__ */

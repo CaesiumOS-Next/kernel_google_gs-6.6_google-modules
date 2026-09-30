@@ -79,12 +79,14 @@ void iif_fence_table_init_single_shot_fence_entry(struct iif_fence_table *fence_
  * @fence_id: The fence ID.
  * @timeout: The timeout.
  * @waiters: The bitwise value where each bit represents an IP.
+ * @signal_flag: The flag of signal table entry.
  *
  * Since this function will be called only when the fence is initialized, we don't need any locks
  * to protect the entry.
  */
 void iif_fence_table_init_reusable_fence_entry(struct iif_fence_table *fence_table,
-					       unsigned int fence_id, u16 timeout, u8 waiters);
+					       unsigned int fence_id, u16 timeout, u8 waiters,
+					       u8 signal_flag);
 
 /*
  * Sets waiting IP bit of the wait table entry of @fence_id.
@@ -157,7 +159,7 @@ unsigned int iif_fence_table_get_remaining_signals(struct iif_fence_table *fence
 void iif_fence_table_inc_timeline(struct iif_fence_table *fence_table, unsigned int fence_id);
 
 /**
- * iif_fence_table_inc_timeline() - Gets the current timeline value of @fence_id fence.
+ * iif_fence_table_get_timeline() - Gets the current timeline value of @fence_id fence.
  * @fence_table: The fence table object.
  * @fence_id: The fence ID.
  */

@@ -38,6 +38,11 @@ static bool gvdu_get_user_consent(struct device *dev)
 	return of_find_property(dev->of_node, "consent-granted", NULL) != NULL;
 }
 
+static void gvdu_notify_status_change(struct device *dev)
+{
+	kobject_uevent(&dev->kobj, KOBJ_CHANGE);
+}
+
 static int64_t gvdu_retrieve_nonce_request(struct device *dev,
 					   dma_addr_t buffer_pa)
 {
@@ -363,8 +368,10 @@ static ssize_t auth_store(struct device *dev, struct device_attribute *attr,
 					     base->delegate_length);
 	if (ret)
 		dev_dbg(dev, "Mailbox request failed: %zd.\n", ret);
-	else
+	else {
+		gvdu_notify_status_change(dev);
 		ret = count;
+	}
 
 	dma_free_coherent(dev, buffer_size, buffer, buffer_pa);
 

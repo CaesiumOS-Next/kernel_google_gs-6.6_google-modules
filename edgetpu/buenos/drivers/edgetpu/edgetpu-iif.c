@@ -9,6 +9,7 @@
 #include <linux/errno.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/spinlock.h>
 #include <trace/events/edgetpu.h>
 
 #include <gcip/gcip-memory.h>
@@ -234,6 +235,63 @@ static void edgetpu_iif_release_cmd_queue_lock(struct gcip_mailbox *mailbox)
 	mutex_unlock(&etiif->cmd_queue_lock);
 }
 
+static inline u32 edgetpu_iif_get_resp_queue_size(struct gcip_mailbox *mailbox)
+{
+	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
+
+	return etiif->mbx_hardware->resp_queue_size;
+}
+
+static inline u32 edgetpu_iif_get_resp_queue_head(struct gcip_mailbox *mailbox)
+{
+	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
+
+	return etiif->mbx_hardware->resp_queue_head;
+}
+
+static inline u32 edgetpu_iif_get_resp_queue_tail(struct gcip_mailbox *mailbox)
+{
+	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
+
+	return EDGETPU_MAILBOX_RESP_QUEUE_READ_SYNC(etiif->mbx_hardware, tail);
+}
+
+static inline void edgetpu_iif_inc_resp_queue_head(struct gcip_mailbox *mailbox, u32 inc)
+{
+	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
+
+	edgetpu_mailbox_inc_resp_queue_head(etiif->mbx_hardware, inc);
+}
+
+static inline int edgetpu_iif_acquire_resp_queue_lock(struct gcip_mailbox *mailbox, bool try,
+						      bool *atomic)
+{
+	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
+	unsigned long flags;
+	int ret;
+
+	*atomic = true;
+
+	if (try) {
+		ret = spin_trylock_irqsave(&etiif->resp_queue_lock, flags);
+	} else {
+		spin_lock_irqsave(&etiif->resp_queue_lock, flags);
+		ret = 1;
+	}
+
+	if (ret)
+		etiif->resp_queue_lock_flags = flags;
+
+	return ret;
+}
+
+static inline void edgetpu_iif_release_resp_queue_lock(struct gcip_mailbox *mailbox)
+{
+	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
+
+	spin_unlock_irqrestore(&etiif->resp_queue_lock, etiif->resp_queue_lock_flags);
+}
+
 static int edgetpu_iif_wait_for_cmd_queue_not_full(struct gcip_mailbox *mailbox)
 {
 	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
@@ -275,28 +333,98 @@ static int edgetpu_iif_wait_for_cmd_queue_not_full(struct gcip_mailbox *mailbox)
 	return is_mbox_flushing ? -ESHUTDOWN : 0;
 }
 
+static int edgetpu_iif_handle_reversed_command(struct gcip_mailbox *mailbox,
+					       const void *reversed_cmd)
+{
+	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
+	const struct edgetpu_vii_litebuf_command *cmd = reversed_cmd;
+
+	iif_manager_fence_unblocked(etiif->iif_mgr, cmd->signal_fence_command.fence_id);
+
+	return 0;
+}
+
 static int edgetpu_iif_after_enqueue_cmd(struct gcip_mailbox *mailbox, void *cmd)
 {
 	struct edgetpu_iif *etiif = gcip_mailbox_get_data(mailbox);
 	u32 fence_id = ((struct edgetpu_vii_litebuf_command *)cmd)->signal_fence_command.fence_id;
 
-	EDGETPU_MAILBOX_CMD_QUEUE_WRITE_SYNC(etiif->mbx_hardware, doorbell_set, 1);
+	edgetpu_mailbox_trigger_cmd_queue_doorbell_sync(etiif->mbx_hardware);
 
 	trace_edgetpu_iif_unblocked_end(fence_id);
 
 	return 0;
 }
 
-const struct gcip_mailbox_ops iif_mailbox_ops = {
+static const struct gcip_mailbox_ops iif_mailbox_ops = {
 	.get_tx_queue_tail = edgetpu_iif_get_cmd_queue_tail,
 	.inc_tx_queue_tail = edgetpu_iif_inc_cmd_queue_tail,
 	.acquire_tx_queue_lock = edgetpu_iif_acquire_cmd_queue_lock,
 	.release_tx_queue_lock = edgetpu_iif_release_cmd_queue_lock,
+	.get_rx_queue_size = edgetpu_iif_get_resp_queue_size,
+	.get_rx_queue_head = edgetpu_iif_get_resp_queue_head,
+	.get_rx_queue_tail = edgetpu_iif_get_resp_queue_tail,
+	.inc_rx_queue_head = edgetpu_iif_inc_resp_queue_head,
+	.acquire_rx_queue_lock = edgetpu_iif_acquire_resp_queue_lock,
+	.release_rx_queue_lock = edgetpu_iif_release_resp_queue_lock,
 	.wait_for_tx_queue_not_full = edgetpu_iif_wait_for_cmd_queue_not_full,
+	.handle_reversed_command = edgetpu_iif_handle_reversed_command,
 	.after_enqueue_cmd = edgetpu_iif_after_enqueue_cmd,
 };
 
 /* edgetpu-iif Interface */
+
+static void edgetpu_iif_handle_irq(struct edgetpu_mailbox *mailbox)
+{
+	struct edgetpu_iif *etiif = mailbox->internal.etiif;
+
+	gcip_mailbox_consume_responses_work(etiif->mbx_protocol);
+}
+
+static int edgetpu_iif_alloc_queue(struct edgetpu_iif *etiif, enum gcip_mailbox_queue_type type)
+{
+	struct edgetpu_dev *etdev = etiif->etdev;
+	struct gcip_memory *mem;
+	u32 size;
+	int ret;
+
+	switch (type) {
+	case GCIP_MAILBOX_CMD_QUEUE:
+		size = QUEUE_SIZE * VII_CMD_SIZE_BYTES;
+		mem = &etiif->cmd_queue_mem;
+		break;
+	case GCIP_MAILBOX_RESP_QUEUE:
+		size = QUEUE_SIZE * VII_RESP_SIZE_BYTES;
+		mem = &etiif->resp_queue_mem;
+		break;
+	}
+
+	ret = edgetpu_iremap_alloc(etdev, size, mem);
+	if (ret)
+		return ret;
+
+	ret = edgetpu_mailbox_set_queue(etiif->mbx_hardware, type, mem->dma_addr, QUEUE_SIZE);
+	if (ret) {
+		edgetpu_iremap_free(etdev, mem);
+		return ret;
+	}
+
+	return 0;
+}
+
+static void edgetpu_iif_free_queue(struct edgetpu_iif *etiif, enum gcip_mailbox_queue_type type)
+{
+	struct edgetpu_dev *etdev = etiif->etdev;
+
+	switch (type) {
+	case GCIP_MAILBOX_CMD_QUEUE:
+		edgetpu_iremap_free(etdev, &etiif->cmd_queue_mem);
+		break;
+	case GCIP_MAILBOX_RESP_QUEUE:
+		edgetpu_iremap_free(etdev, &etiif->resp_queue_mem);
+		break;
+	}
+}
 
 int edgetpu_iif_init(struct edgetpu_dev *etdev, struct edgetpu_iif *etiif)
 {
@@ -345,12 +473,11 @@ int edgetpu_iif_init_mailbox(struct edgetpu_dev *etdev, struct edgetpu_iif *etii
 	struct edgetpu_mailbox *mbx_hardware;
 	struct gcip_mailbox_args args = {
 		.dev = etdev->dev,
-		.mode = GCIP_MAILBOX_MODE_TX_CMD | GCIP_MAILBOX_MODE_SEQ_EXTERNAL,
+		.mode = GCIP_MAILBOX_MODE_TX_CMD | GCIP_MAILBOX_MODE_RX_CMD |
+			GCIP_MAILBOX_MODE_SEQ_EXTERNAL,
 		.queue_wrap_bit = CIRC_QUEUE_WRAP_BIT,
 		.tx_elem_size = sizeof(struct edgetpu_vii_litebuf_command),
-		/* No responses are to be sent for IIF signal commands. */
-		.rx_queue = NULL,
-		.rx_elem_size = 0,
+		.rx_elem_size = sizeof(struct edgetpu_vii_litebuf_command),
 		.timeout = 0,
 		.ops = &iif_mailbox_ops,
 		.data = etiif,
@@ -380,30 +507,37 @@ int edgetpu_iif_init_mailbox(struct edgetpu_dev *etdev, struct edgetpu_iif *etii
 		goto err_free_mailbox;
 	}
 
-	ret = edgetpu_iremap_alloc(etdev, QUEUE_SIZE * VII_CMD_SIZE_BYTES, &etiif->cmd_queue_mem);
+	ret = edgetpu_iif_alloc_queue(etiif, GCIP_MAILBOX_CMD_QUEUE);
 	if (ret) {
-		etdev_err(etdev, "Failed to allocate IIF mailbox queue (%d)", ret);
+		etdev_err(etdev, "Failed to allocate IIF mailbox command queue (%d)", ret);
 		goto err_free_mailbox;
 	}
-	ret = edgetpu_mailbox_set_queue(mbx_hardware, GCIP_MAILBOX_CMD_QUEUE,
-					etiif->cmd_queue_mem.dma_addr, QUEUE_SIZE);
+
+	ret = edgetpu_iif_alloc_queue(etiif, GCIP_MAILBOX_RESP_QUEUE);
 	if (ret) {
-		etdev_err(etdev, "Failed to set IIF mailbox queue (%d)", ret);
+		etdev_err(etdev, "Failed to allocate IIF mailbox response queue (%d)", ret);
 		goto err_free_cmd_queue;
 	}
-	edgetpu_mailbox_set_queue_as_unused(mbx_hardware, GCIP_MAILBOX_RESP_QUEUE);
+
 	mutex_init(&etiif->cmd_queue_lock);
+	spin_lock_init(&etiif->resp_queue_lock);
 	args.tx_queue = etiif->cmd_queue_mem.virt_addr;
+	args.rx_queue = etiif->resp_queue_mem.virt_addr;
 
 	ret = gcip_mailbox_init(etiif->mbx_protocol, &args);
 	if (ret)
-		goto err_free_cmd_queue;
+		goto err_free_resp_queue;
+
+	edgetpu_mailbox_set_irq_handler(mbx_hardware, edgetpu_iif_handle_irq);
+	edgetpu_mailbox_init_doorbells(mbx_hardware);
 	edgetpu_mailbox_enable(mbx_hardware);
 
 	return ret;
 
+err_free_resp_queue:
+	edgetpu_iif_free_queue(etiif, GCIP_MAILBOX_RESP_QUEUE);
 err_free_cmd_queue:
-	edgetpu_iremap_free(etdev, &etiif->cmd_queue_mem);
+	edgetpu_iif_free_queue(etiif, GCIP_MAILBOX_CMD_QUEUE);
 err_free_mailbox:
 	etiif->mbx_hardware = NULL;
 	edgetpu_mailbox_release(mbx_hardware);
@@ -435,9 +569,11 @@ void edgetpu_iif_release_mailbox(struct edgetpu_iif *etiif)
 
 	flush_pending_iif_commands(etiif);
 
+	edgetpu_mailbox_set_irq_handler(etiif->mbx_hardware, NULL);
 	gcip_mailbox_release(etiif->mbx_protocol);
 	etiif->mbx_protocol = NULL;
-	edgetpu_iremap_free(etiif->etdev, &etiif->cmd_queue_mem);
+	edgetpu_iif_free_queue(etiif, GCIP_MAILBOX_RESP_QUEUE);
+	edgetpu_iif_free_queue(etiif, GCIP_MAILBOX_CMD_QUEUE);
 	mbx_hardware = etiif->mbx_hardware;
 	etiif->mbx_hardware = NULL;
 	edgetpu_mailbox_release(mbx_hardware);
@@ -463,7 +599,9 @@ void edgetpu_iif_reinit_mailbox(struct edgetpu_iif *etiif)
 	 */
 	edgetpu_mailbox_set_queue(etiif->mbx_hardware, GCIP_MAILBOX_CMD_QUEUE,
 				  etiif->cmd_queue_mem.dma_addr, QUEUE_SIZE);
-	edgetpu_mailbox_set_queue_as_unused(etiif->mbx_hardware, GCIP_MAILBOX_RESP_QUEUE);
+	edgetpu_mailbox_set_queue(etiif->mbx_hardware, GCIP_MAILBOX_RESP_QUEUE,
+				  etiif->resp_queue_mem.dma_addr, QUEUE_SIZE);
+	edgetpu_mailbox_set_irq_handler(etiif->mbx_hardware, edgetpu_iif_handle_irq);
 	edgetpu_mailbox_init_doorbells(etiif->mbx_hardware);
 	edgetpu_mailbox_enable(etiif->mbx_hardware);
 }

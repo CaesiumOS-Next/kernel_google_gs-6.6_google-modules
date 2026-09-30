@@ -196,11 +196,9 @@ fwtp_tracepoint_data_copy(struct fwtp_tracepoint_data_reader *data_reader,
  *   tracepoint_string      Tracepoint name string.
  *   data_reader            Tracepoint data reader.
  */
-static void
-fwtp_print_tracepoint_with_data_string(struct fwtp_printer_ctx *printer_ctx,
-				       const char *tracepoint_string,
-				       struct fwtp_tracepoint_data_reader
-					       *data_reader)
+static void fwtp_print_tracepoint_with_data_string(
+	struct fwtp_printer_ctx *printer_ctx, const char *tracepoint_string,
+	struct fwtp_tracepoint_data_reader *data_reader)
 {
 	const char *p_tp_str = tracepoint_string;
 	const char *p_rem_tp_str = p_tp_str;
@@ -219,6 +217,8 @@ fwtp_print_tracepoint_with_data_string(struct fwtp_printer_ctx *printer_ctx,
 		 * specification. Otherwise, print the tracepoint character.
 		 */
 		if (tp_char == '%') {
+			bool is_64bit = false;
+
 			/* Get the next tracepoint character. */
 			tp_char = *p_tp_str++;
 			if (tp_char == '\0')
@@ -228,30 +228,55 @@ fwtp_print_tracepoint_with_data_string(struct fwtp_printer_ctx *printer_ctx,
 			 * Decode the conversion specification and print the result. If the
 			 * conversion specification is not recognized, stop printing.
 			 */
+			if (tp_char == 'l') {
+				is_64bit = true;
+				tp_char = *p_tp_str++;
+			}
+
+			if (tp_char == '\0')
+				break;
+
+			if (tp_char == 'l')
+				tp_char = *p_tp_str++;
+
+			if (tp_char == '\0')
+				break;
+
 			if ((tp_char == 'd') || (tp_char == 'u') ||
 			    (tp_char == 'x')) {
-				const char conversion_spec[3] = { '%', tp_char,
+				const char conversion_spec[5] = { '%', 'l', 'l',
+								  tp_char,
 								  '\0' };
 				union {
-					int32_t int_val;
-					uint32_t uint_val;
+					int32_t int32_val;
+					uint32_t uint32_val;
+					int64_t int64_val;
+					uint64_t uint64_val;
 				} val;
 
 				/* Get the data value. */
-				fwtp_tracepoint_data_copy(data_reader, &val,
-							  sizeof(val));
+				fwtp_tracepoint_data_copy(
+					data_reader, &val,
+					is_64bit ? sizeof(uint64_t) :
+						   sizeof(uint32_t));
 				if (data_reader->underflow)
 					break;
 
 				/* Print the formatted data value. */
 				if (tp_char == 'd') {
+					int64_t upcasted_val =
+						is_64bit ? val.int64_val :
+							   val.int32_val;
 					snprintf(string_buffer,
 						 sizeof(string_buffer),
-						 conversion_spec, val.int_val);
+						 conversion_spec, upcasted_val);
 				} else {
+					uint64_t upcasted_val =
+						is_64bit ? val.uint64_val :
+							   val.uint32_val;
 					snprintf(string_buffer,
 						 sizeof(string_buffer),
-						 conversion_spec, val.uint_val);
+						 conversion_spec, upcasted_val);
 				}
 				fwtp_buffered_append_output(printer_ctx,
 							    string_buffer);
@@ -259,7 +284,9 @@ fwtp_print_tracepoint_with_data_string(struct fwtp_printer_ctx *printer_ctx,
 
 				/* Add the data item. */
 				fwtp_add_data_item(&(printer_ctx->data_items),
-						   &val, sizeof(val));
+						   &val,
+						   is_64bit ? sizeof(uint64_t) :
+							      sizeof(uint32_t));
 			} else if (tp_char == 's') {
 				uint32_t val;
 
@@ -271,9 +298,8 @@ fwtp_print_tracepoint_with_data_string(struct fwtp_printer_ctx *printer_ctx,
 
 				/* Print the data value. */
 				fwtp_buffered_append_output(
-					printer_ctx,
-					printer_ctx->get_string(printer_ctx,
-								val));
+					printer_ctx, printer_ctx->get_string(
+							     printer_ctx, val));
 				p_rem_tp_str = p_tp_str;
 
 				/* Add the data item. */
@@ -334,9 +360,8 @@ fwtp_print_tracepoint(struct fwtp_printer_ctx *printer_ctx, unsigned int type,
 
 		/* Print the entry timestamp. */
 		if (printer_ctx->timestamp_hz > 0) {
-			uint64_t timestamp_sec =
-				div_u64(entry_timestamp,
-					printer_ctx->timestamp_hz);
+			uint64_t timestamp_sec = div_u64(
+				entry_timestamp, printer_ctx->timestamp_hz);
 			uint64_t timestamp_usec =
 				div_u64(entry_timestamp * 1000000,
 					printer_ctx->timestamp_hz) %
@@ -364,9 +389,8 @@ fwtp_print_tracepoint(struct fwtp_printer_ctx *printer_ctx, unsigned int type,
 
 		/* Print the entry string. */
 		if (data_reader) {
-			fwtp_print_tracepoint_with_data_string(printer_ctx,
-							       name_str,
-							       data_reader);
+			fwtp_print_tracepoint_with_data_string(
+				printer_ctx, name_str, data_reader);
 		} else {
 			fwtp_buffered_append_output(printer_ctx, name_str);
 		}
@@ -375,9 +399,8 @@ fwtp_print_tracepoint(struct fwtp_printer_ctx *printer_ctx, unsigned int type,
 		switch (type) {
 		case FWTP_LL_ENTRY_TYPE_TRACE_COUNTER:
 			/* Print the counter value. */
-			fwtp_print_tracepoint_with_data_string(printer_ctx,
-							       ": %d",
-							       data_reader);
+			fwtp_print_tracepoint_with_data_string(
+				printer_ctx, ": %d", data_reader);
 			break;
 		default:
 			break;
@@ -469,10 +492,9 @@ static int fwtp_get_printable_entry_count_in_ring(struct tracepoint_ring *ring,
 
 		/* Get the entry first word. */
 		entry_size = sizeof(uint64_t);
-		p_entry_words =
-			(uint64_t *)(ring->buffer +
-				     TRACEPOINT_RING_MOD_BUF_SIZE(ring,
-								  head_offset));
+		p_entry_words = (uint64_t *)(ring->buffer +
+					     TRACEPOINT_RING_MOD_BUF_SIZE(
+						     ring, head_offset));
 		entry_word = p_entry_words[0];
 		type = (entry_word >> FWTP_BASE_ENTRY_TYPE_SHIFT) &
 		       FWTP_BASE_ENTRY_TYPE_MASK;
@@ -507,9 +529,8 @@ static int fwtp_get_printable_entry_count_in_ring(struct tracepoint_ring *ring,
 		case FWTP_LL_ENTRY_TYPE_TRACE_END:
 		case FWTP_LL_ENTRY_TYPE_TRACE_COUNTER:
 			/* Get the total tracepoint with data entry size. */
-			entry_size =
-				fwtp_get_ll_entry_with_data_size(p_entry_words,
-								 max_entry_size);
+			entry_size = fwtp_get_ll_entry_with_data_size(
+				p_entry_words, max_entry_size);
 			if (entry_size == 0)
 				break;
 
@@ -640,10 +661,9 @@ void fwtp_print_ring_entries(struct fwtp_printer_ctx *printer_ctx,
 
 		/* Get the first word of the entry. */
 		entry_size = sizeof(uint64_t);
-		p_entry_words =
-			(uint64_t *)(ring->buffer +
-				     TRACEPOINT_RING_MOD_BUF_SIZE(ring,
-								  head_offset));
+		p_entry_words = (uint64_t *)(ring->buffer +
+					     TRACEPOINT_RING_MOD_BUF_SIZE(
+						     ring, head_offset));
 		entry_word = p_entry_words[0];
 		type = (entry_word >> FWTP_BASE_ENTRY_TYPE_SHIFT) &
 		       FWTP_BASE_ENTRY_TYPE_MASK;
@@ -761,9 +781,8 @@ void fwtp_print_ring_entries(struct fwtp_printer_ctx *printer_ctx,
 		case FWTP_LL_ENTRY_TYPE_TRACE_END:
 		case FWTP_LL_ENTRY_TYPE_TRACE_COUNTER:
 			/* Get the total tracepoint with data entry size. */
-			entry_size =
-				fwtp_get_ll_entry_with_data_size(p_entry_words,
-								 max_entry_size);
+			entry_size = fwtp_get_ll_entry_with_data_size(
+				p_entry_words, max_entry_size);
 
 			/*
 			 * Set up the tracepoint data reader. The start of the data is the data
@@ -829,12 +848,10 @@ void fwtp_print_ring_entries(struct fwtp_printer_ctx *printer_ctx,
  *   decode_buffer          Intermediate decode buffer.
  *   decode_buffr_size      Size of intermediate decode buffer.
  */
-void fwtp_print_ring_entries_with_decode_buffer(struct fwtp_printer_ctx
-							*printer_ctx,
-						struct tracepoint_ring *ring,
-						int recent_entry_count,
-						void *decode_buffer,
-						unsigned int decode_buffer_size)
+void fwtp_print_ring_entries_with_decode_buffer(
+	struct fwtp_printer_ctx *printer_ctx, struct tracepoint_ring *ring,
+	int recent_entry_count, void *decode_buffer,
+	unsigned int decode_buffer_size)
 {
 	uint32_t unread_size;
 	uint32_t head_offset;

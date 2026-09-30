@@ -16,6 +16,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/gpio/consumer.h>
 #include <linux/backlight.h>
+#include <linux/spinlock.h>
 #include <linux/thermal.h>
 #include <linux/version.h>
 #include <drm/drm_bridge.h>
@@ -1021,6 +1022,7 @@ enum gs_panel_gpio_names {
 	DISP_ENABLE_GPIO,
 	DISP_VDDD_GPIO,
 	DISP_TOUT_GPIO,
+	DISP_ERR_FG_GPIO,
 	MAX_DISP_GPIO,
 };
 
@@ -1566,9 +1568,22 @@ struct gs_panel {
 
 	/** @refresh_ctrl_work_data: Data required for running refresh_ctrl in the background */
 	struct gs_panel_background_work_data refresh_ctrl_work_data;
-
 	/** @refresh_ctrl_work_scheduled: whether any refresh_ctrl work has been scheduled */
 	bool refresh_ctrl_work_scheduled;
+
+	/** @detect_fault_work_data: Data required for running detect_fault in the background */
+	struct gs_panel_background_work_data detect_fault_work_data;
+	/** @detect_fault_work_scheduled: whether any detect_fault work has been scheduled */
+	bool detect_fault_work_scheduled;
+	/** @detect_fault_work_ret: the return value of detect_fault work */
+	int detect_fault_work_ret;
+
+	/** @err_fg_irq: interrupt for error reports from a DDIC */
+	int err_fg_irq;
+	/** @err_fg_state: err_fg GPIO level is high if it's true, otherwise it's low */
+	bool err_fg_state;
+	/** @spinlock_err_fg: lock to protect the interrupts */
+	spinlock_t spinlock_err_fg;
 
 	/**@content_gray_level: current content gray level of screen UI */
 	enum gs_content_gray_level content_gray_level;
@@ -2073,6 +2088,12 @@ void gs_panel_refresh_ctrl_work(struct kthread_work *work);
  */
 void gs_panel_refresh_ctrl(struct gs_panel *ctx, ktime_t frame_start_ts);
 
+/**
+ * gs_panel_detect_fault_work() - callback for detect_fault background thread
+ *
+ * @work: Reference to work struct executing callback
+ */
+void gs_panel_detect_fault_work(struct kthread_work *work);
 
 #define GS_HBM_FLAG_GHBM_UPDATE BIT(0)
 #define GS_HBM_FLAG_BL_UPDATE BIT(1)

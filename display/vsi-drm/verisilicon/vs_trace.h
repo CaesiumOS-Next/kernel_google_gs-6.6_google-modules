@@ -18,6 +18,17 @@
 #include <drm/drm_crtc.h>
 #include <vs_crtc.h>
 
+/**
+ * vs_init_trace() - Initializes the display driver's trace events.
+ * @dev: Pointer to the device structure.
+ *
+ * This function retrieves the trace array for the display driver and enables
+ * all the trace events defined in the vs_trace_events array.
+ *
+ * Return: 0 on success, or a negative error code on failure.
+ */
+int vs_init_trace(struct device *dev);
+
 DECLARE_EVENT_CLASS(dc_readwrite,
 	TP_PROTO(unsigned long reg, unsigned long value),
 	TP_ARGS(reg, value),
@@ -38,6 +49,26 @@ DEFINE_EVENT(dc_readwrite, dc_read,
 );
 
 DEFINE_EVENT(dc_readwrite, dc_write,
+	TP_PROTO(unsigned long reg, unsigned long value),
+	TP_ARGS(reg, value)
+);
+
+DEFINE_EVENT(dc_readwrite, dc_read_relaxed,
+	TP_PROTO(unsigned long reg, unsigned long value),
+	TP_ARGS(reg, value)
+);
+
+DEFINE_EVENT(dc_readwrite, dc_write_relaxed,
+	TP_PROTO(unsigned long reg, unsigned long value),
+	TP_ARGS(reg, value)
+);
+
+DEFINE_EVENT(dc_readwrite, dc_write_u32_blob,
+	TP_PROTO(unsigned long reg, unsigned long value),
+	TP_ARGS(reg, value)
+);
+
+DEFINE_EVENT(dc_readwrite, dc_write_relaxed_u32_blob,
 	TP_PROTO(unsigned long reg, unsigned long value),
 	TP_ARGS(reg, value)
 );
@@ -419,6 +450,41 @@ TRACE_EVENT(disp_qos_boost_fab_clk,
 	TP_printk("display_id: %d fab_khz: %u core_khz: %u",
 		__entry->display_id, __entry->fab_khz, __entry->core_khz));
 
+DECLARE_EVENT_CLASS(disp_commit_wait,
+	TP_PROTO(int display_id, u32 old_plane_mask, u32 new_plane_mask, u32 swapped_plane_mask,
+		 int frames_pending),
+	TP_ARGS(display_id, old_plane_mask, new_plane_mask, swapped_plane_mask, frames_pending),
+	TP_STRUCT__entry(
+		__field(int, display_id)
+		__field(u32, old_plane_mask)
+		__field(u32, new_plane_mask)
+		__field(u32, swapped_plane_mask)
+		__field(int, frames_pending)
+	),
+	TP_fast_assign(
+		__entry->display_id = display_id;
+		__entry->old_plane_mask = old_plane_mask;
+		__entry->new_plane_mask = new_plane_mask;
+		__entry->swapped_plane_mask = swapped_plane_mask;
+		__entry->frames_pending = frames_pending;
+	),
+	TP_printk("display_id: %d old_plane_mask: %#x new_plane_mask: %#x swapped_plane_mask: %#x frames_pending: %d",
+		__entry->display_id, __entry->old_plane_mask, __entry->new_plane_mask,
+		__entry->swapped_plane_mask, __entry->frames_pending)
+);
+
+DEFINE_EVENT(disp_commit_wait, disp_commit_wait_begin,
+	TP_PROTO(int display_id, u32 old_plane_mask, u32 new_plane_mask, u32 swapped_plane_mask,
+		 int frames_pending),
+	TP_ARGS(display_id, old_plane_mask, new_plane_mask, swapped_plane_mask, frames_pending)
+);
+
+DEFINE_EVENT(disp_commit_wait, disp_commit_wait_done,
+	TP_PROTO(int display_id, u32 old_plane_mask, u32 new_plane_mask, u32 swapped_plane_mask,
+		 int frames_pending),
+	TP_ARGS(display_id, old_plane_mask, new_plane_mask, swapped_plane_mask, frames_pending)
+);
+
 /* Specific HW Programming Traces */
 
 TRACE_EVENT(disp_sof,
@@ -436,6 +502,27 @@ TRACE_EVENT(disp_sof,
 	),
 	TP_printk("[Out_ctrl%d] SOF: output_id:%d en:%d",
 		  __entry->hw_id, __entry->output_id, __entry->en)
+);
+
+/*
+ * Event to monitor the selection and routing of output multiplexers,
+ * tracking the mapping between Out_ctrl and output_id.
+ */
+TRACE_EVENT(disp_output_mux_sel,
+	TP_PROTO(u32 hw_id, u32 output_id, u32 mux_sel),
+	TP_ARGS(hw_id, output_id, mux_sel),
+	TP_STRUCT__entry(
+			__field(u32, hw_id)
+			__field(u32, output_id)
+			__field(u32, mux_sel)
+	),
+	TP_fast_assign(
+			__entry->hw_id = hw_id;
+			__entry->output_id = output_id;
+			__entry->mux_sel = mux_sel;
+	),
+	TP_printk("[Out_ctrl%d] output_id:%d sel:%#x",
+		  __entry->hw_id, __entry->output_id, __entry->mux_sel)
 );
 
 /* General-Purpose HW Programming Traces */
@@ -837,6 +924,46 @@ DEFINE_EVENT(disp_hw_feature_en, disp_config_feature_en,
 #define trace_config_hw_wb_feature_en(name, hw_id, en) \
 	trace_disp_config_feature_en(HW_TRACE_WRITEBACK, (name), (hw_id), (en))
 
+/* Shadow register switch traces */
+
+/**
+ * trace_disp_hw_reg_switch() - trace hw feature shadow register switching
+ * @name: name of the hardware block (ex. "Layer", "LTM, "Panel")
+ * @hw_id: id of component being updated
+ * @en: whether register switching is enabled
+ */
+DECLARE_EVENT_CLASS(disp_hw_reg_switch,
+	TP_PROTO(const char *name, u32 hw_id, bool en),
+	TP_ARGS(name, hw_id, en),
+	TP_STRUCT__entry(
+			__string(name, name)
+			__field(u32, hw_id)
+			__field(bool, en)
+	),
+	TP_fast_assign(
+			__assign_str(name, name);
+			__entry->hw_id = hw_id;
+			__entry->en = en;
+	),
+	TP_printk("[%s%d] en:%d", __get_str(name), __entry->hw_id, __entry->en)
+);
+
+DEFINE_EVENT(disp_hw_reg_switch, disp_reg_switch,
+	TP_PROTO(const char *name, u32 hw_id, bool en),
+	TP_ARGS(name, hw_id, en)
+);
+
+#define trace_hw_layer_reg_switch(hw_id, en) \
+	trace_disp_reg_switch("Layer", (hw_id), (en))
+#define trace_hw_display_reg_switch(hw_id, en) \
+	trace_disp_reg_switch("Out_ctrl", (hw_id), (en))
+#define trace_hw_panel_reg_switch(hw_id, en) \
+	trace_disp_reg_switch("Panel", (hw_id), (en))
+#define trace_hw_ltm_reg_switch(hw_id, en) \
+	trace_disp_reg_switch("LTM", (hw_id), (en))
+#define trace_hw_wb_reg_switch(hw_id, en) \
+	trace_disp_reg_switch("Writeback", (hw_id), (en))
+
 /**
  * trace_disp_plane() - mark a plane as being enabled or disabled
  * @plane_id: id of plane being enabled/disabled
@@ -987,4 +1114,3 @@ DEFINE_EVENT_CONDITION(sram_failure, sram_free_failure,
 
 /* This part must be outside protection */
 #include <trace/define_trace.h>
-

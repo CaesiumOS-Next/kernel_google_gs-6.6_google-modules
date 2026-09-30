@@ -23,6 +23,7 @@ struct power_domain {
 	bool is_top_pd;
 	bool use_smc;
 	enum power_state state;
+	bool boot_stay_on;
 	u32 genpd_sswrp_id;
 	u32 cpm_lpcm_subdomain_id;
 

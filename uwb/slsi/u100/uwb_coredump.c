@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-#include "linux/of.h"
-#include "include/uwb_coredump.h"
+#include <linux/of.h>
+#include <linux/slab.h>
+#include <linux/string.h>
+
 #include "include/uwb.h"
+#include "include/uwb_coredump.h"
 
 #define NAME "uwb"
 

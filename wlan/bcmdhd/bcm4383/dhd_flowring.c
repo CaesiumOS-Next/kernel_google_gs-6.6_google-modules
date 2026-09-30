@@ -496,6 +496,7 @@ dhd_flow_rings_init(dhd_pub_t *dhdp, uint32 num_h2d_rings)
 		flow_ring_table[idx].status = FLOW_RING_STATUS_CLOSED;
 		flow_ring_table[idx].flowid = (uint16)idx;
 		flow_ring_table[idx].lock = osl_spin_lock_init(dhdp->osh);
+		OSL_LOCK_CLASS_SET(flow_ring_table[idx].lock);
 #ifdef IDLE_TX_FLOW_MGMT
 		flow_ring_table[idx].last_active_ts = OSL_SYSUPTIME();
 #endif /* IDLE_TX_FLOW_MGMT */
@@ -530,12 +531,16 @@ dhd_flow_rings_init(dhd_pub_t *dhdp, uint32 num_h2d_rings)
 	}
 
 	lock = osl_spin_lock_init(dhdp->osh);
-	if (lock == NULL)
+	if (lock == NULL) {
 		goto fail;
+	}
+	OSL_LOCK_CLASS_SET(lock);
 
 	list_lock = osl_spin_lock_init(dhdp->osh);
-	if (list_lock == NULL)
+	if (list_lock == NULL) {
 		goto lock_fail;
+	}
+	OSL_LOCK_CLASS_SET(list_lock);
 
 	dhdp->flow_prio_map_type = DHD_FLOW_PRIO_AC_MAP;
 	bcopy(prio2ac, dhdp->flow_prio_map, sizeof(uint8) * NUMPRIO);

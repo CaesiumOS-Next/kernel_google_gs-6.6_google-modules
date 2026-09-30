@@ -71,15 +71,6 @@ static bool scale_config_hw(struct dc_hw *hw, u8 hw_id, bool enable, const void 
 				 scale->coef_v[i]);
 	}
 
-	/*put here temporarily,refine soon*/
-	if (hw->rev == DC_REV_1) {
-		/* commit bld size*/
-		dc_write(hw, VS_SET_PANEL_FIELD(DCREG_SH_PANEL, hw_id, IMAGE_WIDTH_Address),
-			 scale->src_w);
-		dc_write(hw, VS_SET_PANEL_FIELD(DCREG_SH_PANEL, hw_id, IMAGE_HEIGHT_Address),
-			 scale->src_h);
-	}
-
 	return true;
 }
 
